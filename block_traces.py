@@ -22,13 +22,9 @@ def trace_block(connection, block_number):
 
 http = httplib.HTTPConnection('localhost:8545')
 
-for block_number in xrange(3757353, 3757453):
-    print trace_block(http, block_number)
-
-#print trace_block(http, 3757353) # Invalid root/receipts
-
-#print trace_block(http, 3757354) # Invalid root/receipts
-
-#print trace_block(http, 3757356) # Works
+with open('wit_sizes.json', 'w') as f:
+    for block_number in xrange(1, 3895764):
+        print block_number
+        print >>f, trace_block(http, block_number)
 
 http.close()
