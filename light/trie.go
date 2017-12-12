@@ -83,6 +83,39 @@ func (db *odrDatabase) ContractCodeSize(addrHash, codeHash common.Hash) (int, er
 	return len(code), err
 }
 
+func (db *odrDatabase) DirectAccountGet(address common.Address) ([]byte, error) {
+	panic("Not implemented")
+}
+
+func (db *odrDatabase) DirectAccountPut(address common.Address, data []byte) error {
+	panic("Not implemented")
+}
+
+func (db *odrDatabase) DirectAccountDelete(address common.Address) error {
+	panic("Not implemented")
+}
+
+func (db *odrDatabase) DirectAccountHas(address common.Address) (bool, error) {
+	panic("Not implemented")
+}
+
+func (db *odrDatabase) DirectStorageGet(address common.Address, key []byte) ([]byte, error) {
+	panic("Not implemented")
+}
+
+func (db *odrDatabase) DirectStoragePut(address common.Address, key []byte, value []byte) error {
+	panic("Not implemented")
+}
+
+func (db *odrDatabase) DirectStorageDelete(address common.Address, key []byte) error {
+	panic("Not implemented")
+}
+
+func (db *odrDatabase) DirectStorageHas(address common.Address, key []byte) (bool, error) {
+	panic("Not implemented")
+}
+
+
 type odrTrie struct {
 	db   *odrDatabase
 	id   *TrieID
