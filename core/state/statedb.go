@@ -18,7 +18,9 @@
 package state
 
 import (
+    "bytes"
 	"fmt"
+	"encoding/hex"
 	"math/big"
 	"sort"
 	"sync"
@@ -335,6 +337,11 @@ func (self *StateDB) updateStateObject(stateObject *stateObject) {
 	if err != nil {
 		panic(fmt.Errorf("can't encode object at %x: %v", addr[:], err))
 	}
+	fmt.Printf("Directly writing of the account %s\n with data: %s\n\n", hex.EncodeToString(addr[:]), hex.EncodeToString(data))
+	fmt.Printf("account %v\n", self.data)
+	if err := self.db.DirectAccountPut(addr, data); err != nil {
+		panic(fmt.Errorf("can't store account %x directly: %v", addr[:], err))		
+	}
 	self.setError(self.trie.TryUpdate(addr[:], data))
 }
 
@@ -342,6 +349,9 @@ func (self *StateDB) updateStateObject(stateObject *stateObject) {
 func (self *StateDB) deleteStateObject(stateObject *stateObject) {
 	stateObject.deleted = true
 	addr := stateObject.Address()
+	if err := self.db.DirectAccountDelete(addr); err != nil {
+		panic(fmt.Errorf("can't delete account %x directly", addr[:]))			
+	}
 	self.setError(self.trie.TryDelete(addr[:]))
 }
 
@@ -356,8 +366,12 @@ func (self *StateDB) getStateObject(addr common.Address) (stateObject *stateObje
 	}
 
 	// Load the object from the database.
-	enc, err := self.trie.TryGet(addr[:])
-	if len(enc) == 0 {
+	enc, err := self.db.DirectAccountGet(addr)
+	enc1, _ := self.trie.TryGet(addr[:])
+	if bytes.Compare(enc, enc1) != 0 {
+		fmt.Printf("Different encoding of the account %s\n are read: %s\n%s\n\n", hex.EncodeToString(addr[:]), hex.EncodeToString(enc), hex.EncodeToString(enc1))
+	}
+	if err !=nil || len(enc) == 0 {
 		self.setError(err)
 		return nil
 	}

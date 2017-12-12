@@ -36,6 +36,8 @@ const (
 
 	// Number of codehash->size associations to keep.
 	codeSizeCacheSize = 100000
+
+	directAccountTable = "daxx"
 )
 
 // Database wraps access to tries and contract code.
@@ -50,6 +52,22 @@ type Database interface {
 	ContractCodeSize(addrHash, codeHash common.Hash) (int, error)
 	// CopyTrie returns an independent copy of the given trie.
 	CopyTrie(Trie) Trie
+	// Retrieves account data directly from the database and not from the trie
+	DirectAccountGet(address common.Address) ([]byte, error)
+	// Stores account directly into the database (not trie)
+	DirectAccountPut(address common.Address, data []byte) error
+	// Deletes account directly from the database
+	DirectAccountDelete(address common.Address) error
+
+	DirectAccountHas(address common.Address) (bool, error)
+	// Retrives contract storage data directly from the database and not from the trie
+	DirectStorageGet(address common.Address, key []byte) ([]byte, error)
+	// Stores contract storage data directly in the database
+	DirectStoragePut(address common.Address, key []byte, value []byte) error
+	// Deletes contract storage directly from the database
+	DirectStorageDelete(address common.Address, key []byte) error
+
+	DirectStorageHas(address common.Address, key []byte) (bool, error)
 }
 
 // Trie is a Ethereum Merkle Trie.
@@ -67,14 +85,19 @@ type Trie interface {
 // concurrent use and retains cached trie nodes in memory.
 func NewDatabase(db ethdb.Database) Database {
 	csc, _ := lru.New(codeSizeCacheSize)
-	return &cachingDB{db: db, codeSizeCache: csc}
+	return &cachingDB{
+		db: db,
+		directAccountDb: ethdb.NewTable(db, directAccountTable),
+		codeSizeCache: csc,
+	}
 }
 
 type cachingDB struct {
-	db            ethdb.Database
-	mu            sync.Mutex
-	pastTries     []*trie.SecureTrie
-	codeSizeCache *lru.Cache
+	db            		ethdb.Database
+	directAccountDb     ethdb.Database
+	mu            		sync.Mutex
+	pastTries     		[]*trie.SecureTrie
+	codeSizeCache 		*lru.Cache
 }
 
 func (db *cachingDB) OpenTrie(root common.Hash) (Trie, error) {
@@ -137,6 +160,42 @@ func (db *cachingDB) ContractCodeSize(addrHash, codeHash common.Hash) (int, erro
 		db.codeSizeCache.Add(codeHash, len(code))
 	}
 	return len(code), err
+}
+
+func (db *cachingDB) DirectAccountGet(address common.Address) ([]byte, error) {
+	if ok, _ := db.directAccountDb.Has(address[:]); ok {
+		return db.directAccountDb.Get(address[:])
+	} else {
+		return nil, nil
+	}
+}
+
+func (db *cachingDB) DirectAccountPut(address common.Address, data []byte) error {
+	return db.directAccountDb.Put(address[:], data)
+}
+
+func (db *cachingDB) DirectAccountDelete(address common.Address) error {
+	return db.directAccountDb.Delete(address[:])
+}
+
+func (db *cachingDB) DirectAccountHas(address common.Address) (bool, error) {
+	return db.directAccountDb.Has(address[:])
+}
+
+func (db *cachingDB) DirectStorageGet(address common.Address, key []byte) ([]byte, error) {
+	return db.db.Get(append(address[:], key[:]...))
+}
+
+func (db *cachingDB) DirectStoragePut(address common.Address, key []byte, value []byte) error {
+	return db.db.Put(append(address[:], key[:]...), value)
+}
+
+func (db *cachingDB) DirectStorageDelete(address common.Address, key []byte) error {
+	return db.db.Delete(append(address[:], key[:]...))
+}
+
+func (db *cachingDB) DirectStorageHas(address common.Address, key []byte) (bool, error) {
+	return db.db.Has(append(address[:], key[:]...))
 }
 
 // cachedTrie inserts its trie into a cachingDB on commit.

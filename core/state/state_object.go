@@ -175,8 +175,9 @@ func (self *stateObject) GetState(db Database, key common.Hash) common.Hash {
 	if exists {
 		return value
 	}
+	enc, err := self.db.db.DirectStorageGet(self.address, key[:])
 	// Load from DB in case it is missing.
-	enc, err := self.getTrie(db).TryGet(key[:])
+	//enc, err := self.getTrie(db).TryGet(key[:])
 	if err != nil {
 		self.setError(err)
 		return common.Hash{}
@@ -225,6 +226,9 @@ func (self *stateObject) updateTrie(db Database) Trie {
 		}
 		// Encoding []byte cannot fail, ok to ignore the error.
 		v, _ := rlp.EncodeToBytes(bytes.TrimLeft(value[:], "\x00"))
+		if err := self.db.db.DirectStoragePut(self.address, key[:], v); err != nil {
+			panic(fmt.Errorf("could not update storage for %x %x directly", self.address[:], key[:]))
+		}
 		self.setError(tr.TryUpdate(key[:], v))
 	}
 	return tr
