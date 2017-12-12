@@ -38,6 +38,7 @@ var OpenFileLimit = 64
 type LDBDatabase struct {
 	fn string      // filename for reporting
 	db *leveldb.DB // LevelDB instance
+	db_back *leveldb.DB // Backing LevelDB instance
 
 	getTimer       gometrics.Timer // Timer for measuring the database get request counts and latencies
 	putTimer       gometrics.Timer // Timer for measuring the database put request counts and latencies
@@ -82,10 +83,24 @@ func NewLDBDatabase(file string, cache int, handles int) (*LDBDatabase, error) {
 	if err != nil {
 		return nil, err
 	}
+	db_back, err := leveldb.OpenFile(file + "_back", &opt.Options{
+		OpenFilesCacheCapacity: handles,
+		BlockCacheCapacity:     cache / 2 * opt.MiB,
+		WriteBuffer:            cache / 4 * opt.MiB, // Two of these are used internally
+		Filter:                 filter.NewBloomFilter(10),
+	})
+	if _, corrupted := err.(*errors.ErrCorrupted); corrupted {
+		db_back, err = leveldb.RecoverFile(file + "_back", nil)
+	}
+	// (Re)check for errors and abort if opening of the db failed
+	if err != nil {
+		return nil, err
+	}
 	return &LDBDatabase{
-		fn:  file,
-		db:  db,
-		log: logger,
+		fn:  		file,
+		db:  		db,
+		db_back:  	db_back,
+		log: 		logger,
 	}, nil
 }
 
@@ -110,7 +125,11 @@ func (db *LDBDatabase) Put(key []byte, value []byte) error {
 }
 
 func (db *LDBDatabase) Has(key []byte) (bool, error) {
-	return db.db.Has(key, nil)
+	has, err := db.db.Has(key, nil)
+	if err != nil || !has {
+		return db.db_back.Has(key, nil)
+	} 
+	return has, err
 }
 
 // Get returns the given key if it's present.
@@ -121,6 +140,12 @@ func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
 	}
 	// Retrieve the key and increment the miss counter if not found
 	dat, err := db.db.Get(key, nil)
+	if err != nil {
+		dat, err = db.db_back.Get(key, nil)
+		if err == nil {
+			db.db.Put(key, dat, nil)
+		}
+	}
 	if err != nil {
 		if db.missMeter != nil {
 			db.missMeter.Mark(1)
@@ -142,6 +167,7 @@ func (db *LDBDatabase) Delete(key []byte) error {
 		defer db.delTimer.UpdateSince(time.Now())
 	}
 	// Execute the actual operation
+	db.db_back.Delete(key, nil)
 	return db.db.Delete(key, nil)
 }
 
@@ -166,6 +192,12 @@ func (db *LDBDatabase) Close() {
 		db.log.Info("Database closed")
 	} else {
 		db.log.Error("Failed to close database", "err", err)
+	}
+	err = db.db_back.Close()
+	if err == nil {
+		db.log.Info("Backing Database closed")
+	} else {
+		db.log.Error("Failed to close backing database", "err", err)
 	}
 }
 
