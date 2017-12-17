@@ -18,9 +18,7 @@
 package state
 
 import (
-    "bytes"
 	"fmt"
-	"encoding/hex"
 	"math/big"
 	"sort"
 	"sync"
@@ -28,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
@@ -246,7 +245,7 @@ func (self *StateDB) StorageTrie(a common.Address) Trie {
 		return nil
 	}
 	cpy := stateObject.deepCopy(self, nil)
-	return cpy.updateTrie(self.db)
+	return cpy.updateTrie(self.db, nil)
 }
 
 func (self *StateDB) HasSuicided(addr common.Address) bool {
@@ -331,25 +330,25 @@ func (self *StateDB) Suicide(addr common.Address) bool {
 //
 
 // updateStateObject writes the given object to the trie.
-func (self *StateDB) updateStateObject(stateObject *stateObject) {
+func (self *StateDB) updateStateObject(stateObject *stateObject) (data []byte, err error) {
 	addr := stateObject.Address()
-	data, err := rlp.EncodeToBytes(stateObject)
+	data, err = rlp.EncodeToBytes(stateObject)
 	if err != nil {
 		panic(fmt.Errorf("can't encode object at %x: %v", addr[:], err))
 	}
-	fmt.Printf("Directly writing of the account %s\n with data: %s\n\n", hex.EncodeToString(addr[:]), hex.EncodeToString(data))
-	fmt.Printf("account %v\n", self.data)
-	if err := self.db.DirectAccountPut(addr, data); err != nil {
-		panic(fmt.Errorf("can't store account %x directly: %v", addr[:], err))		
+	err = self.trie.TryUpdate(addr[:], data)
+	if err != nil {
+		fmt.Printf("Error writing via trie: %s\n", err)
 	}
-	self.setError(self.trie.TryUpdate(addr[:], data))
+	self.setError(err)
+	return data, err
 }
 
 // deleteStateObject removes the given object from the state trie.
 func (self *StateDB) deleteStateObject(stateObject *stateObject) {
 	stateObject.deleted = true
 	addr := stateObject.Address()
-	if err := self.db.DirectAccountDelete(addr); err != nil {
+	if err := self.db.DirectAccountDelete(addr[:]); err != nil {
 		panic(fmt.Errorf("can't delete account %x directly", addr[:]))			
 	}
 	self.setError(self.trie.TryDelete(addr[:]))
@@ -366,11 +365,7 @@ func (self *StateDB) getStateObject(addr common.Address) (stateObject *stateObje
 	}
 
 	// Load the object from the database.
-	enc, err := self.db.DirectAccountGet(addr)
-	enc1, _ := self.trie.TryGet(addr[:])
-	if bytes.Compare(enc, enc1) != 0 {
-		fmt.Printf("Different encoding of the account %s\n are read: %s\n%s\n\n", hex.EncodeToString(addr[:]), hex.EncodeToString(enc), hex.EncodeToString(enc1))
-	}
+	enc, err := self.db.DirectAccountGet(addr[:])
 	if err !=nil || len(enc) == 0 {
 		self.setError(err)
 		return nil
@@ -586,9 +581,10 @@ func (s *StateDB) clearJournalAndRefund() {
 }
 
 // CommitTo writes the state to the given database.
-func (s *StateDB) CommitTo(dbw trie.DatabaseWriter, deleteEmptyObjects bool) (root common.Hash, err error) {
+func (s *StateDB) CommitTo(dbw ethdb.Database, deleteEmptyObjects bool) (root common.Hash, err error) {
 	defer s.clearJournalAndRefund()
 
+	d := NewDatabase(dbw)
 	// Commit objects to the trie.
 	for addr, stateObject := range s.stateObjects {
 		_, isDirty := s.stateObjectsDirty[addr]
@@ -597,6 +593,7 @@ func (s *StateDB) CommitTo(dbw trie.DatabaseWriter, deleteEmptyObjects bool) (ro
 			// If the object has been removed, don't bother syncing it
 			// and just mark it for deletion in the trie.
 			s.deleteStateObject(stateObject)
+			d.DirectAccountDelete(stateObject.address[:])
 		case isDirty:
 			// Write any contract code associated with the state object
 			if stateObject.code != nil && stateObject.dirtyCode {
@@ -606,11 +603,13 @@ func (s *StateDB) CommitTo(dbw trie.DatabaseWriter, deleteEmptyObjects bool) (ro
 				stateObject.dirtyCode = false
 			}
 			// Write any storage changes in the state object to its storage trie.
-			if err := stateObject.CommitTrie(s.db, dbw); err != nil {
+			if err := stateObject.CommitTrie(s.db, d, dbw); err != nil {
 				return common.Hash{}, err
 			}
 			// Update the object in the main account trie.
-			s.updateStateObject(stateObject)
+			if data, err := s.updateStateObject(stateObject); err == nil {
+				d.DirectAccountPut(stateObject.address[:], data)
+			}
 		}
 		delete(s.stateObjectsDirty, addr)
 	}

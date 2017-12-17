@@ -24,8 +24,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/trie"
 )
 
 var emptyCodeHash = crypto.Keccak256(nil)
@@ -175,11 +175,9 @@ func (self *stateObject) GetState(db Database, key common.Hash) common.Hash {
 	if exists {
 		return value
 	}
-	enc, err := self.db.db.DirectStorageGet(self.address, key[:])
 	// Load from DB in case it is missing.
-	//enc, err := self.getTrie(db).TryGet(key[:])
+	enc, err := db.DirectStorageGet(self.address, key[:])
 	if err != nil {
-		self.setError(err)
 		return common.Hash{}
 	}
 	if len(enc) > 0 {
@@ -208,7 +206,6 @@ func (self *stateObject) SetState(db Database, key, value common.Hash) {
 func (self *stateObject) setState(key, value common.Hash) {
 	self.cachedStorage[key] = value
 	self.dirtyStorage[key] = value
-
 	if self.onDirty != nil {
 		self.onDirty(self.Address())
 		self.onDirty = nil
@@ -216,34 +213,47 @@ func (self *stateObject) setState(key, value common.Hash) {
 }
 
 // updateTrie writes cached storage modifications into the object's storage trie.
-func (self *stateObject) updateTrie(db Database) Trie {
+func (self *stateObject) updateTrie(db Database, directWrite Database) Trie {
 	tr := self.getTrie(db)
 	for key, value := range self.dirtyStorage {
-		delete(self.dirtyStorage, key)
+		if directWrite != nil {
+			delete(self.dirtyStorage, key)
+		}
 		if (value == common.Hash{}) {
-			self.setError(tr.TryDelete(key[:]))
+			if directWrite != nil {
+				if err := directWrite.DirectStorageDelete(self.address, key[:]); err != nil {
+					panic(fmt.Errorf("could not delete storage for %x directly", self.address[:], key[:]))
+				}
+			}
+			if err := tr.TryDelete(key[:]); err != nil {
+				self.setError(err)
+			}
 			continue
 		}
 		// Encoding []byte cannot fail, ok to ignore the error.
 		v, _ := rlp.EncodeToBytes(bytes.TrimLeft(value[:], "\x00"))
-		if err := self.db.db.DirectStoragePut(self.address, key[:], v); err != nil {
-			panic(fmt.Errorf("could not update storage for %x %x directly", self.address[:], key[:]))
+		if directWrite != nil {
+			if err := directWrite.DirectStoragePut(self.address, key[:], v); err != nil {
+				panic(fmt.Errorf("could not update storage for %x %x directly", self.address[:], key[:]))
+			}
 		}
-		self.setError(tr.TryUpdate(key[:], v))
+		if err := tr.TryUpdate(key[:], v); err != nil {
+			self.setError(err)
+		}
 	}
 	return tr
 }
 
 // UpdateRoot sets the trie root to the current root hash of
 func (self *stateObject) updateRoot(db Database) {
-	self.updateTrie(db)
+	self.updateTrie(db, nil)
 	self.data.Root = self.trie.Hash()
 }
 
 // CommitTrie the storage trie of the object to dwb.
 // This updates the trie root.
-func (self *stateObject) CommitTrie(db Database, dbw trie.DatabaseWriter) error {
-	self.updateTrie(db)
+func (self *stateObject) CommitTrie(db Database, d Database, dbw ethdb.Database) error {
+	self.updateTrie(db, d)
 	if self.dbErr != nil {
 		return self.dbErr
 	}

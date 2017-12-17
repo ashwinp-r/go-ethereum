@@ -299,6 +299,27 @@ func (b *ldbBatch) ValueSize() int {
 	return b.size
 }
 
+func (b *ldbBatch) Get(key []byte) ([]byte, error) {
+	panic("Not implemented")
+}
+
+func (b *ldbBatch) Has(key []byte) (bool, error) {
+	panic("Not implemented")
+}
+
+func (b *ldbBatch) Delete(key []byte) error {
+	b.b.Delete(key)
+	return nil
+}
+
+func (b *ldbBatch) Close() {
+	// Do nothing
+}
+
+func (b *ldbBatch) NewBatch() Batch {
+	panic("Not implemented")
+}
+
 type table struct {
 	db     Database
 	prefix string
@@ -357,4 +378,24 @@ func (tb *tableBatch) Write() error {
 
 func (tb *tableBatch) ValueSize() int {
 	return tb.batch.ValueSize()
+}
+
+func (tb *tableBatch) Get(key []byte) ([]byte, error) {
+	panic("Not implemented")
+}
+
+func (tb *tableBatch) Has(key []byte) (bool, error) {
+	panic("Not implemented")
+}
+
+func (tb *tableBatch) Delete(key []byte) error {
+	return tb.batch.Delete(append([]byte(tb.prefix), key...))
+}
+
+func (tb *tableBatch) Close() {
+	tb.batch.Close()
+}
+
+func (tb *tableBatch) NewBatch() Batch {
+	panic("Not implemented")
 }

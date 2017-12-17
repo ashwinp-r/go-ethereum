@@ -83,19 +83,19 @@ func (db *odrDatabase) ContractCodeSize(addrHash, codeHash common.Hash) (int, er
 	return len(code), err
 }
 
-func (db *odrDatabase) DirectAccountGet(address common.Address) ([]byte, error) {
+func (db *odrDatabase) DirectAccountGet(address []byte) ([]byte, error) {
 	panic("Not implemented")
 }
 
-func (db *odrDatabase) DirectAccountPut(address common.Address, data []byte) error {
+func (db *odrDatabase) DirectAccountPut(address []byte, data []byte) error {
 	panic("Not implemented")
 }
 
-func (db *odrDatabase) DirectAccountDelete(address common.Address) error {
+func (db *odrDatabase) DirectAccountDelete(address []byte) error {
 	panic("Not implemented")
 }
 
-func (db *odrDatabase) DirectAccountHas(address common.Address) (bool, error) {
+func (db *odrDatabase) DirectAccountHas(address []byte) (bool, error) {
 	panic("Not implemented")
 }
 

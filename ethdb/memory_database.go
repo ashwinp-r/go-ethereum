@@ -123,3 +123,24 @@ func (b *memBatch) Write() error {
 func (b *memBatch) ValueSize() int {
 	return b.size
 }
+
+func (tb *memBatch) Get(key []byte) ([]byte, error) {
+	panic("Not implemented")
+}
+
+func (b *memBatch) Has(key []byte) (bool, error) {
+	panic("Not implemented")
+}
+
+func (b *memBatch) Delete(key []byte) error {
+	panic("Not implemented")
+}
+
+func (b *memBatch) Close() {
+	panic("Not implemented")
+}
+
+func (b *memBatch) NewBatch() Batch {
+	panic("Not implemented")
+}
+
