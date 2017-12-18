@@ -135,13 +135,15 @@ func NewChtIndexer(db ethdb.Database, clientMode bool) *core.ChainIndexer {
 }
 
 // Reset implements core.ChainIndexerBackend
-func (c *ChtIndexerBackend) Reset(section uint64, lastSectionHead common.Hash) error {
+func (c *ChtIndexerBackend) Reset(section uint64, lastSectionHead common.Hash, blockNr uint32) error {
 	var root common.Hash
 	if section > 0 {
 		root = GetChtRoot(c.db, section-1, lastSectionHead)
 	}
 	var err error
-	c.trie, err = trie.New(root, c.cdb)
+	suffix := make([]byte, 4)
+	binary.LittleEndian.PutUint32(suffix, blockNr)
+	c.trie, err = trie.New(root, c.cdb, []byte("AT"), suffix)
 	c.section = section
 	return err
 }
@@ -230,13 +232,15 @@ func NewBloomTrieIndexer(db ethdb.Database, clientMode bool) *core.ChainIndexer 
 }
 
 // Reset implements core.ChainIndexerBackend
-func (b *BloomTrieIndexerBackend) Reset(section uint64, lastSectionHead common.Hash) error {
+func (b *BloomTrieIndexerBackend) Reset(section uint64, lastSectionHead common.Hash, blockNr uint32) error {
 	var root common.Hash
 	if section > 0 {
 		root = GetBloomTrieRoot(b.db, section-1, lastSectionHead)
 	}
 	var err error
-	b.trie, err = trie.New(root, b.cdb)
+	suffix := make([]byte, 4)
+	binary.LittleEndian.PutUint32(suffix, blockNr)
+	b.trie, err = trie.New(root, b.cdb, []byte("AT"), suffix)
 	b.section = section
 	return err
 }

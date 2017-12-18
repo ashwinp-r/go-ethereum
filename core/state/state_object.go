@@ -157,12 +157,12 @@ func (c *stateObject) touch() {
 	c.touched = true
 }
 
-func (c *stateObject) getTrie(db Database) Trie {
+func (c *stateObject) getTrie(db Database, blockNr uint32) Trie {
 	if c.trie == nil {
 		var err error
-		c.trie, err = db.OpenStorageTrie(c.addrHash, c.data.Root)
+		c.trie, err = db.OpenStorageTrie(c.addrHash, c.data.Root, blockNr)
 		if err != nil {
-			c.trie, _ = db.OpenStorageTrie(c.addrHash, common.Hash{})
+			c.trie, _ = db.OpenStorageTrie(c.addrHash, common.Hash{}, blockNr)
 			c.setError(fmt.Errorf("can't create storage trie: %v", err))
 		}
 	}
@@ -170,13 +170,13 @@ func (c *stateObject) getTrie(db Database) Trie {
 }
 
 // GetState returns a value in account storage.
-func (self *stateObject) GetState(db Database, key common.Hash) common.Hash {
+func (self *stateObject) GetState(db Database, key common.Hash, blockNr uint32) common.Hash {
 	value, exists := self.cachedStorage[key]
 	if exists {
 		return value
 	}
 	// Load from DB in case it is missing.
-	enc, err := self.getTrie(db).TryGet(key[:])
+	enc, err := self.getTrie(db, blockNr).TryGet(key[:])
 	if err != nil {
 		self.setError(err)
 		return common.Hash{}
@@ -195,11 +195,11 @@ func (self *stateObject) GetState(db Database, key common.Hash) common.Hash {
 }
 
 // SetState updates a value in account storage.
-func (self *stateObject) SetState(db Database, key, value common.Hash) {
+func (self *stateObject) SetState(db Database, key, value common.Hash, blockNr uint32) {
 	self.db.journal = append(self.db.journal, storageChange{
 		account:  &self.address,
 		key:      key,
-		prevalue: self.GetState(db, key),
+		prevalue: self.GetState(db, key, blockNr),
 	})
 	self.setState(key, value)
 }
@@ -215,8 +215,8 @@ func (self *stateObject) setState(key, value common.Hash) {
 }
 
 // updateTrie writes cached storage modifications into the object's storage trie.
-func (self *stateObject) updateTrie(db Database) Trie {
-	tr := self.getTrie(db)
+func (self *stateObject) updateTrie(db Database, blockNr uint32) Trie {
+	tr := self.getTrie(db, blockNr)
 	for key, value := range self.dirtyStorage {
 		delete(self.dirtyStorage, key)
 		if (value == common.Hash{}) {
@@ -231,15 +231,15 @@ func (self *stateObject) updateTrie(db Database) Trie {
 }
 
 // UpdateRoot sets the trie root to the current root hash of
-func (self *stateObject) updateRoot(db Database) {
-	self.updateTrie(db)
+func (self *stateObject) updateRoot(db Database, blockNr uint32) {
+	self.updateTrie(db, blockNr)
 	self.data.Root = self.trie.Hash()
 }
 
 // CommitTrie the storage trie of the object to dwb.
 // This updates the trie root.
-func (self *stateObject) CommitTrie(db Database, dbw trie.DatabaseWriter) error {
-	self.updateTrie(db)
+func (self *stateObject) CommitTrie(db Database, dbw trie.DatabaseWriter, blockNr uint32) error {
+	self.updateTrie(db, blockNr)
 	if self.dbErr != nil {
 		return self.dbErr
 	}

@@ -379,11 +379,11 @@ func dump(ctx *cli.Context) error {
 			fmt.Println("{}")
 			utils.Fatalf("block not found")
 		} else {
-			state, err := state.New(block.Root(), state.NewDatabase(chainDb))
+			state, err := state.New(block.Root(), state.NewDatabase(chainDb), uint32(block.NumberU64()))
 			if err != nil {
 				utils.Fatalf("could not create new state: %v", err)
 			}
-			fmt.Printf("%s\n", state.Dump())
+			fmt.Printf("%s\n", state.Dump(uint32(block.NumberU64())))
 		}
 	}
 	chainDb.Close()

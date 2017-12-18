@@ -145,8 +145,8 @@ func (dw *dbWrapper) getCode(addr []byte) []byte {
 }
 
 // getState retrieves an account's state data for the given hash
-func (dw *dbWrapper) getState(addr []byte, hash common.Hash) common.Hash {
-	return dw.db.GetState(common.BytesToAddress(addr), hash)
+func (dw *dbWrapper) getState(addr []byte, hash common.Hash, blockNr uint32) common.Hash {
+	return dw.db.GetState(common.BytesToAddress(addr), hash, blockNr)
 }
 
 // exists returns true iff the account exists

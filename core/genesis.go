@@ -223,16 +223,16 @@ func (g *Genesis) configOrDefault(ghash common.Hash) *params.ChainConfig {
 // ToBlock creates the block and state of a genesis specification.
 func (g *Genesis) ToBlock() (*types.Block, *state.StateDB) {
 	db, _ := ethdb.NewMemDatabase()
-	statedb, _ := state.New(common.Hash{}, state.NewDatabase(db))
+	statedb, _ := state.New(common.Hash{}, state.NewDatabase(db), uint32(0))
 	for addr, account := range g.Alloc {
 		statedb.AddBalance(addr, account.Balance)
 		statedb.SetCode(addr, account.Code)
 		statedb.SetNonce(addr, account.Nonce)
 		for key, value := range account.Storage {
-			statedb.SetState(addr, key, value)
+			statedb.SetState(addr, key, value, uint32(0))
 		}
 	}
-	root := statedb.IntermediateRoot(false)
+	root := statedb.IntermediateRoot(false, uint32(0))
 	head := &types.Header{
 		Number:     new(big.Int).SetUint64(g.Number),
 		Nonce:      types.EncodeNonce(g.Nonce),
@@ -262,7 +262,7 @@ func (g *Genesis) Commit(db ethdb.Database) (*types.Block, error) {
 	if block.Number().Sign() != 0 {
 		return nil, fmt.Errorf("can't commit genesis block with number > 0")
 	}
-	if _, err := statedb.CommitTo(db, false); err != nil {
+	if _, err := statedb.CommitTo(db, false, uint32(0)); err != nil {
 		return nil, fmt.Errorf("cannot write state: %v", err)
 	}
 	if err := WriteTd(db, block.Hash(), block.NumberU64(), g.Difficulty); err != nil {

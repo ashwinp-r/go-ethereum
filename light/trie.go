@@ -18,6 +18,7 @@ package light
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -28,7 +29,7 @@ import (
 )
 
 func NewState(ctx context.Context, head *types.Header, odr OdrBackend) *state.StateDB {
-	state, _ := state.New(head.Root, NewStateDatabase(ctx, head, odr))
+	state, _ := state.New(head.Root, NewStateDatabase(ctx, head, odr), uint32(head.Number.Uint64()))
 	return state
 }
 
@@ -42,12 +43,16 @@ type odrDatabase struct {
 	backend OdrBackend
 }
 
-func (db *odrDatabase) OpenTrie(root common.Hash) (state.Trie, error) {
-	return &odrTrie{db: db, id: db.id}, nil
+func (db *odrDatabase) OpenTrie(root common.Hash, blockNr uint32) (state.Trie, error) {
+	suffix := make([]byte, 4)
+	binary.LittleEndian.PutUint32(suffix, blockNr)
+	return &odrTrie{db: db, id: db.id, prefix: []byte("AT"), suffix: suffix}, nil
 }
 
-func (db *odrDatabase) OpenStorageTrie(addrHash, root common.Hash) (state.Trie, error) {
-	return &odrTrie{db: db, id: StorageTrieID(db.id, addrHash, root)}, nil
+func (db *odrDatabase) OpenStorageTrie(addrHash, root common.Hash, blockNr uint32) (state.Trie, error) {
+	suffix := make([]byte, 4)
+	binary.LittleEndian.PutUint32(suffix, blockNr)
+	return &odrTrie{db: db, id: StorageTrieID(db.id, addrHash, root), prefix: addrHash[:], suffix:suffix}, nil
 }
 
 func (db *odrDatabase) CopyTrie(t state.Trie) state.Trie {
@@ -87,6 +92,8 @@ type odrTrie struct {
 	db   *odrDatabase
 	id   *TrieID
 	trie *trie.Trie
+	// Prefix and suffix to form the database key
+	prefix, suffix	[]byte
 }
 
 func (t *odrTrie) TryGet(key []byte) ([]byte, error) {
@@ -141,7 +148,7 @@ func (t *odrTrie) do(key []byte, fn func() error) error {
 	for {
 		var err error
 		if t.trie == nil {
-			t.trie, err = trie.New(t.id.Root, t.db.backend.Database())
+			t.trie, err = trie.New(t.id.Root, t.db.backend.Database(), t.prefix, t.suffix)
 		}
 		if err == nil {
 			err = fn()
@@ -167,7 +174,7 @@ func newNodeIterator(t *odrTrie, startkey []byte) trie.NodeIterator {
 	// Open the actual non-ODR trie if that hasn't happened yet.
 	if t.trie == nil {
 		it.do(func() error {
-			t, err := trie.New(t.id.Root, t.db.backend.Database())
+			t, err := trie.New(t.id.Root, t.db.backend.Database(), t.prefix, t.suffix)
 			if err == nil {
 				it.t.trie = t
 			}

@@ -109,7 +109,7 @@ func (in *Interpreter) enforceRestrictions(op OpCode, operation operation, stack
 // It's important to note that any errors returned by the interpreter should be
 // considered a revert-and-consume-all-gas operation. No error specific checks
 // should be handled to reduce complexity and errors further down the in.
-func (in *Interpreter) Run(snapshot int, contract *Contract, input []byte) (ret []byte, err error) {
+func (in *Interpreter) Run(snapshot int, contract *Contract, input []byte, blockNr uint32) (ret []byte, err error) {
 	// Increment the call depth which is restricted to 1024
 	in.evm.depth++
 	defer func() { in.evm.depth-- }()
@@ -193,7 +193,7 @@ func (in *Interpreter) Run(snapshot int, contract *Contract, input []byte) (ret 
 		if !in.cfg.DisableGasMetering {
 			// consume the gas and return an error if not enough gas is available.
 			// cost is explicitly set so that the capture state defer method cas get the proper cost
-			cost, err = operation.gasCost(in.gasTable, in.evm, contract, stack, mem, memorySize)
+			cost, err = operation.gasCost(in.gasTable, in.evm, contract, stack, mem, memorySize, blockNr)
 			if err != nil || !contract.UseGas(cost) {
 				return nil, ErrOutOfGas
 			}
@@ -208,7 +208,7 @@ func (in *Interpreter) Run(snapshot int, contract *Contract, input []byte) (ret 
 		}
 
 		// execute the operation
-		res, err := operation.execute(&pc, in.evm, contract, mem, stack)
+		res, err := operation.execute(&pc, in.evm, contract, mem, stack, blockNr)
 		// verifyPool is a build flag. Pool verification makes sure the integrity
 		// of the integer pool by comparing values to a default value.
 		if verifyPool {

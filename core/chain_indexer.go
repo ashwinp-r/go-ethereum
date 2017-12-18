@@ -36,7 +36,7 @@ import (
 type ChainIndexerBackend interface {
 	// Reset initiates the processing of a new chain segment, potentially terminating
 	// any partially completed operations (in case of a reorg).
-	Reset(section uint64, prevHead common.Hash) error
+	Reset(section uint64, prevHead common.Hash, blockNr uint32) error
 
 	// Process crunches through the next header in the chain segment. The caller
 	// will ensure a sequential order of headers.
@@ -340,7 +340,7 @@ func (c *ChainIndexer) processSection(section uint64, lastHead common.Hash) (com
 
 	// Reset and partial processing
 
-	if err := c.backend.Reset(section, lastHead); err != nil {
+	if err := c.backend.Reset(section, lastHead, uint32(section * c.sectionSize)); err != nil {
 		c.setValidSections(0)
 		return common.Hash{}, err
 	}

@@ -76,8 +76,8 @@ type StateDB struct {
 }
 
 // Create a new state from a given trie
-func New(root common.Hash, db Database) (*StateDB, error) {
-	tr, err := db.OpenTrie(root)
+func New(root common.Hash, db Database, blockNr uint32) (*StateDB, error) {
+	tr, err := db.OpenTrie(root, blockNr)
 	if err != nil {
 		return nil, err
 	}
@@ -105,8 +105,8 @@ func (self *StateDB) Error() error {
 
 // Reset clears out all emphemeral state objects from the state db, but keeps
 // the underlying state trie to avoid reloading data for the next operations.
-func (self *StateDB) Reset(root common.Hash) error {
-	tr, err := self.db.OpenTrie(root)
+func (self *StateDB) Reset(root common.Hash, blockNr uint32) error {
+	tr, err := self.db.OpenTrie(root, blockNr)
 	if err != nil {
 		return err
 	}
@@ -228,23 +228,23 @@ func (self *StateDB) GetCodeHash(addr common.Address) common.Hash {
 	return common.BytesToHash(stateObject.CodeHash())
 }
 
-func (self *StateDB) GetState(a common.Address, b common.Hash) common.Hash {
+func (self *StateDB) GetState(a common.Address, b common.Hash, blockNr uint32) common.Hash {
 	stateObject := self.getStateObject(a)
 	if stateObject != nil {
-		return stateObject.GetState(self.db, b)
+		return stateObject.GetState(self.db, b, blockNr)
 	}
 	return common.Hash{}
 }
 
 // StorageTrie returns the storage trie of an account.
 // The return value is a copy and is nil for non-existent accounts.
-func (self *StateDB) StorageTrie(a common.Address) Trie {
+func (self *StateDB) StorageTrie(a common.Address, blockNr uint32) Trie {
 	stateObject := self.getStateObject(a)
 	if stateObject == nil {
 		return nil
 	}
 	cpy := stateObject.deepCopy(self, nil)
-	return cpy.updateTrie(self.db)
+	return cpy.updateTrie(self.db, blockNr)
 }
 
 func (self *StateDB) HasSuicided(addr common.Address) bool {
@@ -296,10 +296,10 @@ func (self *StateDB) SetCode(addr common.Address, code []byte) {
 	}
 }
 
-func (self *StateDB) SetState(addr common.Address, key common.Hash, value common.Hash) {
+func (self *StateDB) SetState(addr common.Address, key common.Hash, value common.Hash, blockNr uint32) {
 	stateObject := self.GetOrNewStateObject(addr)
 	if stateObject != nil {
-		stateObject.SetState(self.db, key, value)
+		stateObject.SetState(self.db, key, value, blockNr)
 	}
 }
 
@@ -423,7 +423,7 @@ func (self *StateDB) CreateAccount(addr common.Address) {
 	}
 }
 
-func (db *StateDB) ForEachStorage(addr common.Address, cb func(key, value common.Hash) bool) {
+func (db *StateDB) ForEachStorage(addr common.Address, cb func(key, value common.Hash) bool, blockNr uint32) {
 	so := db.getStateObject(addr)
 	if so == nil {
 		return
@@ -434,7 +434,7 @@ func (db *StateDB) ForEachStorage(addr common.Address, cb func(key, value common
 		cb(h, value)
 	}
 
-	it := trie.NewIterator(so.getTrie(db.db).NodeIterator(nil))
+	it := trie.NewIterator(so.getTrie(db.db, blockNr).NodeIterator(nil))
 	for it.Next() {
 		// ignore cached values
 		key := common.BytesToHash(db.trie.GetKey(it.Key))
@@ -514,13 +514,13 @@ func (self *StateDB) GetRefund() *big.Int {
 
 // Finalise finalises the state by removing the self destructed objects
 // and clears the journal as well as the refunds.
-func (s *StateDB) Finalise(deleteEmptyObjects bool) {
+func (s *StateDB) Finalise(deleteEmptyObjects bool, blockNr uint32) {
 	for addr := range s.stateObjectsDirty {
 		stateObject := s.stateObjects[addr]
 		if stateObject.suicided || (deleteEmptyObjects && stateObject.empty()) {
 			s.deleteStateObject(stateObject)
 		} else {
-			stateObject.updateRoot(s.db)
+			stateObject.updateRoot(s.db, blockNr)
 			s.updateStateObject(stateObject)
 		}
 	}
@@ -531,8 +531,8 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 // IntermediateRoot computes the current root hash of the state trie.
 // It is called in between transactions to get the root hash that
 // goes into transaction receipts.
-func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
-	s.Finalise(deleteEmptyObjects)
+func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool, blockNr uint32) common.Hash {
+	s.Finalise(deleteEmptyObjects, blockNr)
 	return s.trie.Hash()
 }
 
@@ -572,7 +572,7 @@ func (s *StateDB) clearJournalAndRefund() {
 }
 
 // CommitTo writes the state to the given database.
-func (s *StateDB) CommitTo(dbw trie.DatabaseWriter, deleteEmptyObjects bool) (root common.Hash, err error) {
+func (s *StateDB) CommitTo(dbw trie.DatabaseWriter, deleteEmptyObjects bool, blockNr uint32) (root common.Hash, err error) {
 	defer s.clearJournalAndRefund()
 
 	// Commit objects to the trie.
@@ -592,7 +592,7 @@ func (s *StateDB) CommitTo(dbw trie.DatabaseWriter, deleteEmptyObjects bool) (ro
 				stateObject.dirtyCode = false
 			}
 			// Write any storage changes in the state object to its storage trie.
-			if err := stateObject.CommitTrie(s.db, dbw); err != nil {
+			if err := stateObject.CommitTrie(s.db, dbw, blockNr); err != nil {
 				return common.Hash{}, err
 			}
 			// Update the object in the main account trie.

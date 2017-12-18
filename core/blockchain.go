@@ -18,6 +18,7 @@
 package core
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -194,7 +195,7 @@ func (bc *BlockChain) loadLastState() error {
 		return bc.Reset()
 	}
 	// Make sure the state associated with the block is available
-	if _, err := state.New(currentBlock.Root(), bc.stateCache); err != nil {
+	if _, err := state.New(currentBlock.Root(), bc.stateCache, uint32(currentBlock.NumberU64())); err != nil {
 		// Dangling block without a state associated, init from scratch
 		log.Warn("Head state missing, resetting chain", "number", currentBlock.Number(), "hash", currentBlock.Hash())
 		return bc.Reset()
@@ -259,7 +260,7 @@ func (bc *BlockChain) SetHead(head uint64) error {
 		bc.currentBlock = bc.GetBlock(currentHeader.Hash(), currentHeader.Number.Uint64())
 	}
 	if bc.currentBlock != nil {
-		if _, err := state.New(bc.currentBlock.Root(), bc.stateCache); err != nil {
+		if _, err := state.New(bc.currentBlock.Root(), bc.stateCache, uint32(currentHeader.Number.Uint64())); err != nil {
 			// Rewound state missing, rolled back to before pivot, reset to genesis
 			bc.currentBlock = nil
 		}
@@ -292,7 +293,9 @@ func (bc *BlockChain) FastSyncCommitHead(hash common.Hash) error {
 	if block == nil {
 		return fmt.Errorf("non existent block [%x…]", hash[:4])
 	}
-	if _, err := trie.NewSecure(block.Root(), bc.chainDb, 0); err != nil {
+	suffix := make([]byte, 4)
+	binary.LittleEndian.PutUint32(suffix, uint32(block.NumberU64()))
+	if _, err := trie.NewSecure(block.Root(), bc.chainDb, 0, []byte("AT"), suffix); err != nil {
 		return err
 	}
 	// If all checks out, manually set the head block
@@ -377,12 +380,12 @@ func (bc *BlockChain) Processor() Processor {
 
 // State returns a new mutable state based on the current HEAD block.
 func (bc *BlockChain) State() (*state.StateDB, error) {
-	return bc.StateAt(bc.CurrentBlock().Root())
+	return bc.StateAt(bc.CurrentBlock().Root(), uint32(bc.CurrentHeader().Number.Uint64()))
 }
 
 // StateAt returns a new mutable state based on a particular point in time.
-func (bc *BlockChain) StateAt(root common.Hash) (*state.StateDB, error) {
-	return state.New(root, bc.stateCache)
+func (bc *BlockChain) StateAt(root common.Hash, blockNr uint32) (*state.StateDB, error) {
+	return state.New(root, bc.stateCache, blockNr)
 }
 
 // Reset purges the entire blockchain, restoring it to its genesis state.
@@ -532,7 +535,7 @@ func (bc *BlockChain) HasBlockAndState(hash common.Hash) bool {
 		return false
 	}
 	// Ensure the associated state is also present
-	_, err := bc.stateCache.OpenTrie(block.Root())
+	_, err := bc.stateCache.OpenTrie(block.Root(), uint32(block.NumberU64()))
 	return err == nil
 }
 
@@ -808,7 +811,7 @@ func (bc *BlockChain) WriteBlockAndState(block *types.Block, receipts []*types.R
 	if err := WriteBlock(batch, block); err != nil {
 		return NonStatTy, err
 	}
-	if _, err := state.CommitTo(batch, bc.config.IsEIP158(block.Number())); err != nil {
+	if _, err := state.CommitTo(batch, bc.config.IsEIP158(block.Number()), uint32(block.NumberU64())); err != nil {
 		return NonStatTy, err
 	}
 	if err := WriteBlockReceipts(batch, block.Hash(), block.NumberU64(), receipts); err != nil {
@@ -963,7 +966,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		} else {
 			parent = chain[i-1]
 		}
-		state, err := state.New(parent.Root(), bc.stateCache)
+		state, err := state.New(parent.Root(), bc.stateCache, uint32(block.NumberU64()-1))
 		if err != nil {
 			return i, events, coalescedLogs, err
 		}

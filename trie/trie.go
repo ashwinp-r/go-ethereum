@@ -87,6 +87,9 @@ type Trie struct {
 	db           Database
 	originalRoot common.Hash
 
+	// Prefix and suffix to form the database key
+	prefix, suffix	[]byte
+
 	// Cache generation values.
 	// cachegen increases by one with each commit operation.
 	// new nodes are tagged with the current generation and unloaded
@@ -111,8 +114,8 @@ func (t *Trie) newFlag() nodeFlag {
 // trie is initially empty and does not require a database. Otherwise,
 // New will panic if db is nil and returns a MissingNodeError if root does
 // not exist in the database. Accessing the trie loads nodes from db on demand.
-func New(root common.Hash, db Database) (*Trie, error) {
-	trie := &Trie{db: db, originalRoot: root}
+func New(root common.Hash, db Database, prefix, suffix []byte) (*Trie, error) {
+	trie := &Trie{db: db, originalRoot: root, prefix: prefix, suffix: suffix}
 	if (root != common.Hash{}) && root != emptyRoot {
 		if db == nil {
 			panic("trie.New: cannot use existing root without a database")

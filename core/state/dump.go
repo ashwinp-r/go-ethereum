@@ -39,7 +39,7 @@ type Dump struct {
 	Accounts map[string]DumpAccount `json:"accounts"`
 }
 
-func (self *StateDB) RawDump() Dump {
+func (self *StateDB) RawDump(blockNr uint32) Dump {
 	dump := Dump{
 		Root:     fmt.Sprintf("%x", self.trie.Hash()),
 		Accounts: make(map[string]DumpAccount),
@@ -62,7 +62,7 @@ func (self *StateDB) RawDump() Dump {
 			Code:     common.Bytes2Hex(obj.Code(self.db)),
 			Storage:  make(map[string]string),
 		}
-		storageIt := trie.NewIterator(obj.getTrie(self.db).NodeIterator(nil))
+		storageIt := trie.NewIterator(obj.getTrie(self.db, blockNr).NodeIterator(nil))
 		for storageIt.Next() {
 			account.Storage[common.Bytes2Hex(self.trie.GetKey(storageIt.Key))] = common.Bytes2Hex(storageIt.Value)
 		}
@@ -71,8 +71,8 @@ func (self *StateDB) RawDump() Dump {
 	return dump
 }
 
-func (self *StateDB) Dump() []byte {
-	json, err := json.MarshalIndent(self.RawDump(), "", "    ")
+func (self *StateDB) Dump(blockNr uint32) []byte {
+	json, err := json.MarshalIndent(self.RawDump(blockNr), "", "    ")
 	if err != nil {
 		fmt.Println("dump err", err)
 	}

@@ -180,7 +180,7 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, db ethdb.Dat
 			gen(i, b)
 		}
 		ethash.AccumulateRewards(config, statedb, h, b.uncles)
-		root, err := statedb.CommitTo(db, config.IsEIP158(h.Number))
+		root, err := statedb.CommitTo(db, config.IsEIP158(h.Number), uint32(h.Number.Uint64()))
 		if err != nil {
 			panic(fmt.Sprintf("state write error: %v", err))
 		}
@@ -188,7 +188,7 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, db ethdb.Dat
 		return types.NewBlock(h, b.txs, b.uncles, b.receipts), b.receipts
 	}
 	for i := 0; i < n; i++ {
-		statedb, err := state.New(parent.Root(), state.NewDatabase(db))
+		statedb, err := state.New(parent.Root(), state.NewDatabase(db), uint32(parent.NumberU64()))
 		if err != nil {
 			panic(err)
 		}
@@ -210,7 +210,7 @@ func makeHeader(config *params.ChainConfig, parent *types.Block, state *state.St
 	}
 
 	return &types.Header{
-		Root:       state.IntermediateRoot(config.IsEIP158(parent.Number())),
+		Root:       state.IntermediateRoot(config.IsEIP158(parent.Number()), uint32(parent.NumberU64())),
 		ParentHash: parent.Hash(),
 		Coinbase:   parent.Coinbase(),
 		Difficulty: ethash.CalcDifficulty(config, time.Uint64(), &types.Header{

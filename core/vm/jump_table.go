@@ -24,8 +24,8 @@ import (
 )
 
 type (
-	executionFunc       func(pc *uint64, env *EVM, contract *Contract, memory *Memory, stack *Stack) ([]byte, error)
-	gasFunc             func(params.GasTable, *EVM, *Contract, *Stack, *Memory, uint64) (uint64, error) // last parameter is the requested memory size as a uint64
+	executionFunc       func(pc *uint64, env *EVM, contract *Contract, memory *Memory, stack *Stack, blockNr uint32) ([]byte, error)
+	gasFunc             func(params.GasTable, *EVM, *Contract, *Stack, *Memory, uint64, uint32) (uint64, error) // last parameter is the requested memory size as a uint64
 	stackValidationFunc func(*Stack) error
 	memorySizeFunc      func(*Stack) *big.Int
 )

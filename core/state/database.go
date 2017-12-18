@@ -17,6 +17,7 @@
 package state
 
 import (
+	"encoding/binary"
 	"fmt"
 	"sync"
 
@@ -43,8 +44,8 @@ type Database interface {
 	// Accessing tries:
 	// OpenTrie opens the main account trie.
 	// OpenStorageTrie opens the storage trie of an account.
-	OpenTrie(root common.Hash) (Trie, error)
-	OpenStorageTrie(addrHash, root common.Hash) (Trie, error)
+	OpenTrie(root common.Hash, blockNr uint32) (Trie, error)
+	OpenStorageTrie(addrHash, root common.Hash, blockNr uint32) (Trie, error)
 	// Accessing contract code:
 	ContractCode(addrHash, codeHash common.Hash) ([]byte, error)
 	ContractCodeSize(addrHash, codeHash common.Hash) (int, error)
@@ -77,7 +78,7 @@ type cachingDB struct {
 	codeSizeCache *lru.Cache
 }
 
-func (db *cachingDB) OpenTrie(root common.Hash) (Trie, error) {
+func (db *cachingDB) OpenTrie(root common.Hash, blockNr uint32) (Trie, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
@@ -86,7 +87,9 @@ func (db *cachingDB) OpenTrie(root common.Hash) (Trie, error) {
 			return cachedTrie{db.pastTries[i].Copy(), db}, nil
 		}
 	}
-	tr, err := trie.NewSecure(root, db.db, MaxTrieCacheGen)
+	suffix := make([]byte, 4)
+	binary.LittleEndian.PutUint32(suffix, blockNr)
+	tr, err := trie.NewSecure(root, db.db, MaxTrieCacheGen, []byte("AT"), suffix) // "AT" stands for Account Trie
 	if err != nil {
 		return nil, err
 	}
@@ -105,8 +108,10 @@ func (db *cachingDB) pushTrie(t *trie.SecureTrie) {
 	}
 }
 
-func (db *cachingDB) OpenStorageTrie(addrHash, root common.Hash) (Trie, error) {
-	return trie.NewSecure(root, db.db, 0)
+func (db *cachingDB) OpenStorageTrie(addrHash, root common.Hash, blockNr uint32) (Trie, error) {
+	suffix := make([]byte, 4)
+	binary.LittleEndian.PutUint32(suffix, blockNr)
+	return trie.NewSecure(root, db.db, 0, addrHash[:], suffix)
 }
 
 func (db *cachingDB) CopyTrie(t Trie) Trie {
