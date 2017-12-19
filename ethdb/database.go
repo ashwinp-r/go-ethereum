@@ -29,6 +29,7 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/filter"
 	"github.com/syndtr/goleveldb/leveldb/iterator"
 	"github.com/syndtr/goleveldb/leveldb/opt"
+	"github.com/syndtr/goleveldb/leveldb/util"
 
 	gometrics "github.com/rcrowley/go-metrics"
 )
@@ -133,6 +134,17 @@ func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
 	}
 	return dat, nil
 	//return rle.Decompress(dat)
+}
+
+// GetFirst returns the value corresponding to the lowest key from the range
+func (db *LDBDatabase) GetFirst(start []byte, limit []byte) ([]byte, error) {
+	it := db.db.NewIterator(&util.Range{start, limit}, nil)
+	defer it.Release()
+	found := it.First()
+	if !found {
+		return nil, errors.ErrNotFound
+	}
+	return it.Value(), nil
 }
 
 // Delete deletes the key from the queue and database
@@ -323,6 +335,10 @@ func (dt *table) Has(key []byte) (bool, error) {
 
 func (dt *table) Get(key []byte) ([]byte, error) {
 	return dt.db.Get(append([]byte(dt.prefix), key...))
+}
+
+func (dt *table) GetFirst(start []byte, limit []byte) ([]byte, error) {
+	return dt.db.GetFirst(append([]byte(dt.prefix), start...), append([]byte(dt.prefix), limit...))
 }
 
 func (dt *table) Delete(key []byte) error {

@@ -559,6 +559,10 @@ func (db *readTraceDB) Get(k []byte) ([]byte, error) {
 	return db.db.Get(k)
 }
 
+func (db *readTraceDB) GetFirst(start []byte, limit []byte) ([]byte, error) {
+	return db.db.GetFirst(start, limit)
+}
+
 // Has returns true if the node set contains the given key
 func (db *readTraceDB) Has(key []byte) (bool, error) {
 	_, err := db.Get(key)

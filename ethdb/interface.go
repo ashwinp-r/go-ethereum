@@ -29,6 +29,7 @@ type Putter interface {
 type Database interface {
 	Putter
 	Get(key []byte) ([]byte, error)
+	GetFirst(start []byte, limit []byte) ([]byte, error)
 	Has(key []byte) (bool, error)
 	Delete(key []byte) error
 	Close()

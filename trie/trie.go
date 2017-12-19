@@ -66,6 +66,7 @@ type Database interface {
 // DatabaseReader wraps the Get method of a backing store for the trie.
 type DatabaseReader interface {
 	Get(key []byte) (value []byte, err error)
+	GetFirst(start []byte, limit []byte) ([]byte, error)
 	Has(key []byte) (bool, error)
 }
 
@@ -120,7 +121,7 @@ func New(root common.Hash, db Database, prefix, suffix []byte) (*Trie, error) {
 		if db == nil {
 			panic("trie.New: cannot use existing root without a database")
 		}
-		rootnode, err := trie.resolveHash(root[:], nil)
+		rootnode, err := trie.resolveHash(root[:], []byte{})
 		if err != nil {
 			return nil, err
 		}
@@ -450,7 +451,9 @@ func (t *Trie) resolve(n node, prefix []byte) (node, error) {
 func (t *Trie) resolveHash(n hashNode, prefix []byte) (node, error) {
 	cacheMissCounter.Inc(1)
 
-	enc, err := t.db.Get(n)
+	enc, err := t.db.GetFirst(
+		compositeKey(prefix, len(prefix), t.prefix, t.suffix, n),
+		compositeKey(prefix, len(prefix), t.prefix, t.suffix, []byte{0xff, 0xff, 0xff, 0xff}))
 	if err != nil || enc == nil {
 		return nil, &MissingNodeError{NodeHash: common.BytesToHash(n), Path: prefix}
 	}

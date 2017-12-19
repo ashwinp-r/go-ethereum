@@ -18,6 +18,7 @@ package light
 
 import (
 	"errors"
+	"sort"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -62,6 +63,27 @@ func (db *NodeSet) Get(key []byte) ([]byte, error) {
 		return entry, nil
 	}
 	return nil, errors.New("not found")
+}
+
+func (db *NodeSet) GetFirst(start []byte, limit []byte) ([]byte, error) {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+	keys := make([]string, len(db.db))
+	i := 0
+	for k, _ := range db.db {
+		keys[i] = k
+		i++
+	}
+	sort.Strings(keys)
+	startStr := string(start)
+	limitStr := string(limit)
+	index := sort.Search(len(keys), func(i int) bool {
+		return keys[i] >= startStr && keys[i] <= limitStr
+	})
+	if index == -1 {
+		return nil, errors.New("key not found in range")
+	}
+	return db.db[keys[index]], nil
 }
 
 // Has returns true if the node set contains the given key

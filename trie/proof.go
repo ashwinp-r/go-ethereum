@@ -38,26 +38,27 @@ import (
 func (t *Trie) Prove(key []byte, fromLevel uint, proofDb DatabaseWriter) error {
 	// Collect all nodes on the path to key.
 	key = keybytesToHex(key)
+	pos := 0
 	nodes := []node{}
 	tn := t.root
-	for len(key) > 0 && tn != nil {
+	for pos < len(key) && tn != nil {
 		switch n := tn.(type) {
 		case *shortNode:
-			if len(key) < len(n.Key) || !bytes.Equal(n.Key, key[:len(n.Key)]) {
+			if len(key) - pos < len(n.Key) || !bytes.Equal(n.Key, key[pos:pos+len(n.Key)]) {
 				// The trie doesn't contain the key.
 				tn = nil
 			} else {
 				tn = n.Val
-				key = key[len(n.Key):]
+				pos += len(n.Key)
 			}
 			nodes = append(nodes, n)
 		case *fullNode:
-			tn = n.Children[key[0]]
-			key = key[1:]
+			tn = n.Children[key[pos]]
+			pos++
 			nodes = append(nodes, n)
 		case hashNode:
 			var err error
-			tn, err = t.resolveHash(n, nil)
+			tn, err = t.resolveHash(n, key[:pos])
 			if err != nil {
 				log.Error(fmt.Sprintf("Unhandled trie error: %v", err))
 				return err
