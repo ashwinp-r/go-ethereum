@@ -965,7 +965,8 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		} else {
 			parent = chain[i-1]
 		}
-		state, err := state.New(parent.Root(), bc.stateCache, uint32(block.NumberU64()-1))
+		readBlockNr := uint32(block.NumberU64()-1)
+		state, err := state.New(parent.Root(), bc.stateCache, readBlockNr)
 		if err != nil {
 			return i, events, coalescedLogs, err
 		}

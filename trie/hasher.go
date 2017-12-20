@@ -198,7 +198,7 @@ func (h *hasher) hashChildren(original node, db DatabaseWriter, key []byte, pos 
 }
 
 func compositeKey(key []byte, pos int, prefix []byte, suffix []byte, hash []byte) []byte {
-	return append(append(append(prefix, hexToCompact(key[:pos])...), suffix...), hash[:4]...)
+	return append(prefix, append([]byte{byte(pos)}, append(hexToCompact(key[:pos]), append(suffix, hash[:4]...)...)...)...)
 }
 
 func (h *hasher) store(n node, db DatabaseWriter, force bool, key []byte, pos int, prefix []byte, suffix []byte) (node, error) {
@@ -225,7 +225,8 @@ func (h *hasher) store(n node, db DatabaseWriter, force bool, key []byte, pos in
 	if db != nil {
 		// db might be a leveldb batch, which is not safe for concurrent writes
 		h.mu.Lock()
-		err := db.Put(compositeKey(key, pos, prefix, suffix, hash), calculator.buffer.Bytes())
+		bytesToWrite := calculator.buffer.Bytes()
+		err := db.Put(compositeKey(key, pos, prefix, suffix, hash), bytesToWrite)
 		h.mu.Unlock()
 
 		return hash, err

@@ -220,7 +220,7 @@ func (t *Trie) Update(key, value []byte, blockNr uint32) {
 func (t *Trie) TryUpdate(key, value []byte, blockNr uint32) error {
 	k := keybytesToHex(key)
 	if len(value) != 0 {
-		_, n, err := t.insert(t.root, nil, k, valueNode(value), blockNr)
+		_, n, err := t.insert(t.root, []byte{}, k, valueNode(value), blockNr)
 		if err != nil {
 			return err
 		}
@@ -453,10 +453,10 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32) (node, err
 	cacheMissCounter.Inc(1)
 
 	suffix := make([]byte, 4)
-	binary.LittleEndian.PutUint32(suffix, blockNr^0xffffffff) // Invert the block number
+	binary.BigEndian.PutUint32(suffix, blockNr^0xffffffff) // Invert the block number
 	enc, err := t.db.GetFirst(
 		compositeKey(prefix, len(prefix), t.prefix, suffix, []byte{0, 0, 0, 0}),
-		compositeKey(prefix, len(prefix), t.prefix, suffix, []byte{0xff, 0xff, 0xff, 0xff}))
+		compositeKey(prefix, len(prefix), t.prefix, []byte{0xff, 0xff, 0xff, 0xff}, []byte{0xff, 0xff, 0xff, 0xff}))
 	if err != nil || enc == nil {
 		return nil, &MissingNodeError{NodeHash: common.BytesToHash(n), Path: prefix}
 	}
@@ -511,6 +511,6 @@ func (t *Trie) hashRoot(db DatabaseWriter, writeBlockNr uint32) (node, node, err
 	}
 	h := newHasher(t.cachegen, t.cachelimit)
 	suffix := make([]byte, 4)
-	binary.LittleEndian.PutUint32(suffix, writeBlockNr^0xffffffff)
+	binary.BigEndian.PutUint32(suffix, writeBlockNr^0xffffffff)
 	return h.hash(t.root, db, true, []byte{}, 0, t.prefix, suffix)
 }
