@@ -23,7 +23,7 @@ import (
 )
 
 type journalEntry interface {
-	undo(*StateDB)
+	undo(statedb *StateDB, blockNr uint32)
 }
 
 type journal []journalEntry
@@ -77,17 +77,17 @@ type (
 	}
 )
 
-func (ch createObjectChange) undo(s *StateDB) {
+func (ch createObjectChange) undo(s *StateDB, blockNr uint32) {
 	delete(s.stateObjects, *ch.account)
 	delete(s.stateObjectsDirty, *ch.account)
 }
 
-func (ch resetObjectChange) undo(s *StateDB) {
+func (ch resetObjectChange) undo(s *StateDB, blockNr uint32) {
 	s.setStateObject(ch.prev)
 }
 
-func (ch suicideChange) undo(s *StateDB) {
-	obj := s.getStateObject(*ch.account)
+func (ch suicideChange) undo(s *StateDB, blockNr uint32) {
+	obj := s.getStateObject(*ch.account, blockNr)
 	if obj != nil {
 		obj.suicided = ch.prev
 		obj.setBalance(ch.prevbalance)
@@ -96,36 +96,36 @@ func (ch suicideChange) undo(s *StateDB) {
 
 var ripemd = common.HexToAddress("0000000000000000000000000000000000000003")
 
-func (ch touchChange) undo(s *StateDB) {
+func (ch touchChange) undo(s *StateDB, blockNr uint32) {
 	if !ch.prev && *ch.account != ripemd {
-		s.getStateObject(*ch.account).touched = ch.prev
+		s.getStateObject(*ch.account, blockNr).touched = ch.prev
 		if !ch.prevDirty {
 			delete(s.stateObjectsDirty, *ch.account)
 		}
 	}
 }
 
-func (ch balanceChange) undo(s *StateDB) {
-	s.getStateObject(*ch.account).setBalance(ch.prev)
+func (ch balanceChange) undo(s *StateDB, blockNr uint32) {
+	s.getStateObject(*ch.account, blockNr).setBalance(ch.prev)
 }
 
-func (ch nonceChange) undo(s *StateDB) {
-	s.getStateObject(*ch.account).setNonce(ch.prev)
+func (ch nonceChange) undo(s *StateDB, blockNr uint32) {
+	s.getStateObject(*ch.account, blockNr).setNonce(ch.prev)
 }
 
-func (ch codeChange) undo(s *StateDB) {
-	s.getStateObject(*ch.account).setCode(common.BytesToHash(ch.prevhash), ch.prevcode)
+func (ch codeChange) undo(s *StateDB, blockNr uint32) {
+	s.getStateObject(*ch.account, blockNr).setCode(common.BytesToHash(ch.prevhash), ch.prevcode)
 }
 
-func (ch storageChange) undo(s *StateDB) {
-	s.getStateObject(*ch.account).setState(ch.key, ch.prevalue)
+func (ch storageChange) undo(s *StateDB, blockNr uint32) {
+	s.getStateObject(*ch.account, blockNr).setState(ch.key, ch.prevalue)
 }
 
-func (ch refundChange) undo(s *StateDB) {
+func (ch refundChange) undo(s *StateDB, blockNr uint32) {
 	s.refund = ch.prev
 }
 
-func (ch addLogChange) undo(s *StateDB) {
+func (ch addLogChange) undo(s *StateDB, blockNr uint32) {
 	logs := s.logs[ch.txhash]
 	if len(logs) == 1 {
 		delete(s.logs, ch.txhash)
@@ -135,6 +135,6 @@ func (ch addLogChange) undo(s *StateDB) {
 	s.logSize--
 }
 
-func (ch addPreimageChange) undo(s *StateDB) {
+func (ch addPreimageChange) undo(s *StateDB, blockNr uint32) {
 	delete(s.preimages, ch.hash)
 }

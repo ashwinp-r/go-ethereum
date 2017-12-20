@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -616,11 +615,11 @@ func (api *PrivateDebugAPI) StorageRangeAt(ctx context.Context, blockHash common
 	if st == nil {
 		return StorageRangeResult{}, fmt.Errorf("account %x doesn't exist", contractAddress)
 	}
-	return storageRangeAt(st, keyStart, maxResult)
+	return storageRangeAt(st, keyStart, maxResult, blockNr)
 }
 
-func storageRangeAt(st state.Trie, start []byte, maxResult int) (StorageRangeResult, error) {
-	it := trie.NewIterator(st.NodeIterator(start))
+func storageRangeAt(st state.Trie, start []byte, maxResult int, blockNr uint32) (StorageRangeResult, error) {
+	it := trie.NewIterator(st.NodeIterator(start, blockNr))
 	result := StorageRangeResult{Storage: storageMap{}}
 	for i := 0; i < maxResult && it.Next(); i++ {
 		_, content, _, err := rlp.Split(it.Value)
@@ -702,19 +701,18 @@ func (api *PrivateDebugAPI) getModifiedAccounts(startBlock, endBlock *types.Bloc
 		return nil, fmt.Errorf("start block height (%d) must be less than end block height (%d)", startBlock.Number().Uint64(), endBlock.Number().Uint64())
 	}
 
-	suffix := make([]byte, 4)
-	binary.LittleEndian.PutUint32(suffix, uint32(startBlock.NumberU64()))
-	oldTrie, err := trie.NewSecure(startBlock.Root(), api.eth.chainDb, 0, []byte("AT"), suffix)
+	oldTrie, err := trie.NewSecure(startBlock.Root(), api.eth.chainDb, 0, []byte("AT"), uint32(startBlock.NumberU64()))
 	if err != nil {
 		return nil, err
 	}
-	binary.LittleEndian.PutUint32(suffix, uint32(endBlock.NumberU64()))
-	newTrie, err := trie.NewSecure(endBlock.Root(), api.eth.chainDb, 0, []byte("AT"), suffix)
+	newTrie, err := trie.NewSecure(endBlock.Root(), api.eth.chainDb, 0, []byte("AT"), uint32(endBlock.NumberU64()))
 	if err != nil {
 		return nil, err
 	}
 
-	diff, _ := trie.NewDifferenceIterator(oldTrie.NodeIterator([]byte{}), newTrie.NodeIterator([]byte{}))
+	diff, _ := trie.NewDifferenceIterator(
+		oldTrie.NodeIterator([]byte{},uint32(startBlock.NumberU64())), 
+		newTrie.NodeIterator([]byte{}, uint32(endBlock.NumberU64())))
 	iter := trie.NewIterator(diff)
 
 	var dirty []common.Address

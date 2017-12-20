@@ -569,10 +569,9 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		for _, req := range req.Reqs {
 			// Retrieve the requested state entry, stopping if enough was found
 			if header := core.GetHeader(pm.chainDb, req.BHash, core.GetBlockNumber(pm.chainDb, req.BHash)); header != nil {
-				suffix := make([]byte, 4)
-				binary.LittleEndian.PutUint32(suffix, uint32(header.Number.Uint64()))
-				if trie, _ := trie.New(header.Root, pm.chainDb, []byte("AT"), suffix); trie != nil {
-					sdata := trie.Get(req.AccKey)
+				readBlockNr := uint32(header.Number.Uint64()-1)
+				if trie, _ := trie.New(header.Root, pm.chainDb, []byte("AT"), readBlockNr); trie != nil {
+					sdata := trie.Get(req.AccKey, readBlockNr)
 					var acc state.Account
 					if err := rlp.DecodeBytes(sdata, &acc); err == nil {
 						entry, _ := pm.chainDb.Get(acc.CodeHash)
@@ -698,20 +697,19 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			}
 			// Retrieve the requested state entry, stopping if enough was found
 			if header := core.GetHeader(pm.chainDb, req.BHash, core.GetBlockNumber(pm.chainDb, req.BHash)); header != nil {
-				suffix := make([]byte, 4)
-				binary.LittleEndian.PutUint32(suffix, uint32(header.Number.Uint64()))
-				if tr, _ := trie.New(header.Root, pm.chainDb, []byte("AT"), suffix); tr != nil {
+				readBlockNr := uint32(header.Number.Uint64()-1)
+				if tr, _ := trie.New(header.Root, pm.chainDb, []byte("AT"), readBlockNr); tr != nil {
 					if len(req.AccKey) > 0 {
-						sdata := tr.Get(req.AccKey)
+						sdata := tr.Get(req.AccKey, readBlockNr)
 						tr = nil
 						var acc state.Account
 						if err := rlp.DecodeBytes(sdata, &acc); err == nil {
-							tr, _ = trie.New(acc.Root, pm.chainDb, req.AccKey[:], suffix)
+							tr, _ = trie.New(acc.Root, pm.chainDb, req.AccKey[:], readBlockNr)
 						}
 					}
 					if tr != nil {
 						var proof light.NodeList
-						tr.Prove(req.Key, 0, &proof)
+						tr.Prove(req.Key, 0, &proof, readBlockNr)
 						proofs = append(proofs, proof)
 						bytes += proof.DataSize()
 					}
@@ -749,11 +747,11 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			if nodes.DataSize() >= softResponseLimit {
 				break
 			}
-			suffix := make([]byte, 4)
+			var readBlockNr uint32
 			if tr == nil || req.BHash != lastBHash {
 				if header := core.GetHeader(pm.chainDb, req.BHash, core.GetBlockNumber(pm.chainDb, req.BHash)); header != nil {
-					binary.LittleEndian.PutUint32(suffix, uint32(header.Number.Uint64()))
-					tr, _ = trie.New(header.Root, pm.chainDb, []byte("AT"), suffix)
+					readBlockNr = uint32(header.Number.Uint64()-1)
+					tr, _ = trie.New(header.Root, pm.chainDb, []byte("AT"), readBlockNr)
 				} else {
 					tr = nil
 				}
@@ -763,19 +761,19 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			if tr != nil {
 				if len(req.AccKey) > 0 {
 					if str == nil || !bytes.Equal(req.AccKey, lastAccKey) {
-						sdata := tr.Get(req.AccKey)
+						sdata := tr.Get(req.AccKey, readBlockNr)
 						str = nil
 						var acc state.Account
 						if err := rlp.DecodeBytes(sdata, &acc); err == nil {
-							str, _ = trie.New(acc.Root, pm.chainDb, req.AccKey[:], suffix)
+							str, _ = trie.New(acc.Root, pm.chainDb, req.AccKey[:], readBlockNr)
 						}
 						lastAccKey = common.CopyBytes(req.AccKey)
 					}
 					if str != nil {
-						str.Prove(req.Key, req.FromLevel, nodes)
+						str.Prove(req.Key, req.FromLevel, nodes, readBlockNr)
 					}
 				} else {
-					tr.Prove(req.Key, req.FromLevel, nodes)
+					tr.Prove(req.Key, req.FromLevel, nodes, readBlockNr)
 				}
 			}
 		}
@@ -854,13 +852,12 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			if header := pm.blockchain.GetHeaderByNumber(req.BlockNum); header != nil {
 				sectionHead := core.GetCanonicalHash(pm.chainDb, (req.ChtNum+1)*light.ChtV1Frequency-1)
 				if root := light.GetChtRoot(pm.chainDb, req.ChtNum, sectionHead); root != (common.Hash{}) {
-					suffix := make([]byte, 4)
-					binary.LittleEndian.PutUint32(suffix, uint32(req.BlockNum))
-					if tr, _ := trie.New(root, trieDb, []byte("AT"), suffix); tr != nil {
+					readBlockNr := uint32(header.Number.Uint64()-1)
+					if tr, _ := trie.New(root, trieDb, []byte("AT"), readBlockNr); tr != nil {
 						var encNumber [8]byte
 						binary.BigEndian.PutUint64(encNumber[:], req.BlockNum)
 						var proof light.NodeList
-						tr.Prove(encNumber[:], 0, &proof)
+						tr.Prove(encNumber[:], 0, &proof, readBlockNr)
 						proofs = append(proofs, ChtResp{Header: header, Proof: proof})
 						bytes += proof.DataSize() + estHeaderRlpSize
 					}
@@ -908,9 +905,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 				var prefix string
 				root, prefix = pm.getHelperTrie(req.HelperTrieType, req.TrieIdx)
 				if root != (common.Hash{}) {
-					suffix := make([]byte, 4)
-					binary.LittleEndian.PutUint32(suffix, uint32(0))
-					if t, err := trie.New(root, ethdb.NewTable(pm.chainDb, prefix), []byte("AT"), suffix); err == nil {
+					if t, err := trie.New(root, ethdb.NewTable(pm.chainDb, prefix), []byte("AT"), 0); err == nil {
 						tr = t
 					}
 				}
@@ -926,7 +921,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 				auxBytes += len(data)
 			} else {
 				if tr != nil {
-					tr.Prove(req.Key, req.FromLevel, nodes)
+					tr.Prove(req.Key, req.FromLevel, nodes, 0)
 				}
 				if req.AuxReq != 0 {
 					data := pm.getHelperTrieAuxData(req)

@@ -64,8 +64,9 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		gp           = new(GasPool).AddGas(block.GasLimit())
 	)
 	// Mutate the the block and state according to any hard-fork specs
+	readBlockNr := uint32(block.NumberU64()-1)
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
-		misc.ApplyDAOHardFork(statedb)
+		misc.ApplyDAOHardFork(statedb, readBlockNr)
 	}
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
@@ -104,11 +105,12 @@ func ApplyTransaction(config *params.ChainConfig, bc *BlockChain, author *common
 	}
 
 	// Update the state with pending changes
+	readBlockNr := uint32(header.Number.Uint64()-1)
 	var root []byte
 	if config.IsByzantium(header.Number) {
-		statedb.Finalise(true, uint32(header.Number.Uint64()))
+		statedb.Finalise(true, readBlockNr)
 	} else {
-		root = statedb.IntermediateRoot(config.IsEIP158(header.Number), uint32(header.Number.Uint64())).Bytes()
+		root = statedb.IntermediateRoot(config.IsEIP158(header.Number), readBlockNr).Bytes()
 	}
 	usedGas.Add(usedGas, gas)
 

@@ -108,6 +108,10 @@ func NewTxPool(config *params.ChainConfig, chain *LightChain, relay TxRelayBacke
 	return pool
 }
 
+func (pool *TxPool) readBlockNumber() uint32 {
+	return uint32(pool.chain.CurrentHeader().Number.Uint64())
+}
+
 // currentState returns the light state of the current head header
 func (pool *TxPool) currentState(ctx context.Context) *state.StateDB {
 	return NewState(ctx, pool.chain.CurrentHeader(), pool.odr)
@@ -118,7 +122,7 @@ func (pool *TxPool) currentState(ctx context.Context) *state.StateDB {
 // client using the same key sent a transaction.
 func (pool *TxPool) GetNonce(ctx context.Context, addr common.Address) (uint64, error) {
 	state := pool.currentState(ctx)
-	nonce := state.GetNonce(addr)
+	nonce := state.GetNonce(addr, pool.readBlockNumber())
 	if state.Error() != nil {
 		return 0, state.Error()
 	}
@@ -351,7 +355,7 @@ func (pool *TxPool) validateTx(ctx context.Context, tx *types.Transaction) error
 	}
 	// Last but not least check for nonce errors
 	currentState := pool.currentState(ctx)
-	if n := currentState.GetNonce(from); n > tx.Nonce() {
+	if n := currentState.GetNonce(from, pool.readBlockNumber()); n > tx.Nonce() {
 		return core.ErrNonceTooLow
 	}
 
@@ -371,7 +375,7 @@ func (pool *TxPool) validateTx(ctx context.Context, tx *types.Transaction) error
 
 	// Transactor should have enough funds to cover the costs
 	// cost == V + GP * GL
-	if b := currentState.GetBalance(from); b.Cmp(tx.Cost()) < 0 {
+	if b := currentState.GetBalance(from, pool.readBlockNumber()); b.Cmp(tx.Cost()) < 0 {
 		return core.ErrInsufficientFunds
 	}
 

@@ -257,6 +257,10 @@ func NewTxPool(config TxPoolConfig, chainconfig *params.ChainConfig, chain block
 	return pool
 }
 
+func (pool *TxPool) readBlockNumber() uint32 {
+	return uint32(pool.chain.CurrentBlock().NumberU64())
+}
+
 // loop is the transaction pool's main event loop, waiting for and reacting to
 // outside blockchain events as well as for various reporting and transaction
 // eviction events.
@@ -402,7 +406,8 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 	if newHead == nil {
 		newHead = pool.chain.CurrentBlock().Header() // Special case during testing
 	}
-	statedb, err := pool.chain.StateAt(newHead.Root, uint32(newHead.Number.Uint64()))
+	readBlockNr := uint32(newHead.Number.Uint64()-1)
+	statedb, err := pool.chain.StateAt(newHead.Root, readBlockNr)
 	if err != nil {
 		log.Error("Failed to reset txpool state", "err", err)
 		return
@@ -424,7 +429,7 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 	// Update all accounts to the latest known pending nonce
 	for addr, list := range pool.pending {
 		txs := list.Flatten() // Heavy but will be cached and is needed by the miner anyway
-		pool.pendingState.SetNonce(addr, txs[len(txs)-1].Nonce()+1)
+		pool.pendingState.SetNonce(addr, txs[len(txs)-1].Nonce()+1, readBlockNr)
 	}
 	// Check the queue and move transactions over to the pending if possible
 	// or remove those that have become invalid
@@ -578,12 +583,12 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 		return ErrUnderpriced
 	}
 	// Ensure the transaction adheres to nonce ordering
-	if pool.currentState.GetNonce(from) > tx.Nonce() {
+	if pool.currentState.GetNonce(from, pool.readBlockNumber()) > tx.Nonce() {
 		return ErrNonceTooLow
 	}
 	// Transactor should have enough funds to cover the costs
 	// cost == V + GP * GL
-	if pool.currentState.GetBalance(from).Cmp(tx.Cost()) < 0 {
+	if pool.currentState.GetBalance(from, pool.readBlockNumber()).Cmp(tx.Cost()) < 0 {
 		return ErrInsufficientFunds
 	}
 	intrGas := IntrinsicGas(tx.Data(), tx.To() == nil, pool.homestead)
@@ -742,7 +747,7 @@ func (pool *TxPool) promoteTx(addr common.Address, hash common.Hash, tx *types.T
 	}
 	// Set the potentially new pending nonce and notify any subsystems of the new tx
 	pool.beats[addr] = time.Now()
-	pool.pendingState.SetNonce(addr, tx.Nonce()+1)
+	pool.pendingState.SetNonce(addr, tx.Nonce()+1, pool.readBlockNumber())
 
 	go pool.txFeed.Send(TxPreEvent{tx})
 }
@@ -885,8 +890,8 @@ func (pool *TxPool) removeTx(hash common.Hash) {
 				}
 			}
 			// Update the account nonce if needed
-			if nonce := tx.Nonce(); pool.pendingState.GetNonce(addr) > nonce {
-				pool.pendingState.SetNonce(addr, nonce)
+			if nonce := tx.Nonce(); pool.pendingState.GetNonce(addr, pool.readBlockNumber()) > nonce {
+				pool.pendingState.SetNonce(addr, nonce, pool.readBlockNumber())
 			}
 			return
 		}
@@ -918,14 +923,14 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 			continue // Just in case someone calls with a non existing account
 		}
 		// Drop all transactions that are deemed too old (low nonce)
-		for _, tx := range list.Forward(pool.currentState.GetNonce(addr)) {
+		for _, tx := range list.Forward(pool.currentState.GetNonce(addr, pool.readBlockNumber())) {
 			hash := tx.Hash()
 			log.Trace("Removed old queued transaction", "hash", hash)
 			delete(pool.all, hash)
 			pool.priced.Removed()
 		}
 		// Drop all transactions that are too costly (low balance or out of gas)
-		drops, _ := list.Filter(pool.currentState.GetBalance(addr), pool.currentMaxGas)
+		drops, _ := list.Filter(pool.currentState.GetBalance(addr, pool.readBlockNumber()), pool.currentMaxGas)
 		for _, tx := range drops {
 			hash := tx.Hash()
 			log.Trace("Removed unpayable queued transaction", "hash", hash)
@@ -934,7 +939,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 			queuedNofundsCounter.Inc(1)
 		}
 		// Gather all executable transactions and promote them
-		for _, tx := range list.Ready(pool.pendingState.GetNonce(addr)) {
+		for _, tx := range list.Ready(pool.pendingState.GetNonce(addr, pool.readBlockNumber())) {
 			hash := tx.Hash()
 			log.Trace("Promoting queued transaction", "hash", hash)
 			pool.promoteTx(addr, hash, tx)
@@ -992,8 +997,8 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 							pool.priced.Removed()
 
 							// Update the account nonce to the dropped transaction
-							if nonce := tx.Nonce(); pool.pendingState.GetNonce(offenders[i]) > nonce {
-								pool.pendingState.SetNonce(offenders[i], nonce)
+							if nonce := tx.Nonce(); pool.pendingState.GetNonce(offenders[i], pool.readBlockNumber()) > nonce {
+								pool.pendingState.SetNonce(offenders[i], nonce, pool.readBlockNumber())
 							}
 							log.Trace("Removed fairness-exceeding pending transaction", "hash", hash)
 						}
@@ -1014,8 +1019,8 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 						pool.priced.Removed()
 
 						// Update the account nonce to the dropped transaction
-						if nonce := tx.Nonce(); pool.pendingState.GetNonce(addr) > nonce {
-							pool.pendingState.SetNonce(addr, nonce)
+						if nonce := tx.Nonce(); pool.pendingState.GetNonce(addr, pool.readBlockNumber()) > nonce {
+							pool.pendingState.SetNonce(addr, nonce, pool.readBlockNumber())
 						}
 						log.Trace("Removed fairness-exceeding pending transaction", "hash", hash)
 					}
@@ -1073,7 +1078,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 func (pool *TxPool) demoteUnexecutables() {
 	// Iterate over all accounts and demote any non-executable transactions
 	for addr, list := range pool.pending {
-		nonce := pool.currentState.GetNonce(addr)
+		nonce := pool.currentState.GetNonce(addr, pool.readBlockNumber())
 
 		// Drop all transactions that are deemed too old (low nonce)
 		for _, tx := range list.Forward(nonce) {
@@ -1083,7 +1088,7 @@ func (pool *TxPool) demoteUnexecutables() {
 			pool.priced.Removed()
 		}
 		// Drop all transactions that are too costly (low balance or out of gas), and queue any invalids back for later
-		drops, invalids := list.Filter(pool.currentState.GetBalance(addr), pool.currentMaxGas)
+		drops, invalids := list.Filter(pool.currentState.GetBalance(addr, pool.readBlockNumber()), pool.currentMaxGas)
 		for _, tx := range drops {
 			hash := tx.Hash()
 			log.Trace("Removed unpayable pending transaction", "hash", hash)

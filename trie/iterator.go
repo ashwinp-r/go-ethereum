@@ -97,6 +97,7 @@ type nodeIterator struct {
 	stack []*nodeIteratorState // Hierarchy of trie nodes persisting the iteration state
 	path  []byte               // Path to the current node
 	err   error                // Failure set in case of an internal error in the iterator
+	blockNr uint32	
 }
 
 // iteratorEnd is stored in nodeIterator.err when iteration is done.
@@ -112,11 +113,11 @@ func (e seekError) Error() string {
 	return "seek error: " + e.err.Error()
 }
 
-func newNodeIterator(trie *Trie, start []byte) NodeIterator {
+func newNodeIterator(trie *Trie, start []byte, blockNr uint32) NodeIterator {
 	if trie.Hash() == emptyState {
 		return new(nodeIterator)
 	}
-	it := &nodeIterator{trie: trie}
+	it := &nodeIterator{trie: trie, blockNr: blockNr}
 	it.err = it.seek(start)
 	return it
 }
@@ -221,7 +222,7 @@ func (it *nodeIterator) peek(descend bool) (*nodeIteratorState, *int, []byte, er
 		if root != emptyRoot {
 			state.hash = root
 		}
-		err := state.resolve(it.trie, nil)
+		err := state.resolve(it.trie, nil, it.blockNr)
 		return state, nil, nil, err
 	}
 	if !descend {
@@ -238,7 +239,7 @@ func (it *nodeIterator) peek(descend bool) (*nodeIteratorState, *int, []byte, er
 		}
 		state, path, ok := it.nextChild(parent, ancestor)
 		if ok {
-			if err := state.resolve(it.trie, path); err != nil {
+			if err := state.resolve(it.trie, path, it.blockNr); err != nil {
 				return parent, &parent.index, path, err
 			}
 			return state, &parent.index, path, nil
@@ -249,9 +250,9 @@ func (it *nodeIterator) peek(descend bool) (*nodeIteratorState, *int, []byte, er
 	return nil, nil, nil, iteratorEnd
 }
 
-func (st *nodeIteratorState) resolve(tr *Trie, path []byte) error {
+func (st *nodeIteratorState) resolve(tr *Trie, path []byte, blockNr uint32) error {
 	if hash, ok := st.node.(hashNode); ok {
-		resolved, err := tr.resolveHash(hash, path)
+		resolved, err := tr.resolveHash(hash, path, blockNr)
 		if err != nil {
 			return err
 		}

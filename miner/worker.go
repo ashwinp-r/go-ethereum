@@ -447,7 +447,7 @@ func (self *worker) commitNewWork() {
 	// Create the current work task and check any fork transitions needed
 	work := self.current
 	if self.config.DAOForkSupport && self.config.DAOForkBlock != nil && self.config.DAOForkBlock.Cmp(header.Number) == 0 {
-		misc.ApplyDAOHardFork(work.state)
+		misc.ApplyDAOHardFork(work.state, uint32(num.Uint64()))
 	}
 	pending, err := self.eth.TxPool().Pending()
 	if err != nil {
@@ -590,7 +590,8 @@ func (env *Work) commitTransaction(tx *types.Transaction, bc *core.BlockChain, c
 
 	receipt, _, err := core.ApplyTransaction(env.config, bc, &coinbase, gp, env.state, env.header, tx, env.header.GasUsed, vm.Config{})
 	if err != nil {
-		env.state.RevertToSnapshot(snap)
+		readBlockNr := uint32(env.header.Number.Uint64()-1)
+		env.state.RevertToSnapshot(snap, readBlockNr)
 		return err, nil
 	}
 	env.txs = append(env.txs, tx)

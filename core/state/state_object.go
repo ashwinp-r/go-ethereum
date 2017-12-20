@@ -176,7 +176,7 @@ func (self *stateObject) GetState(db Database, key common.Hash, blockNr uint32) 
 		return value
 	}
 	// Load from DB in case it is missing.
-	enc, err := self.getTrie(db, blockNr).TryGet(key[:])
+	enc, err := self.getTrie(db, blockNr).TryGet(key[:], blockNr)
 	if err != nil {
 		self.setError(err)
 		return common.Hash{}
@@ -220,12 +220,12 @@ func (self *stateObject) updateTrie(db Database, blockNr uint32) Trie {
 	for key, value := range self.dirtyStorage {
 		delete(self.dirtyStorage, key)
 		if (value == common.Hash{}) {
-			self.setError(tr.TryDelete(key[:]))
+			self.setError(tr.TryDelete(key[:], blockNr))
 			continue
 		}
 		// Encoding []byte cannot fail, ok to ignore the error.
 		v, _ := rlp.EncodeToBytes(bytes.TrimLeft(value[:], "\x00"))
-		self.setError(tr.TryUpdate(key[:], v))
+		self.setError(tr.TryUpdate(key[:], v, blockNr))
 	}
 	return tr
 }
@@ -238,12 +238,12 @@ func (self *stateObject) updateRoot(db Database, blockNr uint32) {
 
 // CommitTrie the storage trie of the object to dwb.
 // This updates the trie root.
-func (self *stateObject) CommitTrie(db Database, dbw trie.DatabaseWriter, blockNr uint32) error {
+func (self *stateObject) CommitTrie(db Database, dbw trie.DatabaseWriter, blockNr uint32, writeBlockNr uint32) error {
 	self.updateTrie(db, blockNr)
 	if self.dbErr != nil {
 		return self.dbErr
 	}
-	root, err := self.trie.CommitTo(dbw)
+	root, err := self.trie.CommitTo(dbw, writeBlockNr)
 	if err == nil {
 		self.data.Root = root
 	}

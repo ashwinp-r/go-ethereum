@@ -129,7 +129,7 @@ func (b *BloomIndexer) Process(header *types.Header) {
 
 // Commit implements core.ChainIndexerBackend, finalizing the bloom section and
 // writing it out into the database.
-func (b *BloomIndexer) Commit() error {
+func (b *BloomIndexer) Commit(blockNr, writeBlockNr uint32) error {
 	batch := b.db.NewBatch()
 
 	for i := 0; i < types.BloomBitLength; i++ {

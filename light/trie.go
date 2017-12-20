@@ -18,7 +18,6 @@ package light
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -44,15 +43,11 @@ type odrDatabase struct {
 }
 
 func (db *odrDatabase) OpenTrie(root common.Hash, blockNr uint32) (state.Trie, error) {
-	suffix := make([]byte, 4)
-	binary.LittleEndian.PutUint32(suffix, blockNr)
-	return &odrTrie{db: db, id: db.id, prefix: []byte("AT"), suffix: suffix}, nil
+	return &odrTrie{db: db, id: db.id, prefix: []byte("AT")}, nil
 }
 
 func (db *odrDatabase) OpenStorageTrie(addrHash, root common.Hash, blockNr uint32) (state.Trie, error) {
-	suffix := make([]byte, 4)
-	binary.LittleEndian.PutUint32(suffix, blockNr)
-	return &odrTrie{db: db, id: StorageTrieID(db.id, addrHash, root), prefix: addrHash[:], suffix:suffix}, nil
+	return &odrTrie{db: db, id: StorageTrieID(db.id, addrHash, root), prefix: addrHash[:]}, nil
 }
 
 func (db *odrDatabase) CopyTrie(t state.Trie) state.Trie {
@@ -92,39 +87,39 @@ type odrTrie struct {
 	db   *odrDatabase
 	id   *TrieID
 	trie *trie.Trie
-	// Prefix and suffix to form the database key
-	prefix, suffix	[]byte
+	// Prefix to form the database key
+	prefix []byte
 }
 
-func (t *odrTrie) TryGet(key []byte) ([]byte, error) {
+func (t *odrTrie) TryGet(key []byte, blockNr uint32) ([]byte, error) {
 	key = crypto.Keccak256(key)
 	var res []byte
 	err := t.do(key, func() (err error) {
-		res, err = t.trie.TryGet(key)
+		res, err = t.trie.TryGet(key, blockNr)
 		return err
-	})
+	}, blockNr)
 	return res, err
 }
 
-func (t *odrTrie) TryUpdate(key, value []byte) error {
+func (t *odrTrie) TryUpdate(key, value []byte, blockNr uint32) error {
 	key = crypto.Keccak256(key)
 	return t.do(key, func() error {
-		return t.trie.TryDelete(key)
-	})
+		return t.trie.TryDelete(key, blockNr)
+	}, blockNr)
 }
 
-func (t *odrTrie) TryDelete(key []byte) error {
+func (t *odrTrie) TryDelete(key []byte, blockNr uint32) error {
 	key = crypto.Keccak256(key)
 	return t.do(key, func() error {
-		return t.trie.TryDelete(key)
-	})
+		return t.trie.TryDelete(key, blockNr)
+	}, blockNr)
 }
 
-func (t *odrTrie) CommitTo(db trie.DatabaseWriter) (common.Hash, error) {
+func (t *odrTrie) CommitTo(db trie.DatabaseWriter, writeBlockNr uint32) (common.Hash, error) {
 	if t.trie == nil {
 		return t.id.Root, nil
 	}
-	return t.trie.CommitTo(db)
+	return t.trie.CommitTo(db, writeBlockNr)
 }
 
 func (t *odrTrie) Hash() common.Hash {
@@ -134,8 +129,8 @@ func (t *odrTrie) Hash() common.Hash {
 	return t.trie.Hash()
 }
 
-func (t *odrTrie) NodeIterator(startkey []byte) trie.NodeIterator {
-	return newNodeIterator(t, startkey)
+func (t *odrTrie) NodeIterator(startkey []byte, blockNr uint32) trie.NodeIterator {
+	return newNodeIterator(t, startkey, blockNr)
 }
 
 func (t *odrTrie) GetKey(sha []byte) []byte {
@@ -144,11 +139,11 @@ func (t *odrTrie) GetKey(sha []byte) []byte {
 
 // do tries and retries to execute a function until it returns with no error or
 // an error type other than MissingNodeError
-func (t *odrTrie) do(key []byte, fn func() error) error {
+func (t *odrTrie) do(key []byte, fn func() error, blockNr uint32) error {
 	for {
 		var err error
 		if t.trie == nil {
-			t.trie, err = trie.New(t.id.Root, t.db.backend.Database(), t.prefix, t.suffix)
+			t.trie, err = trie.New(t.id.Root, t.db.backend.Database(), t.prefix, blockNr)
 		}
 		if err == nil {
 			err = fn()
@@ -169,12 +164,12 @@ type nodeIterator struct {
 	err error
 }
 
-func newNodeIterator(t *odrTrie, startkey []byte) trie.NodeIterator {
+func newNodeIterator(t *odrTrie, startkey []byte, blockNr uint32) trie.NodeIterator {
 	it := &nodeIterator{t: t}
 	// Open the actual non-ODR trie if that hasn't happened yet.
 	if t.trie == nil {
 		it.do(func() error {
-			t, err := trie.New(t.id.Root, t.db.backend.Database(), t.prefix, t.suffix)
+			t, err := trie.New(t.id.Root, t.db.backend.Database(), t.prefix, blockNr)
 			if err == nil {
 				it.t.trie = t
 			}
@@ -182,7 +177,7 @@ func newNodeIterator(t *odrTrie, startkey []byte) trie.NodeIterator {
 		})
 	}
 	it.do(func() error {
-		it.NodeIterator = it.t.trie.NodeIterator(startkey)
+		it.NodeIterator = it.t.trie.NodeIterator(startkey, blockNr)
 		return it.NodeIterator.Error()
 	})
 	return it

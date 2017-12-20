@@ -25,19 +25,19 @@ import (
 
 // StateDB is an EVM database for full state querying.
 type StateDB interface {
-	CreateAccount(common.Address)
+	CreateAccount(common.Address, uint32)
 
-	SubBalance(common.Address, *big.Int)
-	AddBalance(common.Address, *big.Int)
-	GetBalance(common.Address) *big.Int
+	SubBalance(common.Address, *big.Int, uint32)
+	AddBalance(common.Address, *big.Int, uint32)
+	GetBalance(common.Address, uint32) *big.Int
 
-	GetNonce(common.Address) uint64
-	SetNonce(common.Address, uint64)
+	GetNonce(common.Address, uint32) uint64
+	SetNonce(common.Address, uint64, uint32)
 
-	GetCodeHash(common.Address) common.Hash
-	GetCode(common.Address) []byte
-	SetCode(common.Address, []byte)
-	GetCodeSize(common.Address) int
+	GetCodeHash(common.Address, uint32) common.Hash
+	GetCode(common.Address,uint32) []byte
+	SetCode(common.Address, []byte, uint32)
+	GetCodeSize(common.Address, uint32) int
 
 	AddRefund(*big.Int)
 	GetRefund() *big.Int
@@ -45,17 +45,17 @@ type StateDB interface {
 	GetState(common.Address, common.Hash, uint32) common.Hash
 	SetState(common.Address, common.Hash, common.Hash, uint32)
 
-	Suicide(common.Address) bool
-	HasSuicided(common.Address) bool
+	Suicide(common.Address, uint32) bool
+	HasSuicided(common.Address, uint32) bool
 
 	// Exist reports whether the given account exists in state.
 	// Notably this should also return true for suicided accounts.
-	Exist(common.Address) bool
+	Exist(common.Address, uint32) bool
 	// Empty returns whether the given account is empty. Empty
 	// is defined according to EIP161 (balance = nonce = code = 0).
-	Empty(common.Address) bool
+	Empty(common.Address, uint32) bool
 
-	RevertToSnapshot(int)
+	RevertToSnapshot(int, uint32)
 	Snapshot() int
 
 	AddLog(*types.Log)

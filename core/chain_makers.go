@@ -108,11 +108,11 @@ func (b *BlockGen) AddUncheckedReceipt(receipt *types.Receipt) {
 
 // TxNonce returns the next valid transaction nonce for the
 // account at addr. It panics if the account does not exist.
-func (b *BlockGen) TxNonce(addr common.Address) uint64 {
-	if !b.statedb.Exist(addr) {
+func (b *BlockGen) TxNonce(addr common.Address, blockNr uint32) uint64 {
+	if !b.statedb.Exist(addr, blockNr) {
 		panic("account does not exist")
 	}
-	return b.statedb.GetNonce(addr)
+	return b.statedb.GetNonce(addr, blockNr)
 }
 
 // AddUncle adds an uncle header to the generated block.
@@ -172,15 +172,17 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, db ethdb.Dat
 				}
 			}
 		}
+		readBlockNr := uint32(h.Number.Uint64()-1)
 		if config.DAOForkSupport && config.DAOForkBlock != nil && config.DAOForkBlock.Cmp(h.Number) == 0 {
-			misc.ApplyDAOHardFork(statedb)
+			misc.ApplyDAOHardFork(statedb, readBlockNr)
 		}
 		// Execute any user modifications to the block and finalize it
 		if gen != nil {
 			gen(i, b)
 		}
 		ethash.AccumulateRewards(config, statedb, h, b.uncles)
-		root, err := statedb.CommitTo(db, config.IsEIP158(h.Number), uint32(h.Number.Uint64()))
+		writeBlockNr := uint32(h.Number.Uint64())
+		root, err := statedb.CommitTo(db, config.IsEIP158(h.Number), readBlockNr, writeBlockNr)
 		if err != nil {
 			panic(fmt.Sprintf("state write error: %v", err))
 		}

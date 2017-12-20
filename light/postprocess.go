@@ -141,9 +141,7 @@ func (c *ChtIndexerBackend) Reset(section uint64, lastSectionHead common.Hash, b
 		root = GetChtRoot(c.db, section-1, lastSectionHead)
 	}
 	var err error
-	suffix := make([]byte, 4)
-	binary.LittleEndian.PutUint32(suffix, blockNr)
-	c.trie, err = trie.New(root, c.cdb, []byte("AT"), suffix)
+	c.trie, err = trie.New(root, c.cdb, []byte("AT"), blockNr)
 	c.section = section
 	return err
 }
@@ -160,13 +158,13 @@ func (c *ChtIndexerBackend) Process(header *types.Header) {
 	var encNumber [8]byte
 	binary.BigEndian.PutUint64(encNumber[:], num)
 	data, _ := rlp.EncodeToBytes(ChtNode{hash, td})
-	c.trie.Update(encNumber[:], data)
+	c.trie.Update(encNumber[:], data, uint32(header.Number.Uint64()-1))
 }
 
 // Commit implements core.ChainIndexerBackend
-func (c *ChtIndexerBackend) Commit() error {
+func (c *ChtIndexerBackend) Commit(blockNr, writeBlockNr uint32) error {
 	batch := c.cdb.NewBatch()
-	root, err := c.trie.CommitTo(batch)
+	root, err := c.trie.CommitTo(batch, writeBlockNr)
 	if err != nil {
 		return err
 	} else {
@@ -238,9 +236,7 @@ func (b *BloomTrieIndexerBackend) Reset(section uint64, lastSectionHead common.H
 		root = GetBloomTrieRoot(b.db, section-1, lastSectionHead)
 	}
 	var err error
-	suffix := make([]byte, 4)
-	binary.LittleEndian.PutUint32(suffix, blockNr)
-	b.trie, err = trie.New(root, b.cdb, []byte("AT"), suffix)
+	b.trie, err = trie.New(root, b.cdb, []byte("AT"), blockNr)
 	b.section = section
 	return err
 }
@@ -254,7 +250,7 @@ func (b *BloomTrieIndexerBackend) Process(header *types.Header) {
 }
 
 // Commit implements core.ChainIndexerBackend
-func (b *BloomTrieIndexerBackend) Commit() error {
+func (b *BloomTrieIndexerBackend) Commit(blockNr, writeBlockNr uint32) error {
 	var compSize, decompSize uint64
 
 	for i := uint(0); i < types.BloomBitLength; i++ {
@@ -278,14 +274,14 @@ func (b *BloomTrieIndexerBackend) Commit() error {
 		decompSize += uint64(len(decomp))
 		compSize += uint64(len(comp))
 		if len(comp) > 0 {
-			b.trie.Update(encKey[:], comp)
+			b.trie.Update(encKey[:], comp, blockNr)
 		} else {
-			b.trie.Delete(encKey[:])
+			b.trie.Delete(encKey[:],blockNr)
 		}
 	}
 
 	batch := b.cdb.NewBatch()
-	root, err := b.trie.CommitTo(batch)
+	root, err := b.trie.CommitTo(batch, writeBlockNr)
 	if err != nil {
 		return err
 	} else {

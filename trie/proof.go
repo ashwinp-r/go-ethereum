@@ -35,7 +35,7 @@ import (
 // contains all nodes of the longest existing prefix of the key
 // (at least the root node), ending with the node that proves the
 // absence of the key.
-func (t *Trie) Prove(key []byte, fromLevel uint, proofDb DatabaseWriter) error {
+func (t *Trie) Prove(key []byte, fromLevel uint, proofDb DatabaseWriter, blockNr uint32) error {
 	// Collect all nodes on the path to key.
 	key = keybytesToHex(key)
 	pos := 0
@@ -58,7 +58,7 @@ func (t *Trie) Prove(key []byte, fromLevel uint, proofDb DatabaseWriter) error {
 			nodes = append(nodes, n)
 		case hashNode:
 			var err error
-			tn, err = t.resolveHash(n, key[:pos])
+			tn, err = t.resolveHash(n, key[:pos], blockNr)
 			if err != nil {
 				log.Error(fmt.Sprintf("Unhandled trie error: %v", err))
 				return err

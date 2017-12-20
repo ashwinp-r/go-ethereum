@@ -109,7 +109,7 @@ func (b *EthApiBackend) GetTd(blockHash common.Hash) *big.Int {
 }
 
 func (b *EthApiBackend) GetEVM(ctx context.Context, msg core.Message, state *state.StateDB, header *types.Header, vmCfg vm.Config) (*vm.EVM, func() error, error) {
-	state.SetBalance(msg.From(), math.MaxBig256)
+	state.SetBalance(msg.From(), math.MaxBig256, uint32(header.Number.Uint64()-1))
 	vmError := func() error { return nil }
 
 	context := core.NewEVMContext(msg, header, b.eth.BlockChain(), nil)
@@ -157,7 +157,8 @@ func (b *EthApiBackend) GetPoolTransaction(hash common.Hash) *types.Transaction 
 }
 
 func (b *EthApiBackend) GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error) {
-	return b.eth.txPool.State().GetNonce(addr), nil
+	readBlockNr := uint32(b.eth.blockchain.CurrentBlock().NumberU64())
+	return b.eth.txPool.State().GetNonce(addr, readBlockNr), nil
 }
 
 func (b *EthApiBackend) Stats() (pending int, queued int) {

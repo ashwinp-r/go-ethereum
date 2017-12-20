@@ -324,10 +324,10 @@ func gasCall(gt params.GasTable, evm *EVM, contract *Contract, stack *Stack, mem
 		eip158         = evm.ChainConfig().IsEIP158(evm.BlockNumber)
 	)
 	if eip158 {
-		if transfersValue && evm.StateDB.Empty(address) {
+		if transfersValue && evm.StateDB.Empty(address, blockNr) {
 			gas += params.CallNewAccountGas
 		}
-	} else if !evm.StateDB.Exist(address) {
+	} else if !evm.StateDB.Exist(address, blockNr) {
 		gas += params.CallNewAccountGas
 	}
 	if transfersValue {
@@ -396,15 +396,15 @@ func gasSuicide(gt params.GasTable, evm *EVM, contract *Contract, stack *Stack, 
 
 		if eip158 {
 			// if empty and transfers value
-			if evm.StateDB.Empty(address) && evm.StateDB.GetBalance(contract.Address()).Sign() != 0 {
+			if evm.StateDB.Empty(address, blockNr) && evm.StateDB.GetBalance(contract.Address(), blockNr).Sign() != 0 {
 				gas += gt.CreateBySuicide
 			}
-		} else if !evm.StateDB.Exist(address) {
+		} else if !evm.StateDB.Exist(address, blockNr) {
 			gas += gt.CreateBySuicide
 		}
 	}
 
-	if !evm.StateDB.HasSuicided(contract.Address()) {
+	if !evm.StateDB.HasSuicided(contract.Address(), blockNr) {
 		evm.StateDB.AddRefund(new(big.Int).SetUint64(params.SuicideRefundGas))
 	}
 	return gas, nil

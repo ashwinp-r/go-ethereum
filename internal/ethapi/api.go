@@ -467,7 +467,7 @@ func (s *PublicBlockChainAPI) GetBalance(ctx context.Context, address common.Add
 	if state == nil || err != nil {
 		return nil, err
 	}
-	b := state.GetBalance(address)
+	b := state.GetBalance(address, uint32(blockNr))
 	return b, state.Error()
 }
 
@@ -554,7 +554,7 @@ func (s *PublicBlockChainAPI) GetCode(ctx context.Context, address common.Addres
 	if state == nil || err != nil {
 		return nil, err
 	}
-	code := state.GetCode(address)
+	code := state.GetCode(address, uint32(blockNr))
 	return code, state.Error()
 }
 
@@ -966,7 +966,7 @@ func (s *PublicTransactionPoolAPI) GetTransactionCount(ctx context.Context, addr
 	if state == nil || err != nil {
 		return nil, err
 	}
-	nonce := state.GetNonce(address)
+	nonce := state.GetNonce(address, uint32(blockNr))
 	return (*hexutil.Uint64)(&nonce), state.Error()
 }
 

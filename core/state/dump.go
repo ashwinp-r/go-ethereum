@@ -45,7 +45,7 @@ func (self *StateDB) RawDump(blockNr uint32) Dump {
 		Accounts: make(map[string]DumpAccount),
 	}
 
-	it := trie.NewIterator(self.trie.NodeIterator(nil))
+	it := trie.NewIterator(self.trie.NodeIterator(nil, blockNr))
 	for it.Next() {
 		addr := self.trie.GetKey(it.Key)
 		var data Account
@@ -62,7 +62,7 @@ func (self *StateDB) RawDump(blockNr uint32) Dump {
 			Code:     common.Bytes2Hex(obj.Code(self.db)),
 			Storage:  make(map[string]string),
 		}
-		storageIt := trie.NewIterator(obj.getTrie(self.db, blockNr).NodeIterator(nil))
+		storageIt := trie.NewIterator(obj.getTrie(self.db, blockNr).NodeIterator(nil, blockNr))
 		for storageIt.Next() {
 			account.Storage[common.Bytes2Hex(self.trie.GetKey(storageIt.Key))] = common.Bytes2Hex(storageIt.Value)
 		}

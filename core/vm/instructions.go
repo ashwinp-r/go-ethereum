@@ -324,7 +324,7 @@ func opAddress(pc *uint64, evm *EVM, contract *Contract, memory *Memory, stack *
 
 func opBalance(pc *uint64, evm *EVM, contract *Contract, memory *Memory, stack *Stack, blockNr uint32) ([]byte, error) {
 	addr := common.BigToAddress(stack.pop())
-	balance := evm.StateDB.GetBalance(addr)
+	balance := evm.StateDB.GetBalance(addr, blockNr)
 
 	stack.push(new(big.Int).Set(balance))
 	return nil, nil
@@ -393,7 +393,7 @@ func opExtCodeSize(pc *uint64, evm *EVM, contract *Contract, memory *Memory, sta
 	a := stack.pop()
 
 	addr := common.BigToAddress(a)
-	a.SetInt64(int64(evm.StateDB.GetCodeSize(addr)))
+	a.SetInt64(int64(evm.StateDB.GetCodeSize(addr, blockNr)))
 	stack.push(a)
 
 	return nil, nil
@@ -425,7 +425,7 @@ func opExtCodeCopy(pc *uint64, evm *EVM, contract *Contract, memory *Memory, sta
 		codeOffset = stack.pop()
 		length     = stack.pop()
 	)
-	codeCopy := getDataBig(evm.StateDB.GetCode(addr), codeOffset, length)
+	codeCopy := getDataBig(evm.StateDB.GetCode(addr, blockNr), codeOffset, length)
 	memory.Set(memOffset.Uint64(), length.Uint64(), codeCopy)
 
 	evm.interpreter.intPool.put(memOffset, codeOffset, length)
@@ -731,10 +731,10 @@ func opStop(pc *uint64, evm *EVM, contract *Contract, memory *Memory, stack *Sta
 }
 
 func opSuicide(pc *uint64, evm *EVM, contract *Contract, memory *Memory, stack *Stack, blockNr uint32) ([]byte, error) {
-	balance := evm.StateDB.GetBalance(contract.Address())
-	evm.StateDB.AddBalance(common.BigToAddress(stack.pop()), balance)
+	balance := evm.StateDB.GetBalance(contract.Address(), blockNr)
+	evm.StateDB.AddBalance(common.BigToAddress(stack.pop()), balance, blockNr)
 
-	evm.StateDB.Suicide(contract.Address())
+	evm.StateDB.Suicide(contract.Address(), blockNr)
 	return nil, nil
 }
 

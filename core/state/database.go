@@ -17,7 +17,6 @@
 package state
 
 import (
-	"encoding/binary"
 	"fmt"
 	"sync"
 
@@ -55,12 +54,12 @@ type Database interface {
 
 // Trie is a Ethereum Merkle Trie.
 type Trie interface {
-	TryGet(key []byte) ([]byte, error)
-	TryUpdate(key, value []byte) error
-	TryDelete(key []byte) error
-	CommitTo(trie.DatabaseWriter) (common.Hash, error)
+	TryGet(key []byte, blockNr uint32) ([]byte, error)
+	TryUpdate(key, value []byte, blockNr uint32) error
+	TryDelete(key []byte, blockNr uint32) error
+	CommitTo(dbw trie.DatabaseWriter, writeBlockNr uint32) (common.Hash, error)
 	Hash() common.Hash
-	NodeIterator(startKey []byte) trie.NodeIterator
+	NodeIterator(startKey []byte, blockNr uint32) trie.NodeIterator
 	GetKey([]byte) []byte // TODO(fjl): remove this when SecureTrie is removed
 }
 
@@ -87,9 +86,7 @@ func (db *cachingDB) OpenTrie(root common.Hash, blockNr uint32) (Trie, error) {
 			return cachedTrie{db.pastTries[i].Copy(), db}, nil
 		}
 	}
-	suffix := make([]byte, 4)
-	binary.LittleEndian.PutUint32(suffix, blockNr)
-	tr, err := trie.NewSecure(root, db.db, MaxTrieCacheGen, []byte("AT"), suffix) // "AT" stands for Account Trie
+	tr, err := trie.NewSecure(root, db.db, MaxTrieCacheGen, []byte("AT"), blockNr) // "AT" stands for Account Trie
 	if err != nil {
 		return nil, err
 	}
@@ -109,9 +106,7 @@ func (db *cachingDB) pushTrie(t *trie.SecureTrie) {
 }
 
 func (db *cachingDB) OpenStorageTrie(addrHash, root common.Hash, blockNr uint32) (Trie, error) {
-	suffix := make([]byte, 4)
-	binary.LittleEndian.PutUint32(suffix, blockNr)
-	return trie.NewSecure(root, db.db, 0, addrHash[:], suffix)
+	return trie.NewSecure(root, db.db, 0, addrHash[:], blockNr)
 }
 
 func (db *cachingDB) CopyTrie(t Trie) Trie {
@@ -150,8 +145,8 @@ type cachedTrie struct {
 	db *cachingDB
 }
 
-func (m cachedTrie) CommitTo(dbw trie.DatabaseWriter) (common.Hash, error) {
-	root, err := m.SecureTrie.CommitTo(dbw)
+func (m cachedTrie) CommitTo(dbw trie.DatabaseWriter, writeBlockNr uint32) (common.Hash, error) {
+	root, err := m.SecureTrie.CommitTo(dbw, writeBlockNr)
 	if err == nil {
 		m.db.pushTrie(m.SecureTrie)
 	}

@@ -43,7 +43,7 @@ type ChainIndexerBackend interface {
 	Process(header *types.Header)
 
 	// Commit finalizes the section metadata and stores it into the database.
-	Commit() error
+	Commit(blockNr, writeBlockNr uint32) error
 }
 
 // ChainIndexerChain interface is used for connecting the indexer to a blockchain
@@ -340,7 +340,8 @@ func (c *ChainIndexer) processSection(section uint64, lastHead common.Hash) (com
 
 	// Reset and partial processing
 
-	if err := c.backend.Reset(section, lastHead, uint32(section * c.sectionSize)); err != nil {
+	readBlockNr := uint32(section * c.sectionSize)
+	if err := c.backend.Reset(section, lastHead, readBlockNr); err != nil {
 		c.setValidSections(0)
 		return common.Hash{}, err
 	}
@@ -359,7 +360,8 @@ func (c *ChainIndexer) processSection(section uint64, lastHead common.Hash) (com
 		c.backend.Process(header)
 		lastHead = header.Hash()
 	}
-	if err := c.backend.Commit(); err != nil {
+	writeBlockNr := uint32((section+1)*c.sectionSize)
+	if err := c.backend.Commit(writeBlockNr-1, writeBlockNr); err != nil {
 		c.log.Error("Section commit failed", "error", err)
 		return common.Hash{}, err
 	}

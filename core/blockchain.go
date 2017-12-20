@@ -18,7 +18,6 @@
 package core
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -293,9 +292,7 @@ func (bc *BlockChain) FastSyncCommitHead(hash common.Hash) error {
 	if block == nil {
 		return fmt.Errorf("non existent block [%x…]", hash[:4])
 	}
-	suffix := make([]byte, 4)
-	binary.LittleEndian.PutUint32(suffix, uint32(block.NumberU64()))
-	if _, err := trie.NewSecure(block.Root(), bc.chainDb, 0, []byte("AT"), suffix); err != nil {
+	if _, err := trie.NewSecure(block.Root(), bc.chainDb, 0, []byte("AT"), uint32(block.NumberU64())); err != nil {
 		return err
 	}
 	// If all checks out, manually set the head block
@@ -811,7 +808,9 @@ func (bc *BlockChain) WriteBlockAndState(block *types.Block, receipts []*types.R
 	if err := WriteBlock(batch, block); err != nil {
 		return NonStatTy, err
 	}
-	if _, err := state.CommitTo(batch, bc.config.IsEIP158(block.Number()), uint32(block.NumberU64())); err != nil {
+	readBlockNr := uint32(block.NumberU64()-1)
+	writeBlockNr := uint32(block.NumberU64())
+	if _, err := state.CommitTo(batch, bc.config.IsEIP158(block.Number()), readBlockNr, writeBlockNr); err != nil {
 		return NonStatTy, err
 	}
 	if err := WriteBlockReceipts(batch, block.Hash(), block.NumberU64(), receipts); err != nil {
