@@ -453,7 +453,7 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32) (node, err
 	cacheMissCounter.Inc(1)
 
 	suffix := make([]byte, 4)
-	binary.LittleEndian.PutUint32(suffix, blockNr)
+	binary.LittleEndian.PutUint32(suffix, blockNr^0xffffffff) // Invert the block number
 	enc, err := t.db.GetFirst(
 		compositeKey(prefix, len(prefix), t.prefix, suffix, []byte{0, 0, 0, 0}),
 		compositeKey(prefix, len(prefix), t.prefix, suffix, []byte{0xff, 0xff, 0xff, 0xff}))
@@ -511,6 +511,6 @@ func (t *Trie) hashRoot(db DatabaseWriter, writeBlockNr uint32) (node, node, err
 	}
 	h := newHasher(t.cachegen, t.cachelimit)
 	suffix := make([]byte, 4)
-	binary.LittleEndian.PutUint32(suffix, writeBlockNr)
+	binary.LittleEndian.PutUint32(suffix, writeBlockNr^0xffffffff)
 	return h.hash(t.root, db, true, []byte{}, 0, t.prefix, suffix)
 }
