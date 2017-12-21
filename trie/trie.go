@@ -394,7 +394,7 @@ func (t *Trie) delete(n node, prefix, key []byte, blockNr uint32) (bool, node, e
 				// shortNode{..., shortNode{...}}.  Since the entry
 				// might not be loaded yet, resolve it just for this
 				// check.
-				cnode, err := t.resolve(n.Children[pos], prefix, blockNr)
+				cnode, err := t.resolve(n.Children[pos], append(prefix, byte(pos)), blockNr)
 				if err != nil {
 					return false, nil, err
 				}
@@ -458,6 +458,12 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32) (node, err
 		compositeKey(prefix, len(prefix), t.prefix, suffix, []byte{0, 0, 0, 0}),
 		compositeKey(prefix, len(prefix), t.prefix, []byte{0xff, 0xff, 0xff, 0xff}, []byte{0xff, 0xff, 0xff, 0xff}))
 	if err != nil || enc == nil {
+		return nil, &MissingNodeError{NodeHash: common.BytesToHash(n), Path: prefix}
+	}
+	// Check that the hash matches
+	sha := sha3.NewKeccak256()
+	sha.Write(enc)
+	if bytes.Compare(n, sha.Sum(nil)) != 0 {
 		return nil, &MissingNodeError{NodeHash: common.BytesToHash(n), Path: prefix}
 	}
 	dec := mustDecodeNode(n, enc, t.cachegen)
