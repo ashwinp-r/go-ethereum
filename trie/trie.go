@@ -20,7 +20,9 @@ package trie
 import (
 	"bytes"
 	"encoding/binary"
+	//"encoding/hex"
 	"fmt"
+	"runtime/debug"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto/sha3"
@@ -160,12 +162,16 @@ func (t *Trie) TryGet(key []byte, blockNr uint32) ([]byte, error) {
 }
 
 func (t *Trie) tryGet(origNode node, key []byte, pos int, blockNr uint32) (value []byte, newnode node, didResolve bool, err error) {
+	//fmt.Printf("Getting %s with prefix %s for block %d\n", hex.EncodeToString(key), hex.EncodeToString(key[:pos]), blockNr)
 	switch n := (origNode).(type) {
 	case nil:
+		//fmt.Printf("nilNode\n")
 		return nil, nil, false, nil
 	case valueNode:
+		//fmt.Printf("valueNode\n")
 		return n, n, false, nil
 	case *shortNode:
+		//fmt.Printf("shortNode\n")
 		if len(key)-pos < len(n.Key) || !bytes.Equal(n.Key, key[pos:pos+len(n.Key)]) {
 			// key not found in trie
 			return nil, n, false, nil
@@ -178,6 +184,7 @@ func (t *Trie) tryGet(origNode node, key []byte, pos int, blockNr uint32) (value
 		}
 		return value, n, didResolve, err
 	case *fullNode:
+		//fmt.Printf("fullNode\n")
 		value, newnode, didResolve, err = t.tryGet(n.Children[key[pos]], key, pos+1, blockNr)
 		if err == nil && didResolve {
 			n = n.copy()
@@ -186,8 +193,11 @@ func (t *Trie) tryGet(origNode node, key []byte, pos int, blockNr uint32) (value
 		}
 		return value, n, didResolve, err
 	case hashNode:
+		//fmt.Printf("hashNode\n")
 		child, err := t.resolveHash(n, key[:pos], blockNr)
 		if err != nil {
+			fmt.Printf("resolution error %s\n", err)
+			fmt.Printf("Stack %s\n", debug.Stack())
 			return nil, n, true, err
 		}
 		value, newnode, _, err := t.tryGet(child, key, pos, blockNr)
@@ -236,6 +246,7 @@ func (t *Trie) TryUpdate(key, value []byte, blockNr uint32) error {
 }
 
 func (t *Trie) insert(n node, prefix, key []byte, value node, blockNr uint32) (bool, node, error) {
+	//fmt.Printf("Putting %s with prefix %s for block %d\n", hex.EncodeToString(key), hex.EncodeToString(prefix), blockNr)
 	if len(key) == 0 {
 		if v, ok := n.(valueNode); ok {
 			return !bytes.Equal(v, value.(valueNode)), value, nil
@@ -455,8 +466,8 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32) (node, err
 	suffix := make([]byte, 4)
 	binary.BigEndian.PutUint32(suffix, blockNr^0xffffffff) // Invert the block number
 	enc, err := t.db.GetFirst(
-		compositeKey(prefix, len(prefix), t.prefix, suffix, []byte{0, 0, 0, 0}),
-		compositeKey(prefix, len(prefix), t.prefix, []byte{0xff, 0xff, 0xff, 0xff}, []byte{0xff, 0xff, 0xff, 0xff}))
+		compositeKey(prefix, t.prefix, suffix, []byte{0, 0, 0, 0}),
+		compositeKey(prefix, t.prefix, []byte{0xff, 0xff, 0xff, 0xff}, []byte{0xff, 0xff, 0xff, 0xff}))
 	if err != nil || enc == nil {
 		return nil, &MissingNodeError{NodeHash: common.BytesToHash(n), Path: prefix}
 	}
@@ -515,8 +526,6 @@ func (t *Trie) hashRoot(db DatabaseWriter, writeBlockNr uint32) (node, node, err
 	if t.root == nil {
 		return hashNode(emptyRoot.Bytes()), nil, nil
 	}
-	h := newHasher(t.cachegen, t.cachelimit)
-	suffix := make([]byte, 4)
-	binary.BigEndian.PutUint32(suffix, writeBlockNr^0xffffffff)
-	return h.hash(t.root, db, true, []byte{}, 0, t.prefix, suffix)
+	h := newHasher(t.cachegen, t.cachelimit, db, t.prefix, writeBlockNr)
+	return h.hash(t.root, true, []byte{})
 }

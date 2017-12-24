@@ -20,6 +20,9 @@ import (
 	"bytes"
 	"hash"
 	"sync"
+	"encoding/binary"
+	"fmt"
+	"encoding/hex"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto/sha3"
@@ -41,16 +44,24 @@ var calculatorPool = sync.Pool{
 
 // hasher hasher is used to calculate the hash value of the whole tree.
 type hasher struct {
-	cachegen   uint16
-	cachelimit uint16
-	threaded   bool
-	mu         sync.Mutex
+	cachegen   	uint16
+	cachelimit 	uint16
+	db 			DatabaseWriter
+	prefix 		[]byte
+	suffix 		[]byte
+	threaded   	bool
+	mu         	sync.Mutex
 }
 
-func newHasher(cachegen, cachelimit uint16) *hasher {
+func newHasher(cachegen, cachelimit uint16, db DatabaseWriter, prefix []byte, writeBlockNr uint32) *hasher {
+	suffix := make([]byte, 4)
+	binary.BigEndian.PutUint32(suffix, writeBlockNr^0xffffffff)
 	h := &hasher{
 		cachegen:   cachegen,
 		cachelimit: cachelimit,
+		db: db,
+		prefix: prefix,
+		suffix: suffix,
 	}
 	return h
 }
@@ -70,10 +81,10 @@ func (h *hasher) returnCalculator(calculator *calculator) {
 
 // hash collapses a node down into a hash node, also returning a copy of the
 // original node initialized with the computed hash to replace the original one.
-func (h *hasher) hash(n node, db DatabaseWriter, force bool, key []byte, pos int, prefix []byte, suffix []byte) (node, node, error) {
+func (h *hasher) hash(n node, force bool, key []byte) (hashNode, node, error) {
 	// If we're not storing the node, just hashing, use available cached data
 	if hash, dirty := n.cache(); hash != nil {
-		if db == nil {
+		if h.db == nil {
 			return hash, n, nil
 		}
 		if n.canUnload(h.cachegen, h.cachelimit) {
@@ -86,28 +97,30 @@ func (h *hasher) hash(n node, db DatabaseWriter, force bool, key []byte, pos int
 			return hash, n, nil
 		}
 	}
+	if vn, ok := n.(valueNode); ok {
+		fmt.Printf("Hash value node %s with key %s\n", hex.EncodeToString(vn), hex.EncodeToString(key))
+	}
 	// Trie not processed yet or needs storage, walk the children
-	collapsed, cached, err := h.hashChildren(n, db, key, pos, prefix, suffix)
+	collapsed, cached, err := h.hashChildren(n, key)
 	if err != nil {
 		return hashNode{}, n, err
 	}
-	hashed, err := h.store(collapsed, db, force, key, pos, prefix, suffix)
+	hashed, err := h.store(collapsed, force, key)
 	if err != nil {
 		return hashNode{}, n, err
 	}
 	// Cache the hash of the node for later reuse and remove
 	// the dirty flag in commit mode. It's fine to assign these values directly
 	// without copying the node first because hashChildren copies it.
-	cachedHash, _ := hashed.(hashNode)
 	switch cn := cached.(type) {
 	case *shortNode:
-		cn.flags.hash = cachedHash
-		if db != nil {
+		cn.flags.hash = hashed
+		if h.db != nil {
 			cn.flags.dirty = false
 		}
 	case *fullNode:
-		cn.flags.hash = cachedHash
-		if db != nil {
+		cn.flags.hash = hashed
+		if h.db != nil {
 			cn.flags.dirty = false
 		}
 	}
@@ -117,7 +130,7 @@ func (h *hasher) hash(n node, db DatabaseWriter, force bool, key []byte, pos int
 // hashChildren replaces the children of a node with their hashes if the encoded
 // size of the child is larger than a hash, returning the collapsed node as well
 // as a replacement for the original node with the child hashes cached in.
-func (h *hasher) hashChildren(original node, db DatabaseWriter, key []byte, pos int, prefix []byte, suffix []byte) (node, node, error) {
+func (h *hasher) hashChildren(original node, key []byte) (node, node, error) {
 	var err error
 
 	switch n := original.(type) {
@@ -127,8 +140,8 @@ func (h *hasher) hashChildren(original node, db DatabaseWriter, key []byte, pos 
 		collapsed.Key = hexToCompact(n.Key)
 		cached.Key = common.CopyBytes(n.Key)
 
-		if _, ok := n.Val.(valueNode); !ok {
-			collapsed.Val, cached.Val, err = h.hash(n.Val, db, false, append(key, n.Key...), pos+len(n.Key), prefix, suffix)
+		if valNode, ok := n.Val.(valueNode); !ok {
+			collapsed.Val, cached.Val, err = h.hash(valNode, false, append(key, n.Key...))
 			if err != nil {
 				return original, original, err
 			}
@@ -155,7 +168,8 @@ func (h *hasher) hashChildren(original node, db DatabaseWriter, key []byte, pos 
 			}
 			// Hash all other children properly
 			var herr error
-			collapsed.Children[index], cached.Children[index], herr = h.hash(n.Children[index], db, false, append(key, byte(index)), pos+1, prefix, suffix)
+			//fmt.Printf("Hashing child of full node with key %s index %d prefix %s\n", hex.EncodeToString(key), index, hex.EncodeToString(prefix))
+			collapsed.Children[index], cached.Children[index], herr = h.hash(n.Children[index], false, append(key, byte(index)))
 			if herr != nil {
 				h.mu.Lock() // rarely if ever locked, no congenstion
 				err = herr
@@ -163,6 +177,7 @@ func (h *hasher) hashChildren(original node, db DatabaseWriter, key []byte, pos 
 			}
 		}
 		// If we're not running in threaded mode yet, span a goroutine for each child
+		/*
 		if !h.threaded {
 			// Disable further threading
 			h.threaded = true
@@ -178,10 +193,11 @@ func (h *hasher) hashChildren(original node, db DatabaseWriter, key []byte, pos 
 			// Reenable threading for subsequent hash calls
 			h.threaded = false
 		} else {
+		*/
 			for i := 0; i < 16; i++ {
 				hashChild(i, nil)
 			}
-		}
+		//}
 		if err != nil {
 			return original, original, err
 		}
@@ -197,14 +213,17 @@ func (h *hasher) hashChildren(original node, db DatabaseWriter, key []byte, pos 
 	}
 }
 
-func compositeKey(key []byte, pos int, prefix []byte, suffix []byte, hash []byte) []byte {
-	return append(prefix, append([]byte{byte(pos)}, append(hexToCompact(key[:pos]), append(suffix, hash[:4]...)...)...)...)
+func compositeKey(key []byte, prefix []byte, suffix []byte, hash []byte) []byte {
+	return append(prefix, append([]byte{byte(len(key))}, append(hexToCompact(key[:]), append(suffix, hash[:4]...)...)...)...)
 }
 
-func (h *hasher) store(n node, db DatabaseWriter, force bool, key []byte, pos int, prefix []byte, suffix []byte) (node, error) {
+func (h *hasher) store(n node, force bool, key []byte) (hashNode, error) {
 	// Don't store hashes or empty nodes.
-	if _, isHash := n.(hashNode); n == nil || isHash {
-		return n, nil
+	if hash, isHash := n.(hashNode); n == nil || isHash {
+		return hash, nil
+	}
+	if vn, ok := n.(valueNode); ok {
+		fmt.Printf("Store value node %s with key %s\n", hex.EncodeToString(vn), hex.EncodeToString(key))
 	}
 	calculator := h.newCalculator()
 	defer h.returnCalculator(calculator)
@@ -214,7 +233,7 @@ func (h *hasher) store(n node, db DatabaseWriter, force bool, key []byte, pos in
 		panic("encode error: " + err.Error())
 	}
 	if calculator.buffer.Len() < 32 && !force {
-		return n, nil // Nodes smaller than 32 bytes are stored inside their parent
+		return nil, nil // Nodes smaller than 32 bytes are stored inside their parent
 	}
 	// Larger nodes are replaced by their hash and stored in the database.
 	hash, _ := n.cache()
@@ -222,11 +241,14 @@ func (h *hasher) store(n node, db DatabaseWriter, force bool, key []byte, pos in
 		calculator.sha.Write(calculator.buffer.Bytes())
 		hash = hashNode(calculator.sha.Sum(nil))
 	}
-	if db != nil {
+	if h.db != nil {
 		// db might be a leveldb batch, which is not safe for concurrent writes
 		h.mu.Lock()
 		bytesToWrite := calculator.buffer.Bytes()
-		err := db.Put(compositeKey(key, pos, prefix, suffix, hash), bytesToWrite)
+		err := h.db.Put(compositeKey(key, h.prefix, h.suffix, hash), bytesToWrite)
+		//if _, ok := n.(valueNode); ok {
+		//	fmt.Printf("Store value %s with key %s\n", hex.EncodeToString(bytesToWrite), hex.EncodeToString(key))
+		//}
 		h.mu.Unlock()
 
 		return hash, err

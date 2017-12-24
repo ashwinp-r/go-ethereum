@@ -18,6 +18,7 @@ package trie
 
 import (
 	"fmt"
+	//"encoding/hex"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/log"
@@ -198,11 +199,12 @@ func (t *SecureTrie) secKey(key []byte) []byte {
 // The caller must not hold onto the return value because it will become
 // invalid on the next call to hashKey or secKey.
 func (t *SecureTrie) hashKey(key []byte) []byte {
-	h := newHasher(0, 0)
+	h := newHasher(0, 0, nil, nil, 0)
 	calculator := h.newCalculator()
 	calculator.sha.Write(key)
 	buf := calculator.sha.Sum(t.hashKeyBuf[:0])
 	h.returnCalculator(calculator)
+	//fmt.Printf("Converting %s into %s\n", hex.EncodeToString(key), hex.EncodeToString(buf))
 	return buf
 }
 
