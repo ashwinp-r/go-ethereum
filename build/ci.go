@@ -79,6 +79,7 @@ var (
 		executablePath("rlpdump"),
 		executablePath("swarm"),
 		executablePath("wnode"),
+                executablePath("hack"),
 	}
 
 	// A debian package is created for all executables listed here.
@@ -114,6 +115,10 @@ var (
 		{
 			Name:        "wnode",
 			Description: "Ethereum Whisper diagnostic tool",
+		},
+		{
+			Name:        "hack",
+			Description: "Tool for experiments with geth code and data",
 		},
 	}
 
