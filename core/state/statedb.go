@@ -533,8 +533,8 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool, blockNr uint32) {
 // It is called in between transactions to get the root hash that
 // goes into transaction receipts.
 func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool, blockNr uint32) common.Hash {
-	fmt.Printf("\n\n\n")
-	s.trie.PrintTrie()
+	//fmt.Printf("\n\n\n")
+	//s.trie.PrintTrie()
 	s.Finalise(deleteEmptyObjects, blockNr)
 	return s.trie.Hash()
 }

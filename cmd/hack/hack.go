@@ -92,7 +92,7 @@ func main() {
 	bc, err := core.NewBlockChain(ethDb, params.MainnetChainConfig, ethash.NewFaker(), vm.Config{})
 	currentBlockNr := bc.CurrentBlock().NumberU64()
 	fmt.Printf("Current block number: %d\n", currentBlockNr)
-	for blockNr := uint64(699526); blockNr < 699526 + 1; blockNr++ {
+	for blockNr := uint64(1); blockNr < currentBlockNr + 1; blockNr++ {
 		block := bc.GetBlockByNumber(blockNr)
 		if block == nil {
 			fmt.Printf("block #%d not found\n", blockNr)

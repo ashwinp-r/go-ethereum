@@ -501,7 +501,7 @@ func (t *Trie) Root() []byte { return t.Hash().Bytes() }
 func (t *Trie) Hash() common.Hash {
 	hash, cached, _ := t.hashRoot(nil, 0)
 	t.root = cached
-	return common.BytesToHash(hash)
+	return common.BytesToHash(hash.(hashNode))
 }
 
 // Commit writes all nodes to the trie's database.
@@ -530,10 +530,10 @@ func (t *Trie) CommitTo(db DatabaseWriter, writeBlockNr uint32) (root common.Has
 	}
 	t.root = cached
 	t.cachegen++
-	return common.BytesToHash(hash), nil
+	return common.BytesToHash(hash.(hashNode)), nil
 }
 
-func (t *Trie) hashRoot(db DatabaseWriter, writeBlockNr uint32) (hashNode, node, error) {
+func (t *Trie) hashRoot(db DatabaseWriter, writeBlockNr uint32) (node, node, error) {
 	if t.root == nil {
 		return hashNode(emptyRoot.Bytes()), nil, nil
 	}

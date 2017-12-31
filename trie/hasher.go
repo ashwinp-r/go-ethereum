@@ -81,7 +81,7 @@ func (h *hasher) returnCalculator(calculator *calculator) {
 
 // hash collapses a node down into a hash node, also returning a copy of the
 // original node initialized with the computed hash to replace the original one.
-func (h *hasher) hash(n node, force bool, key []byte) (hashNode, node, error) {
+func (h *hasher) hash(n node, force bool, key []byte) (node, node, error) {
 	// If we're not storing the node, just hashing, use available cached data
 	if hash, dirty := n.cache(); hash != nil {
 		if h.db == nil {
@@ -112,14 +112,15 @@ func (h *hasher) hash(n node, force bool, key []byte) (hashNode, node, error) {
 	// Cache the hash of the node for later reuse and remove
 	// the dirty flag in commit mode. It's fine to assign these values directly
 	// without copying the node first because hashChildren copies it.
+	cachedHash, _ := hashed.(hashNode)
 	switch cn := cached.(type) {
 	case *shortNode:
-		cn.flags.hash = hashed
+		cn.flags.hash = cachedHash
 		if h.db != nil {
 			cn.flags.dirty = false
 		}
 	case *fullNode:
-		cn.flags.hash = hashed
+		cn.flags.hash = cachedHash
 		if h.db != nil {
 			cn.flags.dirty = false
 		}
@@ -216,7 +217,7 @@ func compositeKey(key []byte, prefix []byte, suffix []byte, hash []byte) []byte 
 	return append(prefix, append([]byte{byte(len(key))}, append(hexToCompact(key[:]), append(suffix, hash[:4]...)...)...)...)
 }
 
-func (h *hasher) store(n node, force bool, key []byte) (hashNode, error) {
+func (h *hasher) store(n node, force bool, key []byte) (node, error) {
 	// Don't store hashes or empty nodes.
 	if hash, isHash := n.(hashNode); n == nil || isHash {
 		return hash, nil
@@ -232,7 +233,7 @@ func (h *hasher) store(n node, force bool, key []byte) (hashNode, error) {
 		panic("encode error: " + err.Error())
 	}
 	if calculator.buffer.Len() < 32 && !force {
-		return nil, nil // Nodes smaller than 32 bytes are stored inside their parent
+		return n, nil // Nodes smaller than 32 bytes are stored inside their parent
 	}
 	// Larger nodes are replaced by their hash and stored in the database.
 	hash, _ := n.cache()

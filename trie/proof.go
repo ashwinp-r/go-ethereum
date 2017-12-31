@@ -72,15 +72,15 @@ func (t *Trie) Prove(key []byte, fromLevel uint, proofDb DatabaseWriter, blockNr
 		// Don't bother checking for errors here since hasher panics
 		// if encoding doesn't work and we're not writing to any database.
 		n, _, _ = hasher.hashChildren(n, nil)
-		hash, _ := hasher.store(n, false, nil) // Since the second argument is nil, no database write will occur
-		if hash != nil || i == 0 {
+		hn, _ := hasher.store(n, false, nil) // Since the second argument is nil, no database write will occur
+		if hash, ok := hn.(hashNode); ok || i == 0 {
 			// If the node's database encoding is a hash (or is the
 			// root node), it becomes a proof element.
 			if fromLevel > 0 {
 				fromLevel--
 			} else {
 				enc, _ := rlp.EncodeToBytes(n)
-				if hash == nil {
+				if !ok {
 					hash = crypto.Keccak256(enc)
 				}
 				proofDb.Put(hash, enc)
