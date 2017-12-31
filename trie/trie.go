@@ -20,7 +20,7 @@ package trie
 import (
 	"bytes"
 	"encoding/binary"
-	//"encoding/hex"
+	"encoding/hex"
 	"fmt"
 	"runtime/debug"
 
@@ -69,7 +69,7 @@ type Database interface {
 // DatabaseReader wraps the Get method of a backing store for the trie.
 type DatabaseReader interface {
 	Get(key []byte) (value []byte, err error)
-	GetFirst(start []byte, limit []byte) ([]byte, error)
+	GetFirst(start []byte, limit []byte, suffix []byte) ([]byte, error)
 	Has(key []byte) (bool, error)
 }
 
@@ -99,6 +99,12 @@ type Trie struct {
 	// new nodes are tagged with the current generation and unloaded
 	// when their generation is older than than cachegen-cachelimit.
 	cachegen, cachelimit uint16
+}
+
+func (t *Trie) PrintTrie() {
+	if fn, ok := t.root.(*fullNode); ok {
+		fmt.Printf("%s\n", fn.String())
+	}
 }
 
 // SetCacheLimit sets the number of 'cache generations' to keep.
@@ -246,7 +252,6 @@ func (t *Trie) TryUpdate(key, value []byte, blockNr uint32) error {
 }
 
 func (t *Trie) insert(n node, prefix, key []byte, value node, blockNr uint32) (bool, node, error) {
-	//fmt.Printf("Putting %s with prefix %s for block %d\n", hex.EncodeToString(key), hex.EncodeToString(prefix), blockNr)
 	if len(key) == 0 {
 		if v, ok := n.(valueNode); ok {
 			return !bytes.Equal(v, value.(valueNode)), value, nil
@@ -311,6 +316,8 @@ func (t *Trie) insert(n node, prefix, key []byte, value node, blockNr uint32) (b
 		return true, nn, nil
 
 	default:
+		fmt.Printf("Key: %s, Prefix: %s\n", hex.EncodeToString(key), hex.EncodeToString(prefix))
+		t.PrintTrie()
 		panic(fmt.Sprintf("%T: invalid node: %v", n, n))
 	}
 }
@@ -467,7 +474,11 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32) (node, err
 	binary.BigEndian.PutUint32(suffix, blockNr^0xffffffff) // Invert the block number
 	enc, err := t.db.GetFirst(
 		compositeKey(prefix, t.prefix, suffix, []byte{0, 0, 0, 0}),
-		compositeKey(prefix, t.prefix, []byte{0xff, 0xff, 0xff, 0xff}, []byte{0xff, 0xff, 0xff, 0xff}))
+		compositeKey(prefix, t.prefix, []byte{0xff, 0xff, 0xff, 0xff}, []byte{0xff, 0xff, 0xff, 0xff}),
+		n[:4])
+	if err != nil {
+		fmt.Printf("Error resolving hash: %v\n", err)
+	}
 	if err != nil || enc == nil {
 		return nil, &MissingNodeError{NodeHash: common.BytesToHash(n), Path: prefix}
 	}
@@ -490,7 +501,7 @@ func (t *Trie) Root() []byte { return t.Hash().Bytes() }
 func (t *Trie) Hash() common.Hash {
 	hash, cached, _ := t.hashRoot(nil, 0)
 	t.root = cached
-	return common.BytesToHash(hash.(hashNode))
+	return common.BytesToHash(hash)
 }
 
 // Commit writes all nodes to the trie's database.
@@ -519,10 +530,10 @@ func (t *Trie) CommitTo(db DatabaseWriter, writeBlockNr uint32) (root common.Has
 	}
 	t.root = cached
 	t.cachegen++
-	return common.BytesToHash(hash.(hashNode)), nil
+	return common.BytesToHash(hash), nil
 }
 
-func (t *Trie) hashRoot(db DatabaseWriter, writeBlockNr uint32) (node, node, error) {
+func (t *Trie) hashRoot(db DatabaseWriter, writeBlockNr uint32) (hashNode, node, error) {
 	if t.root == nil {
 		return hashNode(emptyRoot.Bytes()), nil, nil
 	}

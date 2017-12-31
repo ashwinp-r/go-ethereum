@@ -217,7 +217,8 @@ func (self *stateObject) setState(key, value common.Hash) {
 // updateTrie writes cached storage modifications into the object's storage trie.
 func (self *stateObject) updateTrie(db Database, blockNr uint32) Trie {
 	tr := self.getTrie(db, blockNr)
-	for key, value := range self.dirtyStorage {
+	for _, key := range self.sortedDirtyStorageKeys() {
+		value := self.dirtyStorage[key]
 		delete(self.dirtyStorage, key)
 		if (value == common.Hash{}) {
 			self.setError(tr.TryDelete(key[:], blockNr))

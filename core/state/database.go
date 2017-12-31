@@ -61,6 +61,7 @@ type Trie interface {
 	Hash() common.Hash
 	NodeIterator(startKey []byte, blockNr uint32) trie.NodeIterator
 	GetKey([]byte) []byte // TODO(fjl): remove this when SecureTrie is removed
+	PrintTrie()
 }
 
 // NewDatabase creates a backing store for state. The returned database is safe for
@@ -151,4 +152,8 @@ func (m cachedTrie) CommitTo(dbw trie.DatabaseWriter, writeBlockNr uint32) (comm
 		m.db.pushTrie(m.SecureTrie)
 	}
 	return root, err
+}
+
+func (m cachedTrie) PrintTrie() {
+	m.PrintTrie()
 }

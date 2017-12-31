@@ -170,7 +170,10 @@ func GetHeader(db DatabaseReader, hash common.Hash, number uint64) *types.Header
 
 // GetBodyRLP retrieves the block body (transactions and uncles) in RLP encoding.
 func GetBodyRLP(db DatabaseReader, hash common.Hash, number uint64) rlp.RawValue {
-	data, _ := db.Get(blockBodyKey(hash, number))
+	data, err := db.Get(blockBodyKey(hash, number))
+	if err != nil {
+		fmt.Printf("Could not read body RLP: %s\n", err)
+	}
 	return data
 }
 

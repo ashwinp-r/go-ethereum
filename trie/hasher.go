@@ -140,8 +140,8 @@ func (h *hasher) hashChildren(original node, key []byte) (node, node, error) {
 		collapsed.Key = hexToCompact(n.Key)
 		cached.Key = common.CopyBytes(n.Key)
 
-		if valNode, ok := n.Val.(valueNode); !ok {
-			collapsed.Val, cached.Val, err = h.hash(valNode, false, append(key, n.Key...))
+		if _, ok := n.Val.(valueNode); !ok {
+			collapsed.Val, cached.Val, err = h.hash(n.Val, false, append(key, n.Key...))
 			if err != nil {
 				return original, original, err
 			}
@@ -168,7 +168,6 @@ func (h *hasher) hashChildren(original node, key []byte) (node, node, error) {
 			}
 			// Hash all other children properly
 			var herr error
-			//fmt.Printf("Hashing child of full node with key %s index %d prefix %s\n", hex.EncodeToString(key), index, hex.EncodeToString(prefix))
 			collapsed.Children[index], cached.Children[index], herr = h.hash(n.Children[index], false, append(key, byte(index)))
 			if herr != nil {
 				h.mu.Lock() // rarely if ever locked, no congenstion
@@ -246,9 +245,6 @@ func (h *hasher) store(n node, force bool, key []byte) (hashNode, error) {
 		h.mu.Lock()
 		bytesToWrite := calculator.buffer.Bytes()
 		err := h.db.Put(compositeKey(key, h.prefix, h.suffix, hash), bytesToWrite)
-		//if _, ok := n.(valueNode); ok {
-		//	fmt.Printf("Store value %s with key %s\n", hex.EncodeToString(bytesToWrite), hex.EncodeToString(key))
-		//}
 		h.mu.Unlock()
 
 		return hash, err

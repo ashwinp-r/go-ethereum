@@ -1,9 +1,12 @@
 package state
 
 import (
+    "bytes"
     "errors"
     "fmt"
     "io"
+    "encoding/hex"
+    "sort"
 
     "github.com/ethereum/go-ethereum/common"
     "github.com/ethereum/go-ethereum/ethdb"
@@ -15,7 +18,7 @@ type RecordingDatabase struct {
     db ethdb.Database
     get map[string][]byte
     put map[string]struct{}
-    getfirst map[string][]byte
+    getfirst map[string]map[string][]byte
 }
 
 func NewRecordingDatabase(db ethdb.Database) (*RecordingDatabase) {
@@ -23,8 +26,73 @@ func NewRecordingDatabase(db ethdb.Database) (*RecordingDatabase) {
         db: db,
         get: make(map[string][]byte),
         put: make(map[string]struct{}),
-        getfirst: make(map[string][]byte),
+        getfirst: make(map[string]map[string][]byte),
     }
+}
+
+type AddressList []common.Address
+
+func (al *AddressList) Len() int {
+    return len(*al)
+}
+
+func (al *AddressList) Less(i, j int) bool {
+    return bytes.Compare((*al)[i][:], (*al)[j][:]) < 0
+}
+
+func (al *AddressList) Swap(i, j int) {
+    for k := 0; k < common.AddressLength; k++ {
+        (*al)[i][k], (*al)[j][k] = (*al)[j][k], (*al)[i][k]
+    }
+}
+
+func (s *StateDB) sortedDirtyAccounts() AddressList {
+    al := make(AddressList, len(s.stateObjectsDirty))
+    i := 0
+    for k, _ := range s.stateObjectsDirty {
+        al[i] = k
+        i++
+    }
+    sort.Sort(&al)
+    return al
+}
+
+func (s *StateDB) sortedAllAccounts() AddressList {
+    al := make(AddressList, len(s.stateObjects))
+    i := 0
+    for k, _ := range s.stateObjects {
+        al[i] = k
+        i++
+    }
+    sort.Sort(&al)
+    return al
+}
+
+type HashList []common.Hash
+
+func (hl *HashList) Len() int {
+    return len(*hl)
+}
+
+func (hl *HashList) Less(i, j int) bool {
+    return bytes.Compare((*hl)[i][:], (*hl)[j][:]) < 0
+}
+
+func (hl *HashList) Swap(i, j int) {
+    for k := 0; k < common.HashLength; k++ {
+        (*hl)[i][k], (*hl)[j][k] = (*hl)[j][k], (*hl)[i][k]
+    }
+}
+
+func (so *stateObject) sortedDirtyStorageKeys() HashList {
+    hl := make(HashList, len(so.dirtyStorage))
+    i := 0
+    for k, _ := range so.dirtyStorage {
+        hl[i] = k
+        i++
+    }
+    sort.Sort(&hl)
+    return hl
 }
 
 func (rdb *RecordingDatabase) Get(key []byte) ([]byte, error) {
@@ -41,7 +109,6 @@ func (rdb *RecordingDatabase) Get(key []byte) ([]byte, error) {
 }
 
 func (rdb *RecordingDatabase) Has(key []byte) (bool, error) {
-    //return rdb.db.Has(key)
     panic("Has is not used")
     return false, errors.New("Has is not used")
 }
@@ -57,12 +124,44 @@ func (rdb *RecordingDatabase) Put(key, value []byte) error {
     return err
 }
 
-func (rdb *RecordingDatabase) GetFirst(start []byte, limit []byte) ([]byte, error) {
-    val, err := rdb.db.GetFirst(start, limit)
+func (rdb *RecordingDatabase) GetFirst(start []byte, limit []byte, suffix []byte) ([]byte, error) {
+    val, err := rdb.db.GetFirst(start, limit, suffix)
     if err == nil {
-        stringKey := string(start)
-        if _, getfirst_exists := rdb.getfirst[stringKey]; !getfirst_exists {
-            rdb.getfirst[stringKey] = val
+        // Check if it can be found in the puts
+        /*
+        keys := make([]string, len(rdb.put))
+        i := 0
+        for k, _ := range rdb.put {
+            keys[i] = k
+            i++
+        }
+        sort.Strings(keys)
+        */
+        startStr := string(start)
+        /*
+        limitStr := string(limit)
+        index := sort.Search(len(keys), func(i int) bool {
+            return keys[i] >= startStr && keys[i] <= limitStr
+        })
+        if index == -1 {
+            return nil, errors.New("key not found in range")
+        }
+        for i := index; i < len(keys) && keys[i] >= startStr && keys[i] <= limitStr; i++ {
+            if len(keys[i])>=len(suffix) && bytes.Compare([]byte(keys[i])[len(keys[i])-len(suffix):], suffix) == 0 {
+                // If found in the puts, do not record it
+                return val, nil
+            }
+        }
+        */
+        var starts map[string][]byte
+        var start_exists bool
+        if starts, start_exists = rdb.getfirst[startStr]; !start_exists {
+            starts = make(map[string][]byte)
+            rdb.getfirst[startStr] = starts
+        }
+        suffixStr := string(suffix)
+        if _, suffix_exists := starts[suffixStr]; !suffix_exists {
+            starts[suffixStr] = val
         }
     }
     return val, err
@@ -110,21 +209,64 @@ func RecordingState(stateRoot common.Hash, rsd *RecordingStateDatabase, blockNr 
     return s, nil
 }
 
+func (st *StateDB) PrintTrie() {
+    st.trie.PrintTrie()
+}
+
 type PlaybackDatabase struct {
-    cache map[string][]byte
+    cache   map[string][]byte
+    cache2  map[string]map[string][]byte
 }
 
 func (pdb *PlaybackDatabase) EncodeRLP(w io.Writer) (err error) {
     if err = rlp.Encode(w, uint(len(pdb.cache))); err != nil {
         return err
     }
-    for k, v := range pdb.cache {
+    keys := []string{}
+    for k, _ := range pdb.cache {
+        keys = append(keys, k)
+    }
+    sort.Strings(keys)
+    for _, k := range keys {
+        v := pdb.cache[k]
         if err = rlp.Encode(w, k); err != nil {
             return err
         }
         if err = rlp.Encode(w, string(v)); err != nil {
             return err
         }
+    }
+    if err = rlp.Encode(w, uint(len(pdb.cache2))); err != nil {
+        return err
+    }
+    keys = []string{}
+    for k, _ := range pdb.cache2 {
+        keys = append(keys, k)
+    }
+    sort.Strings(keys)
+    for _, k := range keys {
+        if err = rlp.Encode(w, k); err != nil {
+            return err
+        }
+        v := pdb.cache2[k]
+        if err = rlp.Encode(w, uint(len(v))); err != nil {
+            return err
+        }
+        keys2 := []string{}
+        for k2, _ := range v {
+            keys2 = append(keys2, k2)
+        }
+        sort.Strings(keys2)
+        for _, k2 := range keys2 {
+            if err = rlp.Encode(w, k2); err != nil {
+                return err
+            }
+            v2 := v[k2]
+            if err = rlp.Encode(w, string(v2)); err != nil {
+                return err
+            }
+        }
+
     }
     return nil
 }
@@ -145,24 +287,55 @@ func (pdb *PlaybackDatabase) DecodeRLP(s *rlp.Stream) (err error) {
         }
         pdb.cache[k] = []byte(v)
     }
+    if err = s.Decode(&size); err != nil {
+        return err
+    }
+    for i := 0; i < int(size); i++ {
+        var k string
+        if err = s.Decode(&k); err != nil {
+            return err
+        }
+        v := make(map[string][]byte)
+        var size2 uint32
+        if err = s.Decode(&size2); err != nil {
+            return err
+        }
+        for j := 0; j < int(size2); j++ {
+            var k2 string
+            if err = s.Decode(&k2); err != nil {
+                return err
+            }
+            var v2 string
+            if err = s.Decode(&v2); err != nil {
+                return err
+            }
+            v[k2] = []byte(v2)
+        }
+        pdb.cache2[k] = v
+    }
     return err
 }
 
 func NewPlaybackDatabase(rsd *RecordingStateDatabase) *PlaybackDatabase {
     pdb := &PlaybackDatabase{
-        cache: make(map[string][]byte),
+        cache:  make(map[string][]byte),
+        cache2: make(map[string]map[string][]byte),
     }
     for k, v := range rsd.rdb.get {
         pdb.cache[k] = v
     }
     for k, v := range rsd.rdb.getfirst {
-        pdb.cache[k] = v
+        m := make(map[string][]byte)
+        for k2, v2 := range v {
+            m[k2] = v2
+        }
+        pdb.cache2[k] = m
     }
     return pdb
 }
 
 func EmptyPlaybackDatabase() *PlaybackDatabase {
-    return &PlaybackDatabase{ cache: make(map[string][]byte) }
+    return &PlaybackDatabase{ cache: make(map[string][]byte), cache2: make(map[string]map[string][]byte) }
 }
 
 func (pdb *PlaybackDatabase) Get(key []byte) (value []byte, err error) {
@@ -170,6 +343,7 @@ func (pdb *PlaybackDatabase) Get(key []byte) (value []byte, err error) {
     if val, exists := pdb.cache[stringKey]; exists {
         return val, nil
     }
+    panic("Cache miss in playback database")
     return nil, errors.New("Cache miss in playback database")
 }
 
@@ -184,11 +358,39 @@ func (pdb *PlaybackDatabase) Put(key, value []byte) error {
     return nil
 }
 
-func (pdb *PlaybackDatabase) GetFirst(start []byte, limit []byte) ([]byte, error) {
-    stringKey := string(start)
-    if val, exists := pdb.cache[stringKey]; exists {
-        return val, nil
+func (pdb *PlaybackDatabase) GetFirst(start []byte, limit []byte, suffix []byte) ([]byte, error) {
+    // Check if it can be found in the get/put cache
+    /*
+    keys := make([]string, len(pdb.cache))
+    i := 0
+    for k, _ := range pdb.cache {
+        keys[i] = k
+        i++
     }
+    sort.Strings(keys)
+    */
+    startStr := string(start)
+    /*
+    limitStr := string(limit)
+    index := sort.Search(len(keys), func(i int) bool {
+        return keys[i] >= startStr && keys[i] <= limitStr
+    })
+    if index == -1 {
+        return nil, errors.New("key not found in range")
+    }
+    for i := index; i < len(keys) && keys[i] >= startStr && keys[i] <= limitStr; i++ {
+        if len(keys[i])>=len(suffix) && bytes.Compare([]byte(keys[i])[len(keys[i])-len(suffix):], suffix) == 0 {
+            return pdb.cache[keys[i]], nil
+        }
+    }
+    */
+    if starts, start_exists := pdb.cache2[startStr]; start_exists {
+        suffixKey := string(suffix)
+        if val, exists := starts[suffixKey]; exists {
+            return val, nil
+        }
+    }
+    panic(fmt.Sprintf("Cache miss in playback database: %s %s\n", hex.EncodeToString(start), hex.EncodeToString(suffix)))
     return nil, errors.New("Cache miss in playback database")
 }
 

@@ -17,6 +17,7 @@
 package ethdb
 
 import (
+	"bytes"
 	"strconv"
 	"strings"
 	"sync"
@@ -137,14 +138,17 @@ func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
 }
 
 // GetFirst returns the value corresponding to the lowest key from the range
-func (db *LDBDatabase) GetFirst(start []byte, limit []byte) ([]byte, error) {
+func (db *LDBDatabase) GetFirst(start []byte, limit []byte, suffix []byte) ([]byte, error) {
 	it := db.db.NewIterator(&util.Range{start, limit}, nil)
 	defer it.Release()
-	found := it.First()
-	if !found {
-		return nil, errors.ErrNotFound
+	found:= it.First()
+	for ; found; found = it.Next() {
+		k := it.Key()
+		if len(k) >= len(suffix) && bytes.Compare(k[len(k)-len(suffix):], suffix) == 0 {
+			return it.Value(), nil
+		}
 	}
-	return it.Value(), nil
+	return nil, errors.ErrNotFound
 }
 
 // Delete deletes the key from the queue and database
@@ -337,8 +341,8 @@ func (dt *table) Get(key []byte) ([]byte, error) {
 	return dt.db.Get(append([]byte(dt.prefix), key...))
 }
 
-func (dt *table) GetFirst(start []byte, limit []byte) ([]byte, error) {
-	return dt.db.GetFirst(append([]byte(dt.prefix), start...), append([]byte(dt.prefix), limit...))
+func (dt *table) GetFirst(start []byte, limit []byte, suffix []byte) ([]byte, error) {
+	return dt.db.GetFirst(append([]byte(dt.prefix), start...), append([]byte(dt.prefix), limit...), suffix)
 }
 
 func (dt *table) Delete(key []byte) error {

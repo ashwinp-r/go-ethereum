@@ -447,6 +447,7 @@ func (db *StateDB) ForEachStorage(addr common.Address, cb func(key, value common
 // Copy creates a deep, independent copy of the state.
 // Snapshots of the copied state cannot be applied to the copy.
 func (self *StateDB) Copy() *StateDB {
+	fmt.Printf("Copy\n")
 	self.lock.Lock()
 	defer self.lock.Unlock()
 
@@ -515,7 +516,7 @@ func (self *StateDB) GetRefund() *big.Int {
 // Finalise finalises the state by removing the self destructed objects
 // and clears the journal as well as the refunds.
 func (s *StateDB) Finalise(deleteEmptyObjects bool, blockNr uint32) {
-	for addr := range s.stateObjectsDirty {
+	for _, addr := range s.sortedDirtyAccounts() {
 		stateObject := s.stateObjects[addr]
 		if stateObject.suicided || (deleteEmptyObjects && stateObject.empty()) {
 			s.deleteStateObject(stateObject, blockNr)
@@ -532,6 +533,8 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool, blockNr uint32) {
 // It is called in between transactions to get the root hash that
 // goes into transaction receipts.
 func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool, blockNr uint32) common.Hash {
+	fmt.Printf("\n\n\n")
+	s.trie.PrintTrie()
 	s.Finalise(deleteEmptyObjects, blockNr)
 	return s.trie.Hash()
 }
@@ -553,7 +556,7 @@ func (s *StateDB) DeleteSuicides() {
 	// Reset refund so that any used-gas calculations can use this method.
 	s.clearJournalAndRefund()
 
-	for addr := range s.stateObjectsDirty {
+	for _, addr := range s.sortedDirtyAccounts() {
 		stateObject := s.stateObjects[addr]
 
 		// If the object has been removed by a suicide
@@ -576,7 +579,8 @@ func (s *StateDB) CommitTo(dbw trie.DatabaseWriter, deleteEmptyObjects bool, blo
 	defer s.clearJournalAndRefund()
 
 	// Commit objects to the trie.
-	for addr, stateObject := range s.stateObjects {
+	for _, addr := range s.sortedAllAccounts() {
+		stateObject := s.stateObjects[addr]
 		_, isDirty := s.stateObjectsDirty[addr]
 		switch {
 		case stateObject.suicided || (isDirty && deleteEmptyObjects && stateObject.empty()):
