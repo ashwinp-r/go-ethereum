@@ -17,11 +17,12 @@
 package ethdb
 
 import (
-	"bytes"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	//"encoding/hex"
+	//"fmt"
 
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -137,14 +138,12 @@ func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
 	//return rle.Decompress(dat)
 }
 
-// GetFirst returns the value corresponding to the lowest key from the range
-func (db *LDBDatabase) GetFirst(start []byte, limit []byte, suffix []byte) ([]byte, error) {
+// Resolve returns the value corresponding to the lowest key from the range, matching given hash
+func (db *LDBDatabase) Resolve(start, limit []byte) ([]byte, error) {
 	it := db.db.NewIterator(&util.Range{start, limit}, nil)
 	defer it.Release()
-	found:= it.First()
-	for ; found; found = it.Next() {
-		k := it.Key()
-		if len(k) >= len(suffix) && bytes.Compare(k[len(k)-len(suffix):], suffix) == 0 {
+	for it.Next() {
+		if len(it.Key()) == len(start) {
 			return it.Value(), nil
 		}
 	}
@@ -341,8 +340,8 @@ func (dt *table) Get(key []byte) ([]byte, error) {
 	return dt.db.Get(append([]byte(dt.prefix), key...))
 }
 
-func (dt *table) GetFirst(start []byte, limit []byte, suffix []byte) ([]byte, error) {
-	return dt.db.GetFirst(append([]byte(dt.prefix), start...), append([]byte(dt.prefix), limit...), suffix)
+func (dt *table) Resolve(start, limit []byte) ([]byte, error) {
+	return dt.db.Resolve(append([]byte(dt.prefix), start...), append([]byte(dt.prefix), limit...))
 }
 
 func (dt *table) Delete(key []byte) error {

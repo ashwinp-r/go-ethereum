@@ -22,6 +22,8 @@ import (
 	"math/big"
 	"sort"
 	"sync"
+	"encoding/hex"
+	"encoding/binary"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -29,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/crypto/sha3"
 )
 
 type revision struct {
@@ -169,6 +172,7 @@ func (self *StateDB) AddRefund(gas *big.Int) {
 // Exist reports whether the given account address exists in the state.
 // Notably this also returns true for suicided accounts.
 func (self *StateDB) Exist(addr common.Address, blockNr uint32) bool {
+	//fmt.Printf("Checking existence of %s\n", hex.EncodeToString(addr[:]))
 	return self.getStateObject(addr, blockNr) != nil
 }
 
@@ -244,7 +248,7 @@ func (self *StateDB) StorageTrie(a common.Address, blockNr uint32) Trie {
 		return nil
 	}
 	cpy := stateObject.deepCopy(self, nil)
-	return cpy.updateTrie(self.db, blockNr)
+	return cpy.updateTrie(self.db, nil, blockNr, 0)
 }
 
 func (self *StateDB) HasSuicided(addr common.Address, blockNr uint32) bool {
@@ -363,7 +367,7 @@ func (self *StateDB) getStateObject(addr common.Address, blockNr uint32) (stateO
 	}
 	var data Account
 	if err := rlp.DecodeBytes(enc, &data); err != nil {
-		log.Error("Failed to decode state object", "addr", addr, "err", err)
+		log.Error("Failed to decode state object", "addr", addr.Hex(), "err", err, "enc", hex.EncodeToString(enc))
 		return nil
 	}
 	// Insert into the live set.
@@ -447,7 +451,6 @@ func (db *StateDB) ForEachStorage(addr common.Address, cb func(key, value common
 // Copy creates a deep, independent copy of the state.
 // Snapshots of the copied state cannot be applied to the copy.
 func (self *StateDB) Copy() *StateDB {
-	fmt.Printf("Copy\n")
 	self.lock.Lock()
 	defer self.lock.Unlock()
 
@@ -574,11 +577,23 @@ func (s *StateDB) clearJournalAndRefund() {
 	s.refund = new(big.Int)
 }
 
+func keybytesToHex(str []byte) []byte {
+	l := len(str)*2 + 1
+	var nibbles = make([]byte, l)
+	for i, b := range str {
+		nibbles[i*2] = b / 16
+		nibbles[i*2+1] = b % 16
+	}
+	nibbles[l-1] = 16
+	return nibbles
+}
+
 // CommitTo writes the state to the given database.
 func (s *StateDB) CommitTo(dbw trie.DatabaseWriter, deleteEmptyObjects bool, blockNr uint32, writeBlockNr uint32) (root common.Hash, err error) {
 	defer s.clearJournalAndRefund()
 
-	// Commit objects to the trie.
+	suffix := make([]byte, 4)
+	binary.BigEndian.PutUint32(suffix, writeBlockNr^0xffffffff - 1)	// Commit objects to the trie.
 	for _, addr := range s.sortedAllAccounts() {
 		stateObject := s.stateObjects[addr]
 		_, isDirty := s.stateObjectsDirty[addr]
@@ -587,6 +602,13 @@ func (s *StateDB) CommitTo(dbw trie.DatabaseWriter, deleteEmptyObjects bool, blo
 			// If the object has been removed, don't bother syncing it
 			// and just mark it for deletion in the trie.
 			s.deleteStateObject(stateObject, blockNr)
+			sha := sha3.NewKeccak256()
+			sha.Write(addr[:])
+			seckey := sha.Sum(nil)
+			compKey := trie.CompositeKey(keybytesToHex(seckey[:]), []byte("AT"), suffix)
+			if err := dbw.Put(compKey, []byte{}); err != nil {
+				return common.Hash{}, err
+			}
 		case isDirty:
 			// Write any contract code associated with the state object
 			if stateObject.code != nil && stateObject.dirtyCode {

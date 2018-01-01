@@ -46,8 +46,8 @@ func (db *odrDatabase) OpenTrie(root common.Hash, blockNr uint32) (state.Trie, e
 	return &odrTrie{db: db, id: db.id, prefix: []byte("AT")}, nil
 }
 
-func (db *odrDatabase) OpenStorageTrie(addrHash, root common.Hash, blockNr uint32) (state.Trie, error) {
-	return &odrTrie{db: db, id: StorageTrieID(db.id, addrHash, root), prefix: addrHash[:]}, nil
+func (db *odrDatabase) OpenStorageTrie(addr common.Address, root common.Hash, blockNr uint32) (state.Trie, error) {
+	return &odrTrie{db: db, id: StorageTrieID(db.id, addr, root), prefix: addr[:]}, nil
 }
 
 func (db *odrDatabase) CopyTrie(t state.Trie) state.Trie {
@@ -89,6 +89,9 @@ type odrTrie struct {
 	trie *trie.Trie
 	// Prefix to form the database key
 	prefix []byte
+}
+
+func (t *odrTrie) PrintTrie() {
 }
 
 func (t *odrTrie) TryGet(key []byte, blockNr uint32) ([]byte, error) {

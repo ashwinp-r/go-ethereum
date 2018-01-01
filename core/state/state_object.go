@@ -21,11 +21,13 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"encoding/binary"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/crypto/sha3"
 )
 
 var emptyCodeHash = crypto.Keccak256(nil)
@@ -160,9 +162,9 @@ func (c *stateObject) touch() {
 func (c *stateObject) getTrie(db Database, blockNr uint32) Trie {
 	if c.trie == nil {
 		var err error
-		c.trie, err = db.OpenStorageTrie(c.addrHash, c.data.Root, blockNr)
+		c.trie, err = db.OpenStorageTrie(c.address, c.data.Root, blockNr)
 		if err != nil {
-			c.trie, _ = db.OpenStorageTrie(c.addrHash, common.Hash{}, blockNr)
+			c.trie, _ = db.OpenStorageTrie(c.address, common.Hash{}, blockNr)
 			c.setError(fmt.Errorf("can't create storage trie: %v", err))
 		}
 	}
@@ -215,15 +217,25 @@ func (self *stateObject) setState(key, value common.Hash) {
 }
 
 // updateTrie writes cached storage modifications into the object's storage trie.
-func (self *stateObject) updateTrie(db Database, blockNr uint32) Trie {
+func (self *stateObject) updateTrie(db Database, dbw trie.DatabaseWriter, blockNr uint32, writeBlockNr uint32) Trie {
+	suffix := make([]byte, 4)
+	binary.BigEndian.PutUint32(suffix, writeBlockNr^0xffffffff - 1)	// Commit objects to the trie.
 	tr := self.getTrie(db, blockNr)
 	for _, key := range self.sortedDirtyStorageKeys() {
 		value := self.dirtyStorage[key]
-		delete(self.dirtyStorage, key)
 		if (value == common.Hash{}) {
 			self.setError(tr.TryDelete(key[:], blockNr))
+			if dbw != nil {
+				sha := sha3.NewKeccak256()
+				sha.Write(key[:])
+				seckey := sha.Sum(nil)
+				compKey := trie.CompositeKey(keybytesToHex(seckey[:]), self.address[:], suffix)
+				dbw.Put(compKey, []byte{})
+				delete(self.dirtyStorage, key)
+			}
 			continue
 		}
+		delete(self.dirtyStorage, key)
 		// Encoding []byte cannot fail, ok to ignore the error.
 		v, _ := rlp.EncodeToBytes(bytes.TrimLeft(value[:], "\x00"))
 		self.setError(tr.TryUpdate(key[:], v, blockNr))
@@ -233,14 +245,14 @@ func (self *stateObject) updateTrie(db Database, blockNr uint32) Trie {
 
 // UpdateRoot sets the trie root to the current root hash of
 func (self *stateObject) updateRoot(db Database, blockNr uint32) {
-	self.updateTrie(db, blockNr)
+	self.updateTrie(db, nil, blockNr, 0)
 	self.data.Root = self.trie.Hash()
 }
 
 // CommitTrie the storage trie of the object to dwb.
 // This updates the trie root.
 func (self *stateObject) CommitTrie(db Database, dbw trie.DatabaseWriter, blockNr uint32, writeBlockNr uint32) error {
-	self.updateTrie(db, blockNr)
+	self.updateTrie(db, dbw, blockNr, writeBlockNr)
 	if self.dbErr != nil {
 		return self.dbErr
 	}

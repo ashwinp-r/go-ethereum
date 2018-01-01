@@ -44,7 +44,7 @@ type Database interface {
 	// OpenTrie opens the main account trie.
 	// OpenStorageTrie opens the storage trie of an account.
 	OpenTrie(root common.Hash, blockNr uint32) (Trie, error)
-	OpenStorageTrie(addrHash, root common.Hash, blockNr uint32) (Trie, error)
+	OpenStorageTrie(addr common.Address, root common.Hash, blockNr uint32) (Trie, error)
 	// Accessing contract code:
 	ContractCode(addrHash, codeHash common.Hash) ([]byte, error)
 	ContractCodeSize(addrHash, codeHash common.Hash) (int, error)
@@ -106,8 +106,8 @@ func (db *cachingDB) pushTrie(t *trie.SecureTrie) {
 	}
 }
 
-func (db *cachingDB) OpenStorageTrie(addrHash, root common.Hash, blockNr uint32) (Trie, error) {
-	return trie.NewSecure(root, db.db, 0, addrHash[:], blockNr)
+func (db *cachingDB) OpenStorageTrie(addr common.Address, root common.Hash, blockNr uint32) (Trie, error) {
+	return trie.NewSecure(root, db.db, 0, addr[:], blockNr)
 }
 
 func (db *cachingDB) CopyTrie(t Trie) Trie {
@@ -152,8 +152,4 @@ func (m cachedTrie) CommitTo(dbw trie.DatabaseWriter, writeBlockNr uint32) (comm
 		m.db.pushTrie(m.SecureTrie)
 	}
 	return root, err
-}
-
-func (m cachedTrie) PrintTrie() {
-	m.PrintTrie()
 }

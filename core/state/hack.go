@@ -18,7 +18,7 @@ type RecordingDatabase struct {
     db ethdb.Database
     get map[string][]byte
     put map[string]struct{}
-    getfirst map[string]map[string][]byte
+    resolve map[string][]byte
 }
 
 func NewRecordingDatabase(db ethdb.Database) (*RecordingDatabase) {
@@ -26,7 +26,7 @@ func NewRecordingDatabase(db ethdb.Database) (*RecordingDatabase) {
         db: db,
         get: make(map[string][]byte),
         put: make(map[string]struct{}),
-        getfirst: make(map[string]map[string][]byte),
+        resolve: make(map[string][]byte),
     }
 }
 
@@ -124,11 +124,10 @@ func (rdb *RecordingDatabase) Put(key, value []byte) error {
     return err
 }
 
-func (rdb *RecordingDatabase) GetFirst(start []byte, limit []byte, suffix []byte) ([]byte, error) {
-    val, err := rdb.db.GetFirst(start, limit, suffix)
+func (rdb *RecordingDatabase) Resolve(start, limit []byte) ([]byte, error) {
+    val, err := rdb.db.Resolve(start, limit)
     if err == nil {
         // Check if it can be found in the puts
-        /*
         keys := make([]string, len(rdb.put))
         i := 0
         for k, _ := range rdb.put {
@@ -136,33 +135,20 @@ func (rdb *RecordingDatabase) GetFirst(start []byte, limit []byte, suffix []byte
             i++
         }
         sort.Strings(keys)
-        */
         startStr := string(start)
-        /*
         limitStr := string(limit)
         index := sort.Search(len(keys), func(i int) bool {
-            return keys[i] >= startStr && keys[i] <= limitStr
+            return keys[i] >= startStr
         })
-        if index == -1 {
-            return nil, errors.New("key not found in range")
-        }
-        for i := index; i < len(keys) && keys[i] >= startStr && keys[i] <= limitStr; i++ {
-            if len(keys[i])>=len(suffix) && bytes.Compare([]byte(keys[i])[len(keys[i])-len(suffix):], suffix) == 0 {
-                // If found in the puts, do not record it
+        for ; index < len(keys) && keys[index] < limitStr; index++ {
+            if len(keys[index]) == len(start) {
                 return val, nil
             }
         }
-        */
-        var starts map[string][]byte
-        var start_exists bool
-        if starts, start_exists = rdb.getfirst[startStr]; !start_exists {
-            starts = make(map[string][]byte)
-            rdb.getfirst[startStr] = starts
+        if _, start_exists := rdb.resolve[startStr]; !start_exists {
+            rdb.resolve[startStr] = val
         }
-        suffixStr := string(suffix)
-        if _, suffix_exists := starts[suffixStr]; !suffix_exists {
-            starts[suffixStr] = val
-        }
+        return nil, errors.New("key not found in range")
     }
     return val, err
 }
@@ -179,8 +165,8 @@ func (rsd *RecordingStateDatabase) OpenTrie(root common.Hash, blockNr uint32) (T
     return trie.NewSecure(root, rsd.rdb, MaxTrieCacheGen, []byte("AT"), blockNr)
 }
 
-func (rsd *RecordingStateDatabase) OpenStorageTrie(addrHash, root common.Hash, blockNr uint32) (Trie, error) {
-    return trie.NewSecure(root, rsd.rdb, 0, addrHash[:], blockNr)
+func (rsd *RecordingStateDatabase) OpenStorageTrie(addr common.Address, root common.Hash, blockNr uint32) (Trie, error) {
+    return trie.NewSecure(root, rsd.rdb, 0, addr[:], blockNr)
 }
 
 func (rsd *RecordingStateDatabase) ContractCode(addrHash, codeHash common.Hash) ([]byte, error) {
@@ -215,7 +201,6 @@ func (st *StateDB) PrintTrie() {
 
 type PlaybackDatabase struct {
     cache   map[string][]byte
-    cache2  map[string]map[string][]byte
 }
 
 func (pdb *PlaybackDatabase) EncodeRLP(w io.Writer) (err error) {
@@ -236,38 +221,6 @@ func (pdb *PlaybackDatabase) EncodeRLP(w io.Writer) (err error) {
             return err
         }
     }
-    if err = rlp.Encode(w, uint(len(pdb.cache2))); err != nil {
-        return err
-    }
-    keys = []string{}
-    for k, _ := range pdb.cache2 {
-        keys = append(keys, k)
-    }
-    sort.Strings(keys)
-    for _, k := range keys {
-        if err = rlp.Encode(w, k); err != nil {
-            return err
-        }
-        v := pdb.cache2[k]
-        if err = rlp.Encode(w, uint(len(v))); err != nil {
-            return err
-        }
-        keys2 := []string{}
-        for k2, _ := range v {
-            keys2 = append(keys2, k2)
-        }
-        sort.Strings(keys2)
-        for _, k2 := range keys2 {
-            if err = rlp.Encode(w, k2); err != nil {
-                return err
-            }
-            v2 := v[k2]
-            if err = rlp.Encode(w, string(v2)); err != nil {
-                return err
-            }
-        }
-
-    }
     return nil
 }
 
@@ -287,55 +240,24 @@ func (pdb *PlaybackDatabase) DecodeRLP(s *rlp.Stream) (err error) {
         }
         pdb.cache[k] = []byte(v)
     }
-    if err = s.Decode(&size); err != nil {
-        return err
-    }
-    for i := 0; i < int(size); i++ {
-        var k string
-        if err = s.Decode(&k); err != nil {
-            return err
-        }
-        v := make(map[string][]byte)
-        var size2 uint32
-        if err = s.Decode(&size2); err != nil {
-            return err
-        }
-        for j := 0; j < int(size2); j++ {
-            var k2 string
-            if err = s.Decode(&k2); err != nil {
-                return err
-            }
-            var v2 string
-            if err = s.Decode(&v2); err != nil {
-                return err
-            }
-            v[k2] = []byte(v2)
-        }
-        pdb.cache2[k] = v
-    }
     return err
 }
 
 func NewPlaybackDatabase(rsd *RecordingStateDatabase) *PlaybackDatabase {
     pdb := &PlaybackDatabase{
         cache:  make(map[string][]byte),
-        cache2: make(map[string]map[string][]byte),
+    }
+    for k, v := range rsd.rdb.resolve {
+        pdb.cache[k] = v
     }
     for k, v := range rsd.rdb.get {
         pdb.cache[k] = v
-    }
-    for k, v := range rsd.rdb.getfirst {
-        m := make(map[string][]byte)
-        for k2, v2 := range v {
-            m[k2] = v2
-        }
-        pdb.cache2[k] = m
     }
     return pdb
 }
 
 func EmptyPlaybackDatabase() *PlaybackDatabase {
-    return &PlaybackDatabase{ cache: make(map[string][]byte), cache2: make(map[string]map[string][]byte) }
+    return &PlaybackDatabase{ cache: make(map[string][]byte) }
 }
 
 func (pdb *PlaybackDatabase) Get(key []byte) (value []byte, err error) {
@@ -358,9 +280,8 @@ func (pdb *PlaybackDatabase) Put(key, value []byte) error {
     return nil
 }
 
-func (pdb *PlaybackDatabase) GetFirst(start []byte, limit []byte, suffix []byte) ([]byte, error) {
+func (pdb *PlaybackDatabase) Resolve(start, limit []byte) ([]byte, error) {
     // Check if it can be found in the get/put cache
-    /*
     keys := make([]string, len(pdb.cache))
     i := 0
     for k, _ := range pdb.cache {
@@ -368,29 +289,20 @@ func (pdb *PlaybackDatabase) GetFirst(start []byte, limit []byte, suffix []byte)
         i++
     }
     sort.Strings(keys)
-    */
     startStr := string(start)
-    /*
     limitStr := string(limit)
     index := sort.Search(len(keys), func(i int) bool {
-        return keys[i] >= startStr && keys[i] <= limitStr
+        return keys[i] >= startStr
     })
-    if index == -1 {
-        return nil, errors.New("key not found in range")
-    }
-    for i := index; i < len(keys) && keys[i] >= startStr && keys[i] <= limitStr; i++ {
-        if len(keys[i])>=len(suffix) && bytes.Compare([]byte(keys[i])[len(keys[i])-len(suffix):], suffix) == 0 {
-            return pdb.cache[keys[i]], nil
+    for ; index < len(keys) && keys[index] < limitStr; index++ {
+        if len(keys[index]) == len(start) {
+            return pdb.cache[keys[index]], nil
         }
     }
-    */
-    if starts, start_exists := pdb.cache2[startStr]; start_exists {
-        suffixKey := string(suffix)
-        if val, exists := starts[suffixKey]; exists {
-            return val, nil
-        }
+    if val, exists := pdb.cache[startStr]; exists {
+        return val, nil
     }
-    panic(fmt.Sprintf("Cache miss in playback database: %s %s\n", hex.EncodeToString(start), hex.EncodeToString(suffix)))
+    panic(fmt.Sprintf("Cache miss in playback database: %s\n", hex.EncodeToString(start)))
     return nil, errors.New("Cache miss in playback database")
 }
 
@@ -406,8 +318,8 @@ func (psd *PlaybackStateDatabase) OpenTrie(root common.Hash, blockNr uint32) (Tr
     return trie.NewSecure(root, psd.pdb, MaxTrieCacheGen, []byte("AT"), blockNr)
 }
 
-func (psd *PlaybackStateDatabase) OpenStorageTrie(addrHash, root common.Hash, blockNr uint32) (Trie, error) {
-    return trie.NewSecure(root, psd.pdb, 0, addrHash[:], blockNr)
+func (psd *PlaybackStateDatabase) OpenStorageTrie(addr common.Address, root common.Hash, blockNr uint32) (Trie, error) {
+    return trie.NewSecure(root, psd.pdb, 0, addr[:], blockNr)
 }
 
 func (psd *PlaybackStateDatabase) ContractCode(addrHash, codeHash common.Hash) ([]byte, error) {

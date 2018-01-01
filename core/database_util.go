@@ -172,7 +172,7 @@ func GetHeader(db DatabaseReader, hash common.Hash, number uint64) *types.Header
 func GetBodyRLP(db DatabaseReader, hash common.Hash, number uint64) rlp.RawValue {
 	data, err := db.Get(blockBodyKey(hash, number))
 	if err != nil {
-		fmt.Printf("Could not read body RLP: %s\n", err)
+		//fmt.Printf("Could not read body RLP: %s\n", err)
 	}
 	return data
 }

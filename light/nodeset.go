@@ -65,7 +65,7 @@ func (db *NodeSet) Get(key []byte) ([]byte, error) {
 	return nil, errors.New("not found")
 }
 
-func (db *NodeSet) GetFirst(start []byte, limit []byte) ([]byte, error) {
+func (db *NodeSet) Resolve(start, limit []byte) ([]byte, error) {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 	keys := make([]string, len(db.db))
@@ -78,12 +78,12 @@ func (db *NodeSet) GetFirst(start []byte, limit []byte) ([]byte, error) {
 	startStr := string(start)
 	limitStr := string(limit)
 	index := sort.Search(len(keys), func(i int) bool {
-		return keys[i] >= startStr && keys[i] <= limitStr
+		return keys[i] >= startStr
 	})
-	if index == -1 {
-		return nil, errors.New("key not found in range")
+	if index < len(keys) && keys[index] <= limitStr {
+		return db.db[keys[index]], nil
 	}
-	return db.db[keys[index]], nil
+	return nil, errors.New("key not found in range")
 }
 
 // Has returns true if the node set contains the given key

@@ -21,8 +21,8 @@ import (
 	"hash"
 	"sync"
 	"encoding/binary"
-	"fmt"
-	"encoding/hex"
+	//"fmt"
+	//"encoding/hex"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto/sha3"
@@ -55,7 +55,7 @@ type hasher struct {
 
 func newHasher(cachegen, cachelimit uint16, db DatabaseWriter, prefix []byte, writeBlockNr uint32) *hasher {
 	suffix := make([]byte, 4)
-	binary.BigEndian.PutUint32(suffix, writeBlockNr^0xffffffff)
+	binary.BigEndian.PutUint32(suffix, writeBlockNr^0xffffffff - 1)
 	h := &hasher{
 		cachegen:   cachegen,
 		cachelimit: cachelimit,
@@ -96,9 +96,6 @@ func (h *hasher) hash(n node, force bool, key []byte) (node, node, error) {
 		if !dirty {
 			return hash, n, nil
 		}
-	}
-	if vn, ok := n.(valueNode); ok {
-		fmt.Printf("Hash value node %s with key %s\n", hex.EncodeToString(vn), hex.EncodeToString(key))
 	}
 	// Trie not processed yet or needs storage, walk the children
 	collapsed, cached, err := h.hashChildren(n, key)
@@ -146,6 +143,9 @@ func (h *hasher) hashChildren(original node, key []byte) (node, node, error) {
 			if err != nil {
 				return original, original, err
 			}
+		} else {
+			// Store valueNode with the full key
+			h.store(n.Val, false, append(key, n.Key...))
 		}
 		if collapsed.Val == nil {
 			collapsed.Val = valueNode(nil) // Ensure that nil children are encoded as empty strings.
@@ -213,17 +213,14 @@ func (h *hasher) hashChildren(original node, key []byte) (node, node, error) {
 	}
 }
 
-func compositeKey(key []byte, prefix []byte, suffix []byte, hash []byte) []byte {
-	return append(prefix, append([]byte{byte(len(key))}, append(hexToCompact(key[:]), append(suffix, hash[:4]...)...)...)...)
+func CompositeKey(key []byte, prefix []byte, suffix []byte) []byte {
+	return append(append(append([]byte{}, prefix...), hexToCompact(key[:])...), suffix...)
 }
 
 func (h *hasher) store(n node, force bool, key []byte) (node, error) {
 	// Don't store hashes or empty nodes.
 	if hash, isHash := n.(hashNode); n == nil || isHash {
 		return hash, nil
-	}
-	if vn, ok := n.(valueNode); ok {
-		fmt.Printf("Store value node %s with key %s\n", hex.EncodeToString(vn), hex.EncodeToString(key))
 	}
 	calculator := h.newCalculator()
 	defer h.returnCalculator(calculator)
@@ -232,7 +229,8 @@ func (h *hasher) store(n node, force bool, key []byte) (node, error) {
 	if err := rlp.Encode(calculator.buffer, n); err != nil {
 		panic("encode error: " + err.Error())
 	}
-	if calculator.buffer.Len() < 32 && !force {
+	// Store value node with the full key
+	if _, isValueNode := n.(valueNode); !isValueNode && calculator.buffer.Len() < 32 && !force {
 		return n, nil // Nodes smaller than 32 bytes are stored inside their parent
 	}
 	// Larger nodes are replaced by their hash and stored in the database.
@@ -241,14 +239,25 @@ func (h *hasher) store(n node, force bool, key []byte) (node, error) {
 		calculator.sha.Write(calculator.buffer.Bytes())
 		hash = hashNode(calculator.sha.Sum(nil))
 	}
+	var err error = nil
 	if h.db != nil {
 		// db might be a leveldb batch, which is not safe for concurrent writes
 		h.mu.Lock()
 		bytesToWrite := calculator.buffer.Bytes()
-		err := h.db.Put(compositeKey(key, h.prefix, h.suffix, hash), bytesToWrite)
+		compKey := CompositeKey(key, h.prefix, h.suffix)
+		/*
+		fmt.Printf("Store %s for hash %s with key %s and composite key: %s\n",
+			hex.EncodeToString(bytesToWrite),
+			hex.EncodeToString(hash),
+			hex.EncodeToString(key),
+			hex.EncodeToString(compKey))
+		*/
+		err = h.db.Put(compKey, bytesToWrite)
 		h.mu.Unlock()
-
+	}
+	if calculator.buffer.Len() < 32 && !force {
+		return n, err
+	} else {
 		return hash, err
 	}
-	return hash, nil
 }

@@ -17,7 +17,6 @@
 package ethdb
 
 import (
-	"bytes"
 	"errors"
 	"sort"
 	"sync"
@@ -65,7 +64,7 @@ func (db *MemDatabase) Get(key []byte) ([]byte, error) {
 	return nil, errors.New("not found")
 }
 
-func (db *MemDatabase) GetFirst(start []byte, limit []byte, suffix []byte) ([]byte, error) {
+func (db *MemDatabase) Resolve(start, limit []byte) ([]byte, error) {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 	keys := make([]string, len(db.db))
@@ -78,14 +77,11 @@ func (db *MemDatabase) GetFirst(start []byte, limit []byte, suffix []byte) ([]by
 	startStr := string(start)
 	limitStr := string(limit)
 	index := sort.Search(len(keys), func(i int) bool {
-		return keys[i] >= startStr && keys[i] <= limitStr
+		return keys[i] >= startStr
 	})
-	if index == -1 {
-		return nil, errors.New("key not found in range")
-	}
-	for i := index; i < len(keys) && keys[i] >= startStr && keys[i] <= limitStr; i++ {
-		if len(keys[i])>=len(suffix) && bytes.Compare([]byte(keys[i])[len(keys[i])-len(suffix):], suffix) == 0 {
-			return db.db[keys[i]], nil
+	for ; index < len(keys) && keys[index] < limitStr; index++ {
+		if len(keys[index]) == len(start) {
+			return db.db[keys[index]], nil
 		}
 	}
 	return nil, errors.New("key not found in range")
