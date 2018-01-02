@@ -631,3 +631,13 @@ func (s *StateDB) CommitTo(dbw trie.DatabaseWriter, deleteEmptyObjects bool, blo
 	log.Debug("Trie cache stats after commit", "misses", trie.CacheMisses(), "unloads", trie.CacheUnloads())
 	return root, err
 }
+
+func (s *StateDB) CleanForNextBlock() {
+	s.logs = make(map[common.Hash][]*types.Log)
+	s.logSize = 0
+	s.clearJournalAndRefund()
+	// Restore onDirty callbacks
+	for _, stateObject := range s.stateObjects {
+		stateObject.onDirty = s.MarkStateObjectDirty
+	}
+}

@@ -96,6 +96,7 @@ type BlockChain struct {
 	currentBlock     *types.Block // Current head of the block chain
 	currentFastBlock *types.Block // Current head of the fast-sync chain (may be above the block chain!)
 
+	stateDB      *state.StateDB
 	stateCache   state.Database // State database to reuse between imports (contains state cache)
 	bodyCache    *lru.Cache     // Cache for the most recent block bodies
 	bodyRLPCache *lru.Cache     // Cache for the most recent block bodies in RLP encoded format
@@ -965,25 +966,30 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		} else {
 			parent = chain[i-1]
 		}
-		readBlockNr := uint32(block.NumberU64()-1)
-		state, err := state.New(parent.Root(), bc.stateCache, readBlockNr)
-		if err != nil {
-			return i, events, coalescedLogs, err
+		readBlockNr := uint32(parent.NumberU64())
+		if bc.stateDB == nil || bc.stateDB.IntermediateRoot(bc.config.IsEIP158(parent.Number()), readBlockNr) != parent.Root() {
+			bc.stateDB, err = state.New(parent.Root(), bc.stateCache, readBlockNr)
+			if err != nil {
+				return i, events, coalescedLogs, err
+			}
+		} else {
+			bc.stateDB.CleanForNextBlock()
+			//fmt.Printf("Reused stateDB from block %d\n", readBlockNr)
 		}
 		// Process block using the parent state as reference point.
-		receipts, logs, usedGas, err := bc.processor.Process(block, state, bc.vmConfig)
+		receipts, logs, usedGas, err := bc.processor.Process(block, bc.stateDB, bc.vmConfig)
 		if err != nil {
 			bc.reportBlock(block, receipts, err)
 			return i, events, coalescedLogs, err
 		}
 		// Validate the state using the default validator
-		err = bc.Validator().ValidateState(block, parent, state, receipts, usedGas)
+		err = bc.Validator().ValidateState(block, parent, bc.stateDB, receipts, usedGas)
 		if err != nil {
 			bc.reportBlock(block, receipts, err)
 			return i, events, coalescedLogs, err
 		}
 		// Write the block to the chain and get the status.
-		status, err := bc.WriteBlockAndState(block, receipts, state)
+		status, err := bc.WriteBlockAndState(block, receipts, bc.stateDB)
 		if err != nil {
 			return i, events, coalescedLogs, err
 		}

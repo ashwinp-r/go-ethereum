@@ -107,7 +107,7 @@ func (db *cachingDB) pushTrie(t *trie.SecureTrie) {
 }
 
 func (db *cachingDB) OpenStorageTrie(addr common.Address, root common.Hash, blockNr uint32) (Trie, error) {
-	return trie.NewSecure(root, db.db, 0, addr[:], blockNr)
+	return trie.NewSecure(root, db.db, MaxTrieCacheGen, addr[:], blockNr)
 }
 
 func (db *cachingDB) CopyTrie(t Trie) Trie {

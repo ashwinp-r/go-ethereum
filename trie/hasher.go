@@ -139,7 +139,7 @@ func (h *hasher) hashChildren(original node, key []byte) (node, node, error) {
 		cached.Key = common.CopyBytes(n.Key)
 
 		if _, ok := n.Val.(valueNode); !ok {
-			collapsed.Val, cached.Val, err = h.hash(n.Val, false, append(key, n.Key...))
+			collapsed.Val, cached.Val, err = h.hash(n.Val, false, concat(key, n.Key...))
 			if err != nil {
 				return original, original, err
 			}
@@ -169,7 +169,7 @@ func (h *hasher) hashChildren(original node, key []byte) (node, node, error) {
 			}
 			// Hash all other children properly
 			var herr error
-			collapsed.Children[index], cached.Children[index], herr = h.hash(n.Children[index], false, append(key, byte(index)))
+			collapsed.Children[index], cached.Children[index], herr = h.hash(n.Children[index], false, concat(key, byte(index)))
 			if herr != nil {
 				h.mu.Lock() // rarely if ever locked, no congenstion
 				err = herr
@@ -177,7 +177,6 @@ func (h *hasher) hashChildren(original node, key []byte) (node, node, error) {
 			}
 		}
 		// If we're not running in threaded mode yet, span a goroutine for each child
-		/*
 		if !h.threaded {
 			// Disable further threading
 			h.threaded = true
@@ -193,11 +192,10 @@ func (h *hasher) hashChildren(original node, key []byte) (node, node, error) {
 			// Reenable threading for subsequent hash calls
 			h.threaded = false
 		} else {
-		*/
 			for i := 0; i < 16; i++ {
 				hashChild(i, nil)
 			}
-		//}
+		}
 		if err != nil {
 			return original, original, err
 		}

@@ -180,7 +180,7 @@ func (t *Trie) tryGet(origNode node, key []byte, pos int, blockNr uint32) (value
 		CompositeKey(key, t.prefix, suffix),
 		CompositeKey(key, t.prefix, []byte{0xff, 0xff, 0xff, 0xff}))
 	if err != nil {
-		//fmt.Printf("tryGet error: %s\n", err)
+		//fmt.Printf("tryGet error for key %s and block %d: %s\n", hex.EncodeToString(key), blockNr, err)
 	}
 	if err != nil || enc == nil || len(enc) == 0 {
 		return nil, nil
@@ -434,7 +434,7 @@ func (t *Trie) delete(n node, prefix, key []byte, blockNr uint32) (bool, node, e
 				// shortNode{..., shortNode{...}}.  Since the entry
 				// might not be loaded yet, resolve it just for this
 				// check.
-				cnode, err := t.resolve(n.Children[pos], append(prefix, byte(pos)), blockNr)
+				cnode, err := t.resolve(n.Children[pos], concat(prefix, byte(pos)), blockNr)
 				if err != nil {
 					return false, nil, err
 				}
@@ -514,6 +514,7 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32) (node, err
 		fmt.Printf("Expected hash %s\n", hex.EncodeToString(n))
 		fmt.Printf("Got hash %s\n", hex.EncodeToString(gotHash))
 		fmt.Printf("Got data %s\n", hex.EncodeToString(enc))
+		fmt.Printf("Stack: %s\n", debug.Stack())
 		return nil, &MissingNodeError{NodeHash: common.BytesToHash(n), Path: prefix}
 	}
 	dec := mustDecodeNode(n, enc, t.cachegen)
