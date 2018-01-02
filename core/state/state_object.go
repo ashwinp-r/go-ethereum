@@ -91,6 +91,7 @@ type stateObject struct {
 	touched   bool
 	deleted   bool
 	onDirty   func(addr common.Address) // Callback method to mark a state object newly dirty
+	idleAge   int
 }
 
 // empty returns whether the account is considered empty.

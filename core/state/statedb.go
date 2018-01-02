@@ -625,6 +625,13 @@ func (s *StateDB) CommitTo(dbw trie.DatabaseWriter, deleteEmptyObjects bool, blo
 			s.updateStateObject(stateObject, blockNr)
 		}
 		delete(s.stateObjectsDirty, addr)
+		if !isDirty {
+			stateObject.idleAge++
+			if stateObject.idleAge >= MaxTrieCacheGen {
+				//fmt.Printf("Removing idle state object %s\n", addr.Hex())
+				delete(s.stateObjects, addr)
+			}
+		}
 	}
 	// Write trie changes.
 	root, err = s.trie.CommitTo(dbw, writeBlockNr)
