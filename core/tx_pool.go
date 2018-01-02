@@ -406,7 +406,7 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 	if newHead == nil {
 		newHead = pool.chain.CurrentBlock().Header() // Special case during testing
 	}
-	readBlockNr := uint32(newHead.Number.Uint64()-1)
+	readBlockNr := uint32(newHead.Number.Uint64())
 	statedb, err := pool.chain.StateAt(newHead.Root, readBlockNr)
 	if err != nil {
 		log.Error("Failed to reset txpool state", "err", err)
