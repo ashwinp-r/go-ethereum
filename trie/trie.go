@@ -466,6 +466,43 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32) (node, err
 	return dec, nil
 }
 
+// Finds the part of the key that can be explored without loading anything from the
+// underlying database
+func (t *Trie) CachedPrefixFor(key []byte) int {
+	return t.cachedPrefixFor(t.root, key, 0)
+}
+
+func (t *Trie) cachedPrefixFor(n node, key []byte, pos int) int {
+	if pos == len(key) {
+		return pos
+	}
+	switch n := n.(type) {
+	case *shortNode:
+		matchlen := prefixLen(key[pos:], n.Key)
+		// If the whole key matches, keep this short node as is
+		// and only update the value.
+		if matchlen == len(n.Key) {
+			return t.cachedPrefixFor(n.Val, key, pos + matchlen)
+		}
+		// No further resolutions of the trie required, apart from edge cases of deleting penultimate slot in a full node
+		return len(key)
+	case *fullNode:
+		return t.cachedPrefixFor(n.Children[key[0]], key, pos + 1)
+
+	case nil:
+		// No further resolutions of the trie required
+		return len(key)
+
+	case hashNode:
+		// We've hit a part of the trie that isn't loaded yet.
+		return pos
+
+	default:
+		fmt.Printf("Key: %s\n", hex.EncodeToString(key))
+		panic(fmt.Sprintf("%T: invalid node: %v", n, n))
+	}
+}
+
 // Root returns the root hash of the trie.
 // Deprecated: use Hash instead.
 func (t *Trie) Root() []byte { return t.Hash().Bytes() }

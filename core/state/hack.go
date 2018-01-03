@@ -97,12 +97,10 @@ func (so *stateObject) sortedDirtyStorageKeys() HashList {
 
 func (rdb *RecordingDatabase) Get(key []byte) ([]byte, error) {
     val, err := rdb.db.Get(key)
-    if err == nil {
-        stringKey := string(key)
-        if _, put_exists := rdb.put[stringKey]; !put_exists {
-            if _, get_exists := rdb.get[stringKey]; !get_exists {
-                rdb.get[stringKey] = val
-            }
+    stringKey := string(key)
+    if _, put_exists := rdb.put[stringKey]; !put_exists {
+        if _, get_exists := rdb.get[stringKey]; !get_exists {
+            rdb.get[stringKey] = val
         }
     }
     return val, err
@@ -125,30 +123,30 @@ func (rdb *RecordingDatabase) Put(key, value []byte) error {
 }
 
 func (rdb *RecordingDatabase) Resolve(start, limit []byte) ([]byte, error) {
+    //fmt.Printf("Calling Resolve on recording: %s\n", hex.EncodeToString(start))
     val, err := rdb.db.Resolve(start, limit)
-    if err == nil {
-        // Check if it can be found in the puts
-        keys := make([]string, len(rdb.put))
-        i := 0
-        for k, _ := range rdb.put {
-            keys[i] = k
-            i++
+    // Check if it can be found in the puts
+    keys := make([]string, len(rdb.put))
+    i := 0
+    for k, _ := range rdb.put {
+        keys[i] = k
+        i++
+    }
+    sort.Strings(keys)
+    startStr := string(start)
+    limitStr := string(limit)
+    index := sort.Search(len(keys), func(i int) bool {
+        return keys[i] >= startStr
+    })
+    for ; index < len(keys) && keys[index] < limitStr; index++ {
+        if len(keys[index]) == len(start) {
+            //fmt.Printf("Found in the puts: %s\n", hex.EncodeToString([]byte(keys[index])))
+            return val, err
         }
-        sort.Strings(keys)
-        startStr := string(start)
-        limitStr := string(limit)
-        index := sort.Search(len(keys), func(i int) bool {
-            return keys[i] >= startStr
-        })
-        for ; index < len(keys) && keys[index] < limitStr; index++ {
-            if len(keys[index]) == len(start) {
-                return val, nil
-            }
-        }
-        if _, start_exists := rdb.resolve[startStr]; !start_exists {
-            rdb.resolve[startStr] = val
-        }
-        return nil, errors.New("key not found in range")
+    }
+    if _, start_exists := rdb.resolve[startStr]; !start_exists {
+        rdb.resolve[startStr] = val
+        //fmt.Printf("Recorded Resolve: %s\n", hex.EncodeToString(start))
     }
     return val, err
 }
@@ -185,6 +183,12 @@ func (rsd *RecordingStateDatabase) CopyTrie(t Trie) Trie {
     default:
         panic(fmt.Errorf("unknown trie type %T", t))
     }    
+}
+
+func (rsd *RecordingStateDatabase) CleanForNextBlock() {
+    rsd.rdb.get = make(map[string][]byte)
+    rsd.rdb.put = make(map[string]struct{})
+    rsd.rdb.resolve = make(map[string][]byte)
 }
 
 func RecordingState(stateRoot common.Hash, rsd *RecordingStateDatabase, blockNr uint32) (*StateDB, error) {
@@ -298,9 +302,6 @@ func (pdb *PlaybackDatabase) Resolve(start, limit []byte) ([]byte, error) {
         if len(keys[index]) == len(start) {
             return pdb.cache[keys[index]], nil
         }
-    }
-    if val, exists := pdb.cache[startStr]; exists {
-        return val, nil
     }
     panic(fmt.Sprintf("Cache miss in playback database: %s\n", hex.EncodeToString(start)))
     return nil, errors.New("Cache miss in playback database")

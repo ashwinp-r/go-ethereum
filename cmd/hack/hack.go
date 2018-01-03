@@ -1,10 +1,10 @@
 package main
 
 import (
-	"bytes"
+	//"bytes"
 	"fmt"
-	"encoding/json"
-	"io/ioutil"
+	//"encoding/json"
+	//"io/ioutil"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
@@ -15,7 +15,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/rlp"
+	//"github.com/ethereum/go-ethereum/rlp"
 )
 
 // computeTxEnv returns the execution environment of a certain transaction.
@@ -92,7 +92,9 @@ func main() {
 	bc, err := core.NewBlockChain(ethDb, params.MainnetChainConfig, ethash.NewFaker(), vm.Config{})
 	currentBlockNr := bc.CurrentBlock().NumberU64()
 	fmt.Printf("Current block number: %d\n", currentBlockNr)
-	for blockNr := uint64(1); blockNr < currentBlockNr + 1; blockNr++ {
+	var recordingStateDb *state.RecordingStateDatabase
+	var recordingState *state.StateDB
+	for blockNr := uint64(2200000); blockNr < 2600000 + 1; blockNr++ {
 		block := bc.GetBlockByNumber(blockNr)
 		if block == nil {
 			fmt.Printf("block #%d not found\n", blockNr)
@@ -110,11 +112,18 @@ func main() {
 		prevBlock := bc.GetBlock(block.ParentHash(), block.NumberU64()-1)
 		preBlockStateRoot := prevBlock.Root()
 
-		recordingStateDb := state.NewRecordingStateDatabase(ethDb)
-		recordingState, err := state.RecordingState(preBlockStateRoot, recordingStateDb, uint32(blockNr-1))
-		if err != nil {
-			fmt.Printf("block #%d could not create recordingState: %s\n", blockNr, err)
-			continue
+		//readBlockNr := uint32(prevBlock.NumberU64())
+		if recordingState == nil /*|| recordingState.IntermediateRoot(params.MainnetChainConfig.IsEIP158(prevBlock.Number()), readBlockNr) != prevBlock.Root()*/ {
+			recordingStateDb = state.NewRecordingStateDatabase(ethDb)
+			recordingState, err = state.RecordingState(preBlockStateRoot, recordingStateDb, uint32(blockNr-1))
+			if err != nil {
+				fmt.Printf("block #%d could not create recordingState: %s\n", blockNr, err)
+				continue
+			}
+		} else {
+			recordingStateDb.CleanForNextBlock()
+			recordingState.CleanForNextBlock()
+			//fmt.Printf("Reused stateDB from block %d\n", readBlockNr)
 		}
 		receipts, _, usedGas, err := processor.Process(block, recordingState, config)
 
@@ -126,7 +135,10 @@ func main() {
 			fmt.Printf("block #%d could not validate: %s\n", blockNr, err)
 			continue
 		}
-
+		if blockNr % 1000 == 0 {
+			fmt.Printf("Blocks up to %d processed\n", blockNr)
+		}
+		/*
 		var witness_size int
 		playbackDatabaseNew := state.EmptyPlaybackDatabase()
 		{
@@ -164,8 +176,9 @@ func main() {
 			continue
 		}
 		fmt.Printf("%d %d\n", blockNr, witness_size)
+		*/
 	}
-
+	/*
 	execResult, err := traceTx(bc, ethDb, common.HexToHash("0xaf7a40833cff97e8dacacb2d41dd97a8decaa4f751b413e78e40f0c8bf7d242d"))
 	if err != nil {
 		fmt.Printf("Tracing failed failed: %v\n", err)
@@ -175,5 +188,6 @@ func main() {
 		fmt.Printf("Mashaling failed: %v\n", err)
 	}
 	ioutil.WriteFile("/Users/alexeyakhunov/my/go-ethereum/tx_trace.json", rJson, 0)
+	*/
 }
 
