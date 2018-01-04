@@ -22,6 +22,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/log"
+
+	"github.com/hashicorp/golang-lru"
 )
 
 var secureKeyPrefix = []byte("secure-key-")
@@ -44,6 +46,7 @@ type SecureTrie struct {
 	secKeyBuf        [200]byte
 	secKeyCache      map[string][]byte
 	secKeyCacheOwner *SecureTrie // Pointer to self, replace the key cache on mismatch
+	hashKeyCache     *lru.Cache
 }
 
 // NewSecure creates a trie with an existing root node from db.
@@ -65,7 +68,11 @@ func NewSecure(root common.Hash, db Database, cachelimit uint16, prefix []byte, 
 		return nil, err
 	}
 	trie.SetCacheLimit(cachelimit)
-	return &SecureTrie{trie: *trie}, nil
+	hashKeyCache, err := lru.New(1024*1024)
+	if err != nil {
+		return nil, err
+	}
+	return &SecureTrie{trie: *trie, hashKeyCache: hashKeyCache}, nil
 }
 
 // Get returns the value for key stored in the trie.
@@ -199,11 +206,16 @@ func (t *SecureTrie) secKey(key []byte) []byte {
 // The caller must not hold onto the return value because it will become
 // invalid on the next call to hashKey or secKey.
 func (t *SecureTrie) hashKey(key []byte) []byte {
+	keyStr := string(key)
+	if cached, ok := t.hashKeyCache.Get(keyStr); ok {
+		return cached.([]byte)
+	}
 	h := newHasher(0, 0, nil, nil, 0)
 	calculator := h.newCalculator()
 	calculator.sha.Write(key)
 	buf := calculator.sha.Sum(t.hashKeyBuf[:0])
 	h.returnCalculator(calculator)
+	t.hashKeyCache.Add(keyStr, concat([]byte{}, buf...))
 	//fmt.Printf("Converting %s into %s\n", hex.EncodeToString(key), hex.EncodeToString(buf))
 	return buf
 }

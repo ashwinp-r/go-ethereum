@@ -5,6 +5,10 @@ import (
 	"fmt"
 	//"encoding/json"
 	//"io/ioutil"
+	"flag"
+	"runtime/pprof"
+	"os"
+	"log"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
@@ -17,6 +21,8 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	//"github.com/ethereum/go-ethereum/rlp"
 )
+
+var cpuprofile = flag.String("cpuprofile", "", "write cpu profile `file`")
 
 // computeTxEnv returns the execution environment of a certain transaction.
 func computeTxEnv(bc *core.BlockChain, blockHash common.Hash, txIndex int) (core.Message, vm.Context, *state.StateDB, uint32, error) {
@@ -84,7 +90,18 @@ func traceTx(bc *core.BlockChain, chainDb ethdb.Database, txHash common.Hash) (i
 }
 
 func main() {
-	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024, 16)
+	flag.Parse()
+    if *cpuprofile != "" {
+        f, err := os.Create(*cpuprofile)
+        if err != nil {
+            log.Fatal("could not create CPU profile: ", err)
+        }
+        if err := pprof.StartCPUProfile(f); err != nil {
+            log.Fatal("could not start CPU profile: ", err)
+        }
+        defer pprof.StopCPUProfile()
+    }
+    ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024, 512)
 	defer ethDb.Close()
 	if err != nil {
 		panic(fmt.Sprintf("Could not open database %s\n", err))
@@ -94,7 +111,7 @@ func main() {
 	fmt.Printf("Current block number: %d\n", currentBlockNr)
 	var recordingStateDb *state.RecordingStateDatabase
 	var recordingState *state.StateDB
-	for blockNr := uint64(2200000); blockNr < 2600000 + 1; blockNr++ {
+	for blockNr := uint64(2284500 + 5000); blockNr < uint64(2284500 + 6000 + 1); blockNr++ {
 		block := bc.GetBlockByNumber(blockNr)
 		if block == nil {
 			fmt.Printf("block #%d not found\n", blockNr)
