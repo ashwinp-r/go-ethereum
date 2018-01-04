@@ -131,7 +131,7 @@ func New(root common.Hash, db Database, prefix []byte, blockNr uint32) (*Trie, e
 		if db == nil {
 			panic("trie.New: cannot use existing root without a database")
 		}
-		rootnode, err := trie.resolveHash(root[:], []byte{}, blockNr)
+		rootnode, err := trie.resolveHash(root[:], []byte{}, blockNr, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -202,8 +202,22 @@ func (t *Trie) Update(key, value []byte, blockNr uint32) {
 // If a node was not found in the database, a MissingNodeError is returned.
 func (t *Trie) TryUpdate(key, value []byte, blockNr uint32) error {
 	k := keybytesToHex(key)
+	pos := t.CachedPrefixFor(k)
+	chanMap := make(map[string]chan []byte)
+	for i := pos; pos < len(k); pos++ {
+		ch := make(chan []byte, 1) // Buffered so that go-routines can finish
+		chanMap[string(k[:i])] = ch
+		prefetch := func(key []byte, prefixEnd int, ch chan []byte) {
+			enc, _ := t.readResolve(key[:prefixEnd], blockNr)
+			ch <- enc
+		}
+		go prefetch(k, i, ch)
+	}
 	if len(value) != 0 {
-		_, n, err := t.insert(t.root, k, 0, valueNode(value), blockNr)
+		_, n, err := t.insert(t.root, k, 0, valueNode(value), blockNr, chanMap)
+		for _, ch := range chanMap {
+			close(ch)
+		}
 		if err != nil {
 			return err
 		}
@@ -218,7 +232,7 @@ func (t *Trie) TryUpdate(key, value []byte, blockNr uint32) error {
 	return nil
 }
 
-func (t *Trie) insert(n node, key []byte, keyStart int, value node, blockNr uint32) (bool, node, error) {
+func (t *Trie) insert(n node, key []byte, keyStart int, value node, blockNr uint32, chanMap map[string]chan []byte) (bool, node, error) {
 	if len(key) == keyStart {
 		if v, ok := n.(valueNode); ok {
 			return !bytes.Equal(v, value.(valueNode)), value, nil
@@ -231,7 +245,7 @@ func (t *Trie) insert(n node, key []byte, keyStart int, value node, blockNr uint
 		// If the whole key matches, keep this short node as is
 		// and only update the value.
 		if matchlen == len(n.Key) {
-			dirty, nn, err := t.insert(n.Val, key, keyStart+matchlen, value, blockNr)
+			dirty, nn, err := t.insert(n.Val, key, keyStart+matchlen, value, blockNr, chanMap)
 			if !dirty || err != nil {
 				return false, n, err
 			}
@@ -240,11 +254,11 @@ func (t *Trie) insert(n node, key []byte, keyStart int, value node, blockNr uint
 		// Otherwise branch out at the index where they differ.
 		branch := &fullNode{flags: t.newFlag()}
 		var err error
-		_, branch.Children[n.Key[matchlen]], err = t.insert(nil, n.Key, matchlen+1, n.Val, blockNr)
+		_, branch.Children[n.Key[matchlen]], err = t.insert(nil, n.Key, matchlen+1, n.Val, blockNr, chanMap)
 		if err != nil {
 			return false, nil, err
 		}
-		_, branch.Children[key[keyStart+matchlen]], err = t.insert(nil, key, keyStart+matchlen+1, value, blockNr)
+		_, branch.Children[key[keyStart+matchlen]], err = t.insert(nil, key, keyStart+matchlen+1, value, blockNr, chanMap)
 		if err != nil {
 			return false, nil, err
 		}
@@ -256,7 +270,7 @@ func (t *Trie) insert(n node, key []byte, keyStart int, value node, blockNr uint
 		return true, &shortNode{key[keyStart:keyStart+matchlen], branch, t.newFlag()}, nil
 
 	case *fullNode:
-		dirty, nn, err := t.insert(n.Children[key[keyStart]], key, keyStart+1, value, blockNr)
+		dirty, nn, err := t.insert(n.Children[key[keyStart]], key, keyStart+1, value, blockNr, chanMap)
 		if !dirty || err != nil {
 			return false, n, err
 		}
@@ -272,11 +286,11 @@ func (t *Trie) insert(n node, key []byte, keyStart int, value node, blockNr uint
 		// We've hit a part of the trie that isn't loaded yet. Load
 		// the node and insert into it. This leaves all child nodes on
 		// the path to the value in the trie.
-		rn, err := t.resolveHash(n, key[:keyStart], blockNr)
+		rn, err := t.resolveHash(n, key[:keyStart], blockNr, chanMap)
 		if err != nil {
 			return false, nil, err
 		}
-		dirty, nn, err := t.insert(rn, key, keyStart, value, blockNr)
+		dirty, nn, err := t.insert(rn, key, keyStart, value, blockNr, chanMap)
 		if !dirty || err != nil {
 			return false, rn, err
 		}
@@ -405,7 +419,7 @@ func (t *Trie) delete(n node, key []byte, keyStart int, blockNr uint32) (bool, n
 		// We've hit a part of the trie that isn't loaded yet. Load
 		// the node and delete from it. This leaves all child nodes on
 		// the path to the value in the trie.
-		rn, err := t.resolveHash(n, key[:keyStart], blockNr)
+		rn, err := t.resolveHash(n, key[:keyStart], blockNr, nil)
 		if err != nil {
 			return false, nil, err
 		}
@@ -429,14 +443,12 @@ func concat(s1 []byte, s2 ...byte) []byte {
 
 func (t *Trie) resolve(n node, prefix []byte, blockNr uint32) (node, error) {
 	if n, ok := n.(hashNode); ok {
-		return t.resolveHash(n, prefix, blockNr)
+		return t.resolveHash(n, prefix, blockNr, nil)
 	}
 	return n, nil
 }
 
-func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32) (node, error) {
-	cacheMissCounter.Inc(1)
-
+func (t *Trie) readResolve(prefix []byte, blockNr uint32) ([]byte, error) {
 	suffix := make([]byte, 4)
 	binary.BigEndian.PutUint32(suffix, blockNr^0xffffffff - 1) // Invert the block number
 	startKey := CompositeKey(prefix, t.prefix, suffix)
@@ -446,6 +458,22 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32) (node, err
 		fmt.Printf("Resolving wrong hash for prefix %s, startkey %s limitkey %s block %d: %v\n",
 			hex.EncodeToString(prefix), hex.EncodeToString(startKey), hex.EncodeToString(limitKey), blockNr, err)
 	}
+	return enc, err
+}
+
+func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32, chanMap map[string]chan []byte) (node, error) {
+	cacheMissCounter.Inc(1)
+	var enc []byte
+	var err error
+	if chanMap == nil {
+		enc, err = t.readResolve(prefix, blockNr)
+	} else {
+		if ch, ok := chanMap[string(prefix)]; ok {
+			enc = <- ch
+		} else {
+			enc, err = t.readResolve(prefix, blockNr)
+		}
+	}
 	if err != nil || enc == nil {
 		return nil, &MissingNodeError{NodeHash: common.BytesToHash(n), Path: prefix}
 	}
@@ -454,8 +482,8 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32) (node, err
 	sha.Write(enc)
 	gotHash := sha.Sum(nil)
 	if bytes.Compare(n, gotHash) != 0 {
-		fmt.Printf("Resolving wrong hash for prefix %s, startkey %s limitkey %s block %d: %v\n",
-			hex.EncodeToString(prefix), hex.EncodeToString(startKey), hex.EncodeToString(limitKey), blockNr, err)
+		fmt.Printf("Resolving wrong hash for prefix %s, block %d: %v\n",
+			hex.EncodeToString(prefix), blockNr, err)
 		fmt.Printf("Expected hash %s\n", hex.EncodeToString(n))
 		fmt.Printf("Got hash %s\n", hex.EncodeToString(gotHash))
 		fmt.Printf("Got data %s\n", hex.EncodeToString(enc))
@@ -487,7 +515,7 @@ func (t *Trie) cachedPrefixFor(n node, key []byte, pos int) int {
 		// No further resolutions of the trie required, apart from edge cases of deleting penultimate slot in a full node
 		return len(key)
 	case *fullNode:
-		return t.cachedPrefixFor(n.Children[key[0]], key, pos + 1)
+		return t.cachedPrefixFor(n.Children[key[pos]], key, pos + 1)
 
 	case nil:
 		// No further resolutions of the trie required

@@ -7,6 +7,7 @@ import (
     "io"
     "encoding/hex"
     "sort"
+    "sync"
 
     "github.com/ethereum/go-ethereum/common"
     "github.com/ethereum/go-ethereum/ethdb"
@@ -19,6 +20,7 @@ type RecordingDatabase struct {
     get map[string][]byte
     put map[string]struct{}
     resolve map[string][]byte
+    mu sync.Mutex
 }
 
 func NewRecordingDatabase(db ethdb.Database) (*RecordingDatabase) {
@@ -98,6 +100,8 @@ func (so *stateObject) sortedDirtyStorageKeys() HashList {
 func (rdb *RecordingDatabase) Get(key []byte) ([]byte, error) {
     val, err := rdb.db.Get(key)
     stringKey := string(key)
+    rdb.mu.Lock()
+    defer rdb.mu.Unlock()
     if _, put_exists := rdb.put[stringKey]; !put_exists {
         if _, get_exists := rdb.get[stringKey]; !get_exists {
             rdb.get[stringKey] = val
@@ -113,6 +117,8 @@ func (rdb *RecordingDatabase) Has(key []byte) (bool, error) {
 
 func (rdb *RecordingDatabase) Put(key, value []byte) error {
     err := rdb.db.Put(key, value)
+    rdb.mu.Lock()
+    defer rdb.mu.Unlock()
     if err == nil {
         stringKey := string(key)
         if _, put_exists := rdb.put[stringKey]; !put_exists {
@@ -125,6 +131,8 @@ func (rdb *RecordingDatabase) Put(key, value []byte) error {
 func (rdb *RecordingDatabase) Resolve(start, limit []byte) ([]byte, error) {
     //fmt.Printf("Calling Resolve on recording: %s\n", hex.EncodeToString(start))
     val, err := rdb.db.Resolve(start, limit)
+    rdb.mu.Lock()
+    defer rdb.mu.Unlock()
     // Check if it can be found in the puts
     keys := make([]string, len(rdb.put))
     i := 0
