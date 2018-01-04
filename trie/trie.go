@@ -204,20 +204,18 @@ func (t *Trie) TryUpdate(key, value []byte, blockNr uint32) error {
 	k := keybytesToHex(key)
 	pos := t.CachedPrefixFor(k)
 	chanMap := make(map[string]chan []byte)
-	for i := pos; pos < len(k); pos++ {
+	prefetch := func(prefixEnd int, ch chan []byte) {
+		enc, _ := t.readResolve(k[:prefixEnd], blockNr)
+		ch <- enc
+		close(ch)
+	}
+	for i := pos; i < len(k); i++ {
 		ch := make(chan []byte, 1) // Buffered so that go-routines can finish
 		chanMap[string(k[:i])] = ch
-		prefetch := func(key []byte, prefixEnd int, ch chan []byte) {
-			enc, _ := t.readResolve(key[:prefixEnd], blockNr)
-			ch <- enc
-		}
-		go prefetch(k, i, ch)
+		go prefetch(i, ch)
 	}
 	if len(value) != 0 {
 		_, n, err := t.insert(t.root, k, 0, valueNode(value), blockNr, chanMap)
-		for _, ch := range chanMap {
-			close(ch)
-		}
 		if err != nil {
 			return err
 		}
@@ -453,10 +451,12 @@ func (t *Trie) readResolve(prefix []byte, blockNr uint32) ([]byte, error) {
 	binary.BigEndian.PutUint32(suffix, blockNr^0xffffffff - 1) // Invert the block number
 	startKey := CompositeKey(prefix, t.prefix, suffix)
 	limitKey := CompositeKey(prefix, t.prefix, []byte{0xff, 0xff, 0xff, 0xff})
+	//fmt.Printf("Resolving prefix %s, startkey %s limitkey %s block %d\n",
+	//		hex.EncodeToString(prefix), hex.EncodeToString(startKey), hex.EncodeToString(limitKey), blockNr)
 	enc, err := t.db.Resolve(startKey, limitKey)
 	if err != nil {
-		fmt.Printf("Resolving wrong hash for prefix %s, startkey %s limitkey %s block %d: %v\n",
-			hex.EncodeToString(prefix), hex.EncodeToString(startKey), hex.EncodeToString(limitKey), blockNr, err)
+		//fmt.Printf("Resolving wrong hash for prefix %s, startkey %s limitkey %s block %d: %v\n",
+		//	hex.EncodeToString(prefix), hex.EncodeToString(startKey), hex.EncodeToString(limitKey), blockNr, err)
 	}
 	return enc, err
 }
