@@ -203,13 +203,13 @@ func (t *Trie) Update(key, value []byte, blockNr uint32) {
 func (t *Trie) TryUpdate(key, value []byte, blockNr uint32) error {
 	k := keybytesToHex(key)
 	if len(value) != 0 {
-		_, n, err := t.insert(t.root, []byte{}, k, valueNode(value), blockNr)
+		_, n, err := t.insert(t.root, k, 0, valueNode(value), blockNr)
 		if err != nil {
 			return err
 		}
 		t.root = n
 	} else {
-		_, n, err := t.delete(t.root, nil, k, blockNr)
+		_, n, err := t.delete(t.root, k, 0, blockNr)
 		if err != nil {
 			return err
 		}
@@ -218,8 +218,8 @@ func (t *Trie) TryUpdate(key, value []byte, blockNr uint32) error {
 	return nil
 }
 
-func (t *Trie) insert(n node, prefix, key []byte, value node, blockNr uint32) (bool, node, error) {
-	if len(key) == 0 {
+func (t *Trie) insert(n node, key []byte, keyStart int, value node, blockNr uint32) (bool, node, error) {
+	if len(key) == keyStart {
 		if v, ok := n.(valueNode); ok {
 			return !bytes.Equal(v, value.(valueNode)), value, nil
 		}
@@ -227,11 +227,11 @@ func (t *Trie) insert(n node, prefix, key []byte, value node, blockNr uint32) (b
 	}
 	switch n := n.(type) {
 	case *shortNode:
-		matchlen := prefixLen(key, n.Key)
+		matchlen := prefixLen(key[keyStart:], n.Key)
 		// If the whole key matches, keep this short node as is
 		// and only update the value.
 		if matchlen == len(n.Key) {
-			dirty, nn, err := t.insert(n.Val, concat(prefix, key[:matchlen]...), key[matchlen:], value, blockNr)
+			dirty, nn, err := t.insert(n.Val, key, keyStart+matchlen, value, blockNr)
 			if !dirty || err != nil {
 				return false, n, err
 			}
@@ -240,11 +240,11 @@ func (t *Trie) insert(n node, prefix, key []byte, value node, blockNr uint32) (b
 		// Otherwise branch out at the index where they differ.
 		branch := &fullNode{flags: t.newFlag()}
 		var err error
-		_, branch.Children[n.Key[matchlen]], err = t.insert(nil, concat(prefix, n.Key[:matchlen+1]...), n.Key[matchlen+1:], n.Val, blockNr)
+		_, branch.Children[n.Key[matchlen]], err = t.insert(nil, n.Key, matchlen+1, n.Val, blockNr)
 		if err != nil {
 			return false, nil, err
 		}
-		_, branch.Children[key[matchlen]], err = t.insert(nil, concat(prefix, key[:matchlen+1]...), key[matchlen+1:], value, blockNr)
+		_, branch.Children[key[keyStart+matchlen]], err = t.insert(nil, key, keyStart+matchlen+1, value, blockNr)
 		if err != nil {
 			return false, nil, err
 		}
@@ -253,37 +253,37 @@ func (t *Trie) insert(n node, prefix, key []byte, value node, blockNr uint32) (b
 			return true, branch, nil
 		}
 		// Otherwise, replace it with a short node leading up to the branch.
-		return true, &shortNode{key[:matchlen], branch, t.newFlag()}, nil
+		return true, &shortNode{key[keyStart:keyStart+matchlen], branch, t.newFlag()}, nil
 
 	case *fullNode:
-		dirty, nn, err := t.insert(n.Children[key[0]], concat(prefix, key[0]), key[1:], value, blockNr)
+		dirty, nn, err := t.insert(n.Children[key[keyStart]], key, keyStart+1, value, blockNr)
 		if !dirty || err != nil {
 			return false, n, err
 		}
 		n = n.copy()
 		n.flags = t.newFlag()
-		n.Children[key[0]] = nn
+		n.Children[key[keyStart]] = nn
 		return true, n, nil
 
 	case nil:
-		return true, &shortNode{key, value, t.newFlag()}, nil
+		return true, &shortNode{key[keyStart:], value, t.newFlag()}, nil
 
 	case hashNode:
 		// We've hit a part of the trie that isn't loaded yet. Load
 		// the node and insert into it. This leaves all child nodes on
 		// the path to the value in the trie.
-		rn, err := t.resolveHash(n, prefix, blockNr)
+		rn, err := t.resolveHash(n, key[:keyStart], blockNr)
 		if err != nil {
 			return false, nil, err
 		}
-		dirty, nn, err := t.insert(rn, prefix, key, value, blockNr)
+		dirty, nn, err := t.insert(rn, key, keyStart, value, blockNr)
 		if !dirty || err != nil {
 			return false, rn, err
 		}
 		return true, nn, nil
 
 	default:
-		fmt.Printf("Key: %s, Prefix: %s\n", hex.EncodeToString(key), hex.EncodeToString(prefix))
+		fmt.Printf("Key: %s, Prefix: %s\n", hex.EncodeToString(key[keyStart:]), hex.EncodeToString(key[:keyStart]))
 		t.PrintTrie()
 		panic(fmt.Sprintf("%T: invalid node: %v", n, n))
 	}
@@ -300,7 +300,7 @@ func (t *Trie) Delete(key []byte, blockNr uint32) {
 // If a node was not found in the database, a MissingNodeError is returned.
 func (t *Trie) TryDelete(key []byte, blockNr uint32) error {
 	k := keybytesToHex(key)
-	_, n, err := t.delete(t.root, nil, k, blockNr)
+	_, n, err := t.delete(t.root, k, 0, blockNr)
 	if err != nil {
 		return err
 	}
@@ -311,21 +311,21 @@ func (t *Trie) TryDelete(key []byte, blockNr uint32) error {
 // delete returns the new root of the trie with key deleted.
 // It reduces the trie to minimal form by simplifying
 // nodes on the way up after deleting recursively.
-func (t *Trie) delete(n node, prefix, key []byte, blockNr uint32) (bool, node, error) {
+func (t *Trie) delete(n node, key []byte, keyStart int, blockNr uint32) (bool, node, error) {
 	switch n := n.(type) {
 	case *shortNode:
-		matchlen := prefixLen(key, n.Key)
+		matchlen := prefixLen(key[keyStart:], n.Key)
 		if matchlen < len(n.Key) {
 			return false, n, nil // don't replace n on mismatch
 		}
-		if matchlen == len(key) {
+		if matchlen == len(key) - keyStart {
 			return true, nil, nil // remove n entirely for whole matches
 		}
 		// The key is longer than n.Key. Remove the remaining suffix
 		// from the subtrie. Child can never be nil here since the
 		// subtrie must contain at least two other values with keys
 		// longer than n.Key.
-		dirty, child, err := t.delete(n.Val, concat(prefix, key[:len(n.Key)]...), key[len(n.Key):], blockNr)
+		dirty, child, err := t.delete(n.Val, key, keyStart+len(n.Key), blockNr)
 		if !dirty || err != nil {
 			return false, n, err
 		}
@@ -343,13 +343,13 @@ func (t *Trie) delete(n node, prefix, key []byte, blockNr uint32) (bool, node, e
 		}
 
 	case *fullNode:
-		dirty, nn, err := t.delete(n.Children[key[0]], concat(prefix, key[0]), key[1:], blockNr)
+		dirty, nn, err := t.delete(n.Children[key[keyStart]], key, keyStart+1, blockNr)
 		if !dirty || err != nil {
 			return false, n, err
 		}
 		n = n.copy()
 		n.flags = t.newFlag()
-		n.Children[key[0]] = nn
+		n.Children[key[keyStart]] = nn
 
 		// Check how many non-nil entries are left after deleting and
 		// reduce the full node to a short node if only one entry is
@@ -379,7 +379,7 @@ func (t *Trie) delete(n node, prefix, key []byte, blockNr uint32) (bool, node, e
 				// shortNode{..., shortNode{...}}.  Since the entry
 				// might not be loaded yet, resolve it just for this
 				// check.
-				cnode, err := t.resolve(n.Children[pos], concat(prefix, byte(pos)), blockNr)
+				cnode, err := t.resolve(n.Children[pos], concat(key[:keyStart], byte(pos)), blockNr)
 				if err != nil {
 					return false, nil, err
 				}
@@ -405,18 +405,18 @@ func (t *Trie) delete(n node, prefix, key []byte, blockNr uint32) (bool, node, e
 		// We've hit a part of the trie that isn't loaded yet. Load
 		// the node and delete from it. This leaves all child nodes on
 		// the path to the value in the trie.
-		rn, err := t.resolveHash(n, prefix, blockNr)
+		rn, err := t.resolveHash(n, key[:keyStart], blockNr)
 		if err != nil {
 			return false, nil, err
 		}
-		dirty, nn, err := t.delete(rn, prefix, key, blockNr)
+		dirty, nn, err := t.delete(rn, key, keyStart, blockNr)
 		if !dirty || err != nil {
 			return false, rn, err
 		}
 		return true, nn, nil
 
 	default:
-		panic(fmt.Sprintf("%T: invalid node: %v (%v)", n, n, key))
+		panic(fmt.Sprintf("%T: invalid node: %v (%v)", n, n, key[:keyStart]))
 	}
 }
 
