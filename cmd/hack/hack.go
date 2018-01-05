@@ -111,7 +111,7 @@ func main() {
 	fmt.Printf("Current block number: %d\n", currentBlockNr)
 	var recordingStateDb *state.RecordingStateDatabase
 	var recordingState *state.StateDB
-	for blockNr := uint64(2284500 + 5000); blockNr < uint64(2284500 + 10000 + 1); blockNr++ {
+	for blockNr := uint64(2284500 + 5000); blockNr < uint64(2284500 + 25000 + 1); blockNr++ {
 		block := bc.GetBlockByNumber(blockNr)
 		if block == nil {
 			fmt.Printf("block #%d not found\n", blockNr)

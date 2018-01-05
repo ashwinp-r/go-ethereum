@@ -94,12 +94,25 @@ type Trie struct {
 
 	// Prefix to form the database key
 	prefix []byte
+	prefetchCh chan PrefetchRequest
 
 	// Cache generation values.
 	// cachegen increases by one with each commit operation.
 	// new nodes are tagged with the current generation and unloaded
 	// when their generation is older than than cachegen-cachelimit.
 	cachegen, cachelimit uint16
+}
+
+type PrefetchResponse struct {
+	value []byte
+	err error
+}
+
+type PrefetchRequest struct {
+	key []byte
+	prefixEnd int
+	blockNr uint32
+	responseCh chan PrefetchResponse
 }
 
 func (t *Trie) PrintTrie() {
@@ -127,6 +140,18 @@ func (t *Trie) newFlag() nodeFlag {
 // not exist in the database. Accessing the trie loads nodes from db on demand.
 func New(root common.Hash, db Database, prefix []byte, blockNr uint32) (*Trie, error) {
 	trie := &Trie{db: db, originalRoot: root, prefix: prefix}
+	trie.prefetchCh = make(chan PrefetchRequest, 1024)
+	prefetch := func() {
+		for request := range trie.prefetchCh {
+			var response PrefetchResponse
+			response.value, response.err = trie.readResolve(request.key[:request.prefixEnd], request.blockNr)
+			request.responseCh <- response
+			close(request.responseCh)
+		}
+	}
+	for i := 0; i < 16; i++ {
+		go prefetch()
+	}
 	if (root != common.Hash{}) && root != emptyRoot {
 		if db == nil {
 			panic("trie.New: cannot use existing root without a database")
@@ -203,16 +228,11 @@ func (t *Trie) Update(key, value []byte, blockNr uint32) {
 func (t *Trie) TryUpdate(key, value []byte, blockNr uint32) error {
 	k := keybytesToHex(key)
 	pos := t.CachedPrefixFor(k)
-	chanMap := make(map[string]chan []byte)
-	prefetch := func(prefixEnd int, ch chan []byte) {
-		enc, _ := t.readResolve(k[:prefixEnd], blockNr)
-		ch <- enc
-		close(ch)
-	}
+	chanMap := make(map[string]chan PrefetchResponse)
 	for i := pos; i < len(k); i++ {
-		ch := make(chan []byte, 1) // Buffered so that go-routines can finish
+		ch := make(chan PrefetchResponse, 1) // Buffered so that go-routines can finish
 		chanMap[string(k[:i])] = ch
-		go prefetch(i, ch)
+		t.prefetchCh <- PrefetchRequest{key: k, prefixEnd: i, responseCh: ch, blockNr: blockNr}
 	}
 	if len(value) != 0 {
 		_, n, err := t.insert(t.root, k, 0, valueNode(value), blockNr, chanMap)
@@ -230,7 +250,7 @@ func (t *Trie) TryUpdate(key, value []byte, blockNr uint32) error {
 	return nil
 }
 
-func (t *Trie) insert(n node, key []byte, keyStart int, value node, blockNr uint32, chanMap map[string]chan []byte) (bool, node, error) {
+func (t *Trie) insert(n node, key []byte, keyStart int, value node, blockNr uint32, chanMap map[string]chan PrefetchResponse) (bool, node, error) {
 	if len(key) == keyStart {
 		if v, ok := n.(valueNode); ok {
 			return !bytes.Equal(v, value.(valueNode)), value, nil
@@ -461,7 +481,7 @@ func (t *Trie) readResolve(prefix []byte, blockNr uint32) ([]byte, error) {
 	return enc, err
 }
 
-func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32, chanMap map[string]chan []byte) (node, error) {
+func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32, chanMap map[string]chan PrefetchResponse) (node, error) {
 	cacheMissCounter.Inc(1)
 	var enc []byte
 	var err error
@@ -469,7 +489,8 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32, chanMap ma
 		enc, err = t.readResolve(prefix, blockNr)
 	} else {
 		if ch, ok := chanMap[string(prefix)]; ok {
-			enc = <- ch
+			response := <- ch
+			enc, err = response.value, response.err
 		} else {
 			enc, err = t.readResolve(prefix, blockNr)
 		}
