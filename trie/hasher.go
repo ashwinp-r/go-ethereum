@@ -44,8 +44,8 @@ var calculatorPool = sync.Pool{
 
 // hasher hasher is used to calculate the hash value of the whole tree.
 type hasher struct {
-	cachegen   	uint16
-	cachelimit 	uint16
+	cachegen   	uint32
+	cachelimit 	uint32
 	db 			DatabaseWriter
 	prefix 		[]byte
 	suffix 		[]byte
@@ -53,7 +53,7 @@ type hasher struct {
 	mu         	sync.Mutex
 }
 
-func newHasher(cachegen, cachelimit uint16, db DatabaseWriter, prefix []byte, writeBlockNr uint32) *hasher {
+func newHasher(cachegen, cachelimit uint32, db DatabaseWriter, prefix []byte, writeBlockNr uint32) *hasher {
 	suffix := make([]byte, 4)
 	binary.BigEndian.PutUint32(suffix, writeBlockNr^0xffffffff - 1)
 	h := &hasher{

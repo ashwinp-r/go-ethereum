@@ -102,7 +102,7 @@ func VerifyProof(rootHash common.Hash, key []byte, proofDb DatabaseReader) (valu
 		if buf == nil {
 			return nil, fmt.Errorf("proof node %d (hash %064x) missing", i, wantHash[:]), i
 		}
-		n, err := decodeNode(wantHash, buf, 0)
+		n, err := decodeNode(wantHash, buf)
 		if err != nil {
 			return nil, fmt.Errorf("bad proof node %d: %v", i, err), i
 		}

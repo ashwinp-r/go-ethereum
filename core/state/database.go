@@ -27,7 +27,7 @@ import (
 )
 
 // Trie cache generation limit after which to evic trie nodes from memory.
-var MaxTrieCacheGen = uint16(120)
+var MaxTrieCacheGen = uint32(16*1024*1024)
 
 const (
 	// Number of past tries to keep. This value is chosen such that
@@ -56,8 +56,8 @@ type Database interface {
 // Trie is a Ethereum Merkle Trie.
 type Trie interface {
 	TryGet(key []byte, blockNr uint32) ([]byte, error)
-	TryUpdate(key, value []byte, blockNr uint32, chanMap map[string]*trie.PrefetchResponse) error
-	TryDelete(key []byte, blockNr uint32, chanMap map[string]*trie.PrefetchResponse) error
+	TryUpdate(key, value []byte, blockNr uint32, respMap map[string]*trie.PrefetchResponse) error
+	TryDelete(key []byte, blockNr uint32, respMap map[string]*trie.PrefetchResponse) error
 	CachedPrefixFor(key []byte) ([]byte, int)
 	CommitTo(dbw trie.DatabaseWriter, writeBlockNr uint32) (common.Hash, error)
 	Hash() common.Hash

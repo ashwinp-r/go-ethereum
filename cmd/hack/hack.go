@@ -9,10 +9,12 @@ import (
 	"runtime/pprof"
 	"os"
 	"log"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
@@ -111,6 +113,7 @@ func main() {
 	fmt.Printf("Current block number: %d\n", currentBlockNr)
 	var recordingStateDb *state.RecordingStateDatabase
 	var recordingState *state.StateDB
+	start := time.Now()
 	for blockNr := uint64(2284500 + 5000); blockNr < uint64(2284500 + 10000 + 1); blockNr++ {
 		block := bc.GetBlockByNumber(blockNr)
 		if block == nil {
@@ -152,8 +155,10 @@ func main() {
 			fmt.Printf("block #%d could not validate: %s\n", blockNr, err)
 			continue
 		}
-		if blockNr % 1000 == 0 {
+		if blockNr % 200 == 0 {
 			fmt.Printf("Blocks up to %d processed\n", blockNr)
+			fmt.Printf("TrieNodeGen: %d, Unloads: %d, Time: %s\n", trie.TrieNodeGen, trie.CacheUnloads(), time.Since(start))
+			start = time.Now()
 		}
 		/*
 		var witness_size int

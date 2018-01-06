@@ -580,14 +580,14 @@ func (s *StateDB) CachedPrefixes(deleteEmptyObjects bool, blockNr uint32) (map[s
 // Finalise finalises the state by removing the self destructed objects
 // and clears the journal as well as the refunds.
 func (s *StateDB) Finalise(deleteEmptyObjects bool, blockNr uint32) {
-	respMap, storageRespMap := s.CachedPrefixes(deleteEmptyObjects, blockNr)
+	//respMap, storageRespMap := s.CachedPrefixes(deleteEmptyObjects, blockNr)
 	for _, addr := range s.sortedDirtyAccounts() {
 		stateObject := s.stateObjects[addr]
 		if stateObject.suicided || (deleteEmptyObjects && stateObject.empty()) {
-			s.deleteStateObject(stateObject, blockNr, respMap)
+			s.deleteStateObject(stateObject, blockNr, nil)
 		} else {
-			stateObject.updateRoot(s.db, blockNr, storageRespMap[string(addr[:])])
-			s.updateStateObject(stateObject, blockNr, respMap)
+			stateObject.updateRoot(s.db, blockNr, /*storageRespMap[string(addr[:])]*/nil)
+			s.updateStateObject(stateObject, blockNr, nil)
 		}
 	}
 	// Invalidate journal because reverting across transactions is not allowed.
@@ -689,7 +689,7 @@ func (s *StateDB) CommitTo(dbw trie.DatabaseWriter, deleteEmptyObjects bool, blo
 		delete(s.stateObjectsDirty, addr)
 		if !isDirty {
 			stateObject.idleAge++
-			if stateObject.idleAge >= MaxTrieCacheGen {
+			if stateObject.idleAge >= 128 {
 				//fmt.Printf("Removing idle state object %s\n", addr.Hex())
 				delete(s.stateObjects, addr)
 			}

@@ -83,7 +83,7 @@ type DatabaseWriter interface {
 	Put(key, value []byte) error
 }
 
-var TrieNodeCounter uint64
+var TrieNodeGen uint32
 
 // Trie is a Merkle Patricia Trie.
 // The zero value is an empty trie with no database.
@@ -102,7 +102,7 @@ type Trie struct {
 	// cachegen increases by one with each commit operation.
 	// new nodes are tagged with the current generation and unloaded
 	// when their generation is older than than cachegen-cachelimit.
-	cachegen, cachelimit uint16
+	cachelimit uint32
 }
 
 type PrefetchResponse struct {
@@ -121,13 +121,14 @@ func (t *Trie) PrintTrie() {
 
 // SetCacheLimit sets the number of 'cache generations' to keep.
 // A cache generation is created by a call to Commit.
-func (t *Trie) SetCacheLimit(l uint16) {
+func (t *Trie) SetCacheLimit(l uint32) {
 	t.cachelimit = l
 }
 
 // newFlag returns the cache flag value for a newly created node.
 func (t *Trie) newFlag() nodeFlag {
-	return nodeFlag{dirty: true, gen: t.cachegen}
+	TrieNodeGen++
+	return nodeFlag{dirty: true, gen: TrieNodeGen}
 }
 
 // New creates a trie with an existing root node from db.
@@ -172,7 +173,12 @@ func (t *Trie) Get(key []byte, blockNr uint32) []byte {
 // If a node was not found in the database, a MissingNodeError is returned.
 func (t *Trie) TryGet(key []byte, blockNr uint32) ([]byte, error) {
 	key = keybytesToHex(key)
-	return t.tryGet(t.root, key, 0, blockNr)
+	value, resolveRequired, err := t.tryGet1(t.root, key, 0, blockNr)
+	if err == nil && resolveRequired {
+		return t.tryGet(t.root, key, 0, blockNr)
+	} else {
+		return value, err
+	}
 }
 
 func (t *Trie) tryGet(origNode node, key []byte, pos int, blockNr uint32) (value []byte, err error) {
@@ -189,6 +195,26 @@ func (t *Trie) tryGet(origNode node, key []byte, pos int, blockNr uint32) (value
 	}
 	val, _, err := rlp.SplitString(enc)
 	return val, err
+}
+
+func (t *Trie) tryGet1(origNode node, key []byte, pos int, blockNr uint32) (value []byte, didResolve bool, err error) {
+	switch n := (origNode).(type) {
+	case nil:
+		return nil, false, nil
+	case valueNode:
+		return n, false, nil
+	case *shortNode:
+		if len(key)-pos < len(n.Key) || !bytes.Equal(n.Key, key[pos:pos+len(n.Key)]) {
+			return nil, false, nil
+		}
+		return t.tryGet1(n.Val, key, pos+len(n.Key), blockNr)
+	case *fullNode:
+		return t.tryGet1(n.Children[key[pos]], key, pos+1, blockNr)
+	case hashNode:
+		return nil, true, nil
+	default:
+		panic(fmt.Sprintf("%T: invalid node: %v", origNode, origNode))
+	}
 }
 
 // Update associates key with value in the trie. Subsequent calls to
@@ -213,9 +239,6 @@ func (t *Trie) Update(key, value []byte, blockNr uint32) {
 // If a node was not found in the database, a MissingNodeError is returned.
 func (t *Trie) TryUpdate(key, value []byte, blockNr uint32, respMap map[string]*PrefetchResponse) error {
 	k := keybytesToHex(key)
-	if respMap == nil {
-		respMap = make(map[string]*PrefetchResponse)
-	}
 	if len(value) != 0 {
 		_, n, err := t.insert(t.root, k, 0, valueNode(value), blockNr, respMap)
 		if err != nil {
@@ -314,9 +337,6 @@ func (t *Trie) Delete(key []byte, blockNr uint32) {
 // If a node was not found in the database, a MissingNodeError is returned.
 func (t *Trie) TryDelete(key []byte, blockNr uint32, respMap map[string]*PrefetchResponse) error {
 	k := keybytesToHex(key)
-	if respMap == nil {
-		respMap = make(map[string]*PrefetchResponse)
-	}
 	_, n, err := t.delete(t.root, k, 0, blockNr, respMap)
 	if err != nil {
 		return err
@@ -483,7 +503,7 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32, respMap ma
 			response.Mu.Unlock()
 		} else {
 			enc, err = ReadResolve(t.db, t.prefix, prefix, blockNr)
-			//fmt.Printf("Had to resolve %s without prefetch\n", hex.EncodeToString(prefix))
+			fmt.Printf("Had to resolve %s without prefetch\n", hex.EncodeToString(prefix))
 			//fmt.Printf("%s\n", debug.Stack())
 		}
 	}
@@ -503,7 +523,7 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32, respMap ma
 		fmt.Printf("Stack: %s\n", debug.Stack())
 		return nil, &MissingNodeError{NodeHash: common.BytesToHash(n), Path: prefix}
 	}
-	dec := mustDecodeNode(n, enc, t.cachegen)
+	dec := mustDecodeNode(n, enc)
 	return dec, nil
 }
 
@@ -582,7 +602,6 @@ func (t *Trie) CommitTo(db DatabaseWriter, writeBlockNr uint32) (root common.Has
 		return (common.Hash{}), err
 	}
 	t.root = cached
-	t.cachegen++
 	return common.BytesToHash(hash.(hashNode)), nil
 }
 
@@ -590,6 +609,6 @@ func (t *Trie) hashRoot(db DatabaseWriter, writeBlockNr uint32) (node, node, err
 	if t.root == nil {
 		return hashNode(emptyRoot.Bytes()), nil, nil
 	}
-	h := newHasher(t.cachegen, t.cachelimit, db, t.prefix, writeBlockNr)
+	h := newHasher(TrieNodeGen, t.cachelimit, db, t.prefix, writeBlockNr)
 	return h.hash(t.root, true, []byte{})
 }
