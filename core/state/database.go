@@ -50,6 +50,7 @@ type Database interface {
 	ContractCodeSize(addrHash, codeHash common.Hash) (int, error)
 	// CopyTrie returns an independent copy of the given trie.
 	CopyTrie(Trie) Trie
+	TrieDb() trie.Database
 }
 
 // Trie is a Ethereum Merkle Trie.
@@ -58,7 +59,6 @@ type Trie interface {
 	TryUpdate(key, value []byte, blockNr uint32, chanMap map[string]*trie.PrefetchResponse) error
 	TryDelete(key []byte, blockNr uint32, chanMap map[string]*trie.PrefetchResponse) error
 	CachedPrefixFor(key []byte) ([]byte, int)
-	RequestPrefetch(key []byte, prefixEnd int, blockNr uint32, chanMap map[string]*trie.PrefetchResponse)
 	CommitTo(dbw trie.DatabaseWriter, writeBlockNr uint32) (common.Hash, error)
 	Hash() common.Hash
 	NodeIterator(startKey []byte, blockNr uint32) trie.NodeIterator
@@ -140,6 +140,10 @@ func (db *cachingDB) ContractCodeSize(addrHash, codeHash common.Hash) (int, erro
 		db.codeSizeCache.Add(codeHash, len(code))
 	}
 	return len(code), err
+}
+
+func (db *cachingDB) TrieDb() trie.Database {
+	return db.db
 }
 
 // cachedTrie inserts its trie into a cachingDB on commit.

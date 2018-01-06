@@ -218,14 +218,14 @@ func (self *stateObject) setState(key, value common.Hash) {
 }
 
 // updateTrie writes cached storage modifications into the object's storage trie.
-func (self *stateObject) updateTrie(db Database, dbw trie.DatabaseWriter, blockNr uint32, writeBlockNr uint32) Trie {
+func (self *stateObject) updateTrie(db Database, dbw trie.DatabaseWriter, blockNr uint32, writeBlockNr uint32, respMap map[string]*trie.PrefetchResponse) Trie {
 	suffix := make([]byte, 4)
 	binary.BigEndian.PutUint32(suffix, writeBlockNr^0xffffffff - 1)	// Commit objects to the trie.
 	tr := self.getTrie(db, blockNr)
 	for _, key := range self.sortedDirtyStorageKeys() {
 		value := self.dirtyStorage[key]
 		if (value == common.Hash{}) {
-			self.setError(tr.TryDelete(key[:], blockNr, nil))
+			self.setError(tr.TryDelete(key[:], blockNr, respMap))
 			if dbw != nil {
 				sha := sha3.NewKeccak256()
 				sha.Write(key[:])
@@ -239,21 +239,31 @@ func (self *stateObject) updateTrie(db Database, dbw trie.DatabaseWriter, blockN
 		delete(self.dirtyStorage, key)
 		// Encoding []byte cannot fail, ok to ignore the error.
 		v, _ := rlp.EncodeToBytes(bytes.TrimLeft(value[:], "\x00"))
-		self.setError(tr.TryUpdate(key[:], v, blockNr, nil))
+		self.setError(tr.TryUpdate(key[:], v, blockNr, respMap))
 	}
 	return tr
 }
 
+func (self *stateObject) CachedPrefixes(blockNr uint32) map[string]*trie.PrefetchResponse {
+	respMap := make(map[string]*trie.PrefetchResponse)
+	tr := self.getTrie(self.db.db, blockNr)
+	for _, key := range self.sortedDirtyStorageKeys() {
+		k, pos := tr.CachedPrefixFor(key[:])
+		self.db.RequestPrefetch(self.address[:], k, pos, blockNr, respMap)
+	}
+	return respMap
+}
+
 // UpdateRoot sets the trie root to the current root hash of
-func (self *stateObject) updateRoot(db Database, blockNr uint32) {
-	self.updateTrie(db, nil, blockNr, 0)
+func (self *stateObject) updateRoot(db Database, blockNr uint32, respMap map[string]*trie.PrefetchResponse) {
+	self.updateTrie(db, nil, blockNr, 0, respMap)
 	self.data.Root = self.trie.Hash()
 }
 
 // CommitTrie the storage trie of the object to dwb.
 // This updates the trie root.
 func (self *stateObject) CommitTrie(db Database, dbw trie.DatabaseWriter, blockNr uint32, writeBlockNr uint32) error {
-	self.updateTrie(db, dbw, blockNr, writeBlockNr)
+	self.updateTrie(db, dbw, blockNr, writeBlockNr, nil)
 	if self.dbErr != nil {
 		return self.dbErr
 	}

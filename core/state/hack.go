@@ -184,6 +184,10 @@ func (rsd *RecordingStateDatabase) ContractCodeSize(addrHash, codeHash common.Ha
     return len(code), err
 }
 
+func (rsd *RecordingStateDatabase) TrieDb() trie.Database {
+    return rsd.rdb
+}
+
 func (rsd *RecordingStateDatabase) CopyTrie(t Trie) Trie {
     switch t := t.(type) {
     case *trie.SecureTrie:
@@ -347,6 +351,10 @@ func (psd *PlaybackStateDatabase) CopyTrie(t Trie) Trie {
     default:
         panic(fmt.Errorf("unknown trie type %T", t))
     }    
+}
+
+func (psd *PlaybackStateDatabase) TrieDb() trie.Database {
+    return psd.pdb
 }
 
 func PlaybackState(stateRoot common.Hash, pdb *PlaybackDatabase, blockNr uint32) (*StateDB, error) {

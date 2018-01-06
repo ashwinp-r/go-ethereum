@@ -76,6 +76,17 @@ type StateDB struct {
 	nextRevisionId int
 
 	lock sync.Mutex
+
+	prefetchCh chan PrefetchRequest
+}
+
+type PrefetchRequest struct {
+	db trie.Database
+	triePrefix []byte
+	key []byte
+	prefixEnd int
+	blockNr uint32
+	responsePtr *trie.PrefetchResponse
 }
 
 // Create a new state from a given trie
@@ -83,6 +94,26 @@ func New(root common.Hash, db Database, blockNr uint32) (*StateDB, error) {
 	tr, err := db.OpenTrie(root, blockNr)
 	if err != nil {
 		return nil, err
+	}
+	prefetchCh := make(chan PrefetchRequest, 1024)
+	prefetch := func() {
+		defer func() {
+			if p := recover(); p != nil {
+				fmt.Printf("internal error: %v\n", p)
+			}
+		}()
+		for request := range prefetchCh {
+			enc, err := trie.ReadResolve(request.db, request.triePrefix, request.key[:request.prefixEnd], request.blockNr)
+			response := request.responsePtr
+			response.Mu.Lock()
+			response.Value, response.Err = enc, err
+			response.Ready = true
+			response.C.Signal()
+			response.Mu.Unlock()
+		}
+	}
+	for i := 0; i < 16; i++ {
+		go prefetch()
 	}
 	return &StateDB{
 		db:                db,
@@ -92,7 +123,22 @@ func New(root common.Hash, db Database, blockNr uint32) (*StateDB, error) {
 		refund:            new(big.Int),
 		logs:              make(map[common.Hash][]*types.Log),
 		preimages:         make(map[common.Hash][]byte),
+		prefetchCh:        prefetchCh,
 	}, nil
+}
+
+const PrefetchDepth int = 5
+
+func (self *StateDB) RequestPrefetch(triePrefix, key []byte, prefixEnd int, blockNr uint32, respMap map[string]*trie.PrefetchResponse) {
+	for i := prefixEnd; i < prefixEnd + PrefetchDepth && i <= len(key); i++ {
+		keyStr := string(key[:i])
+		if _, ok := respMap[keyStr]; !ok {
+			var response trie.PrefetchResponse
+			response.C = sync.NewCond(&response.Mu)
+			respMap[keyStr] = &response
+			self.prefetchCh <- PrefetchRequest{db: self.db.TrieDb(), triePrefix: triePrefix, key: key, prefixEnd: i, responsePtr: &response, blockNr: blockNr}
+		}
+	}
 }
 
 // setError remembers the first non-nil error it is called with.
@@ -248,7 +294,7 @@ func (self *StateDB) StorageTrie(a common.Address, blockNr uint32) Trie {
 		return nil
 	}
 	cpy := stateObject.deepCopy(self, nil)
-	return cpy.updateTrie(self.db, nil, blockNr, 0)
+	return cpy.updateTrie(self.db, nil, blockNr, 0, nil)
 }
 
 func (self *StateDB) HasSuicided(addr common.Address, blockNr uint32) bool {
@@ -517,26 +563,31 @@ func (self *StateDB) GetRefund() *big.Int {
 	return self.refund
 }
 
-func (s *StateDB) CachedPrefixes(blockNr uint32) map[string]*trie.PrefetchResponse {
+func (s *StateDB) CachedPrefixes(deleteEmptyObjects bool, blockNr uint32) (map[string]*trie.PrefetchResponse, map[string]map[string]*trie.PrefetchResponse) {
 	respMap := make(map[string]*trie.PrefetchResponse)
+	storageRespMap := make(map[string]map[string]*trie.PrefetchResponse)
 	for _, addr := range s.sortedDirtyAccounts() {
 		k, pos := s.trie.CachedPrefixFor(addr[:])
-		s.trie.RequestPrefetch(k, pos, blockNr, respMap)
+		s.RequestPrefetch([]byte("AT"), k, pos, blockNr, respMap)
+		stateObject, _ := s.stateObjects[addr]
+		if !stateObject.suicided && (!deleteEmptyObjects || !stateObject.empty()) {
+			storageRespMap[string(addr[:])] = stateObject.CachedPrefixes(blockNr)
+		}
 	}
-	return respMap
+	return respMap, storageRespMap
 }
 
 // Finalise finalises the state by removing the self destructed objects
 // and clears the journal as well as the refunds.
 func (s *StateDB) Finalise(deleteEmptyObjects bool, blockNr uint32) {
-	chanMap := s.CachedPrefixes(blockNr)
+	respMap, storageRespMap := s.CachedPrefixes(deleteEmptyObjects, blockNr)
 	for _, addr := range s.sortedDirtyAccounts() {
 		stateObject := s.stateObjects[addr]
 		if stateObject.suicided || (deleteEmptyObjects && stateObject.empty()) {
-			s.deleteStateObject(stateObject, blockNr, chanMap)
+			s.deleteStateObject(stateObject, blockNr, respMap)
 		} else {
-			stateObject.updateRoot(s.db, blockNr)
-			s.updateStateObject(stateObject, blockNr, chanMap)
+			stateObject.updateRoot(s.db, blockNr, storageRespMap[string(addr[:])])
+			s.updateStateObject(stateObject, blockNr, respMap)
 		}
 	}
 	// Invalidate journal because reverting across transactions is not allowed.

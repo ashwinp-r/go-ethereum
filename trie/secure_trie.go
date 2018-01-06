@@ -142,10 +142,6 @@ func (t *SecureTrie) CachedPrefixFor(key []byte) ([]byte, int) {
 	return t.trie.CachedPrefixFor(hk)
 }
 
-func (t *SecureTrie) RequestPrefetch(key []byte, prefixEnd int, blockNr uint32, respMap map[string]*PrefetchResponse) {
-	t.trie.RequestPrefetch(key, prefixEnd, blockNr, respMap)
-}
-
 // GetKey returns the sha3 preimage of a hashed key that was
 // previously used to store a value.
 func (t *SecureTrie) GetKey(shaKey []byte) []byte {

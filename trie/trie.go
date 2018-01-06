@@ -95,7 +95,6 @@ type Trie struct {
 
 	// Prefix to form the database key
 	prefix []byte
-	prefetchCh chan PrefetchRequest
 
 	// Cache generation values.
 	// cachegen increases by one with each commit operation.
@@ -105,20 +104,11 @@ type Trie struct {
 }
 
 type PrefetchResponse struct {
-	ready bool
-	value []byte
-	err error
-	mu sync.Mutex
-	c *sync.Cond
-}
-
-type PrefetchRequest struct {
-	db Database
-	triePrefix []byte
-	key []byte
-	prefixEnd int
-	blockNr uint32
-	responsePtr *PrefetchResponse
+	Ready bool
+	Value []byte
+	Err error
+	Mu sync.Mutex
+	C *sync.Cond
 }
 
 func (t *Trie) PrintTrie() {
@@ -146,26 +136,6 @@ func (t *Trie) newFlag() nodeFlag {
 // not exist in the database. Accessing the trie loads nodes from db on demand.
 func New(root common.Hash, db Database, prefix []byte, blockNr uint32) (*Trie, error) {
 	trie := &Trie{db: db, originalRoot: root, prefix: prefix}
-	trie.prefetchCh = make(chan PrefetchRequest, 1024)
-	prefetch := func() {
-		defer func() {
-			if p := recover(); p != nil {
-				fmt.Printf("internal error: %v\n", p)
-			}
-		}()
-		for request := range trie.prefetchCh {
-			enc, err := readResolve(request.db, request.triePrefix, request.key[:request.prefixEnd], request.blockNr)
-			response := request.responsePtr
-			response.mu.Lock()
-			response.value, response.err = enc, err
-			response.ready = true
-			response.c.Signal()
-			response.mu.Unlock()
-		}
-	}
-	for i := 0; i < 16; i++ {
-		go prefetch()
-	}
 	if (root != common.Hash{}) && root != emptyRoot {
 		if db == nil {
 			panic("trie.New: cannot use existing root without a database")
@@ -241,14 +211,8 @@ func (t *Trie) Update(key, value []byte, blockNr uint32) {
 // If a node was not found in the database, a MissingNodeError is returned.
 func (t *Trie) TryUpdate(key, value []byte, blockNr uint32, respMap map[string]*PrefetchResponse) error {
 	k := keybytesToHex(key)
-	if respMap == nil && t.prefetchCh != nil {
-		kk, pos := t.cachedPrefixFor(t.root, k, 0)
-		if blockNr != 0 {
-			//fmt.Printf("Result %s %d\n", hex.EncodeToString(kk), pos)
-		}
+	if respMap == nil {
 		respMap = make(map[string]*PrefetchResponse)
-		//fmt.Printf("TryUpdate with key %s pos %d blockNr %d\n", hex.EncodeToString(kk), pos, blockNr)
-		t.RequestPrefetch(kk, pos, blockNr, respMap)
 	}
 	if len(value) != 0 {
 		_, n, err := t.insert(t.root, k, 0, valueNode(value), blockNr, respMap)
@@ -348,11 +312,8 @@ func (t *Trie) Delete(key []byte, blockNr uint32) {
 // If a node was not found in the database, a MissingNodeError is returned.
 func (t *Trie) TryDelete(key []byte, blockNr uint32, respMap map[string]*PrefetchResponse) error {
 	k := keybytesToHex(key)
-	if respMap == nil && t.prefetchCh != nil {
-		kk, pos := t.cachedPrefixFor(t.root, k, 0)
+	if respMap == nil {
 		respMap = make(map[string]*PrefetchResponse)
-		//fmt.Printf("TryUpdate with key %s pos %d blockNr %d\n", hex.EncodeToString(kk), pos, blockNr)
-		t.RequestPrefetch(kk, pos, blockNr, respMap)
 	}
 	_, n, err := t.delete(t.root, k, 0, blockNr, respMap)
 	if err != nil {
@@ -488,7 +449,7 @@ func (t *Trie) resolve(n node, prefix []byte, blockNr uint32) (node, error) {
 	return n, nil
 }
 
-func readResolve(db Database, triePrefix, prefix []byte, blockNr uint32) ([]byte, error) {
+func ReadResolve(db Database, triePrefix, prefix []byte, blockNr uint32) ([]byte, error) {
 	suffix := make([]byte, 4)
 	binary.BigEndian.PutUint32(suffix, blockNr^0xffffffff - 1) // Invert the block number
 	startKey := CompositeKey(prefix, triePrefix, suffix)
@@ -508,18 +469,18 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32, respMap ma
 	var enc []byte
 	var err error
 	if respMap == nil {
-		enc, err = readResolve(t.db, t.prefix, prefix, blockNr)
+		enc, err = ReadResolve(t.db, t.prefix, prefix, blockNr)
 	} else {
 		if response, ok := respMap[string(prefix)]; ok {
 			//fmt.Printf("Resolving %s with prefetch %d\n", hex.EncodeToString(prefix), blockNr)
-			response.mu.Lock()
-			for !response.ready {
-				response.c.Wait()
+			response.Mu.Lock()
+			for !response.Ready {
+				response.C.Wait()
 			}
-			defer response.mu.Unlock()
-			enc, err = response.value, response.err
+			enc, err = response.Value, response.Err
+			response.Mu.Unlock()
 		} else {
-			enc, err = readResolve(t.db, t.prefix, prefix, blockNr)
+			enc, err = ReadResolve(t.db, t.prefix, prefix, blockNr)
 			fmt.Printf("Had to resolve %s without prefetch\n", hex.EncodeToString(prefix))
 		}
 	}
@@ -578,20 +539,6 @@ func (t *Trie) cachedPrefixFor(n node, key []byte, pos int) ([]byte, int) {
 	default:
 		fmt.Printf("Key: %s\n", hex.EncodeToString(key))
 		panic(fmt.Sprintf("%T: invalid node: %v", n, n))
-	}
-}
-
-const PrefetchDepth int = 5
-
-func (t *Trie) RequestPrefetch(key []byte, prefixEnd int, blockNr uint32, respMap map[string]*PrefetchResponse) {
-	for i := prefixEnd; i < prefixEnd + PrefetchDepth && i <= len(key); i++ {
-		keyStr := string(key[:i])
-		if _, ok := respMap[keyStr]; !ok {
-			var response PrefetchResponse
-			response.c = sync.NewCond(&response.mu)
-			respMap[keyStr] = &response
-			t.prefetchCh <- PrefetchRequest{db: t.db, triePrefix: t.prefix, key: key, prefixEnd: i, responsePtr: &response, blockNr: blockNr}
-		}
 	}
 }
 
