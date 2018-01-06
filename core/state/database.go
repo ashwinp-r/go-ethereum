@@ -55,8 +55,10 @@ type Database interface {
 // Trie is a Ethereum Merkle Trie.
 type Trie interface {
 	TryGet(key []byte, blockNr uint32) ([]byte, error)
-	TryUpdate(key, value []byte, blockNr uint32) error
-	TryDelete(key []byte, blockNr uint32) error
+	TryUpdate(key, value []byte, blockNr uint32, chanMap map[string]*trie.PrefetchResponse) error
+	TryDelete(key []byte, blockNr uint32, chanMap map[string]*trie.PrefetchResponse) error
+	CachedPrefixFor(key []byte) ([]byte, int)
+	RequestPrefetch(key []byte, prefixEnd int, blockNr uint32, chanMap map[string]*trie.PrefetchResponse)
 	CommitTo(dbw trie.DatabaseWriter, writeBlockNr uint32) (common.Hash, error)
 	Hash() common.Hash
 	NodeIterator(startKey []byte, blockNr uint32) trie.NodeIterator

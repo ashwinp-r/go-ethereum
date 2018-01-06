@@ -23,6 +23,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"runtime/debug"
+	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -104,15 +105,18 @@ type Trie struct {
 }
 
 type PrefetchResponse struct {
+	ready bool
 	value []byte
 	err error
+	mu sync.Mutex
+	c *sync.Cond
 }
 
 type PrefetchRequest struct {
 	key []byte
 	prefixEnd int
 	blockNr uint32
-	responseCh chan PrefetchResponse
+	responsePtr *PrefetchResponse
 }
 
 func (t *Trie) PrintTrie() {
@@ -142,11 +146,19 @@ func New(root common.Hash, db Database, prefix []byte, blockNr uint32) (*Trie, e
 	trie := &Trie{db: db, originalRoot: root, prefix: prefix}
 	trie.prefetchCh = make(chan PrefetchRequest, 1024)
 	prefetch := func() {
+		defer func() {
+			if p := recover(); p != nil {
+				fmt.Printf("internal error: %v\n", p)
+			}
+		}()
 		for request := range trie.prefetchCh {
-			var response PrefetchResponse
-			response.value, response.err = trie.readResolve(request.key[:request.prefixEnd], request.blockNr)
-			request.responseCh <- response
-			close(request.responseCh)
+			enc, err := trie.readResolve(request.key[:request.prefixEnd], request.blockNr)
+			response := request.responsePtr
+			response.mu.Lock()
+			response.value, response.err = enc, err
+			response.ready = true
+			response.c.Signal()
+			response.mu.Unlock()
 		}
 	}
 	for i := 0; i < 16; i++ {
@@ -212,7 +224,7 @@ func (t *Trie) tryGet(origNode node, key []byte, pos int, blockNr uint32) (value
 // The value bytes must not be modified by the caller while they are
 // stored in the trie.
 func (t *Trie) Update(key, value []byte, blockNr uint32) {
-	if err := t.TryUpdate(key, value, blockNr); err != nil {
+	if err := t.TryUpdate(key, value, blockNr, nil); err != nil {
 		log.Error(fmt.Sprintf("Unhandled trie error: %v", err))
 	}
 }
@@ -225,23 +237,25 @@ func (t *Trie) Update(key, value []byte, blockNr uint32) {
 // stored in the trie.
 //
 // If a node was not found in the database, a MissingNodeError is returned.
-func (t *Trie) TryUpdate(key, value []byte, blockNr uint32) error {
+func (t *Trie) TryUpdate(key, value []byte, blockNr uint32, respMap map[string]*PrefetchResponse) error {
 	k := keybytesToHex(key)
-	pos := t.CachedPrefixFor(k)
-	chanMap := make(map[string]chan PrefetchResponse)
-	for i := pos; i < len(k); i++ {
-		ch := make(chan PrefetchResponse, 1) // Buffered so that go-routines can finish
-		chanMap[string(k[:i])] = ch
-		t.prefetchCh <- PrefetchRequest{key: k, prefixEnd: i, responseCh: ch, blockNr: blockNr}
+	if respMap == nil && t.prefetchCh != nil {
+		kk, pos := t.cachedPrefixFor(t.root, k, 0)
+		if blockNr != 0 {
+			//fmt.Printf("Result %s %d\n", hex.EncodeToString(kk), pos)
+		}
+		respMap = make(map[string]*PrefetchResponse)
+		//fmt.Printf("TryUpdate with key %s pos %d blockNr %d\n", hex.EncodeToString(kk), pos, blockNr)
+		t.RequestPrefetch(kk, pos, blockNr, respMap)
 	}
 	if len(value) != 0 {
-		_, n, err := t.insert(t.root, k, 0, valueNode(value), blockNr, chanMap)
+		_, n, err := t.insert(t.root, k, 0, valueNode(value), blockNr, respMap)
 		if err != nil {
 			return err
 		}
 		t.root = n
 	} else {
-		_, n, err := t.delete(t.root, k, 0, blockNr)
+		_, n, err := t.delete(t.root, k, 0, blockNr, respMap)
 		if err != nil {
 			return err
 		}
@@ -250,7 +264,7 @@ func (t *Trie) TryUpdate(key, value []byte, blockNr uint32) error {
 	return nil
 }
 
-func (t *Trie) insert(n node, key []byte, keyStart int, value node, blockNr uint32, chanMap map[string]chan PrefetchResponse) (bool, node, error) {
+func (t *Trie) insert(n node, key []byte, keyStart int, value node, blockNr uint32, respMap map[string]*PrefetchResponse) (bool, node, error) {
 	if len(key) == keyStart {
 		if v, ok := n.(valueNode); ok {
 			return !bytes.Equal(v, value.(valueNode)), value, nil
@@ -263,7 +277,7 @@ func (t *Trie) insert(n node, key []byte, keyStart int, value node, blockNr uint
 		// If the whole key matches, keep this short node as is
 		// and only update the value.
 		if matchlen == len(n.Key) {
-			dirty, nn, err := t.insert(n.Val, key, keyStart+matchlen, value, blockNr, chanMap)
+			dirty, nn, err := t.insert(n.Val, key, keyStart+matchlen, value, blockNr, respMap)
 			if !dirty || err != nil {
 				return false, n, err
 			}
@@ -272,11 +286,11 @@ func (t *Trie) insert(n node, key []byte, keyStart int, value node, blockNr uint
 		// Otherwise branch out at the index where they differ.
 		branch := &fullNode{flags: t.newFlag()}
 		var err error
-		_, branch.Children[n.Key[matchlen]], err = t.insert(nil, n.Key, matchlen+1, n.Val, blockNr, chanMap)
+		_, branch.Children[n.Key[matchlen]], err = t.insert(nil, n.Key, matchlen+1, n.Val, blockNr, respMap)
 		if err != nil {
 			return false, nil, err
 		}
-		_, branch.Children[key[keyStart+matchlen]], err = t.insert(nil, key, keyStart+matchlen+1, value, blockNr, chanMap)
+		_, branch.Children[key[keyStart+matchlen]], err = t.insert(nil, key, keyStart+matchlen+1, value, blockNr, respMap)
 		if err != nil {
 			return false, nil, err
 		}
@@ -288,7 +302,7 @@ func (t *Trie) insert(n node, key []byte, keyStart int, value node, blockNr uint
 		return true, &shortNode{key[keyStart:keyStart+matchlen], branch, t.newFlag()}, nil
 
 	case *fullNode:
-		dirty, nn, err := t.insert(n.Children[key[keyStart]], key, keyStart+1, value, blockNr, chanMap)
+		dirty, nn, err := t.insert(n.Children[key[keyStart]], key, keyStart+1, value, blockNr, respMap)
 		if !dirty || err != nil {
 			return false, n, err
 		}
@@ -304,11 +318,11 @@ func (t *Trie) insert(n node, key []byte, keyStart int, value node, blockNr uint
 		// We've hit a part of the trie that isn't loaded yet. Load
 		// the node and insert into it. This leaves all child nodes on
 		// the path to the value in the trie.
-		rn, err := t.resolveHash(n, key[:keyStart], blockNr, chanMap)
+		rn, err := t.resolveHash(n, key[:keyStart], blockNr, respMap)
 		if err != nil {
 			return false, nil, err
 		}
-		dirty, nn, err := t.insert(rn, key, keyStart, value, blockNr, chanMap)
+		dirty, nn, err := t.insert(rn, key, keyStart, value, blockNr, respMap)
 		if !dirty || err != nil {
 			return false, rn, err
 		}
@@ -323,16 +337,22 @@ func (t *Trie) insert(n node, key []byte, keyStart int, value node, blockNr uint
 
 // Delete removes any existing value for key from the trie.
 func (t *Trie) Delete(key []byte, blockNr uint32) {
-	if err := t.TryDelete(key, blockNr); err != nil {
+	if err := t.TryDelete(key, blockNr, nil); err != nil {
 		log.Error(fmt.Sprintf("Unhandled trie error: %v", err))
 	}
 }
 
 // TryDelete removes any existing value for key from the trie.
 // If a node was not found in the database, a MissingNodeError is returned.
-func (t *Trie) TryDelete(key []byte, blockNr uint32) error {
+func (t *Trie) TryDelete(key []byte, blockNr uint32, respMap map[string]*PrefetchResponse) error {
 	k := keybytesToHex(key)
-	_, n, err := t.delete(t.root, k, 0, blockNr)
+	if respMap == nil && t.prefetchCh != nil {
+		kk, pos := t.cachedPrefixFor(t.root, k, 0)
+		respMap = make(map[string]*PrefetchResponse)
+		//fmt.Printf("TryUpdate with key %s pos %d blockNr %d\n", hex.EncodeToString(kk), pos, blockNr)
+		t.RequestPrefetch(kk, pos, blockNr, respMap)
+	}
+	_, n, err := t.delete(t.root, k, 0, blockNr, respMap)
 	if err != nil {
 		return err
 	}
@@ -343,7 +363,7 @@ func (t *Trie) TryDelete(key []byte, blockNr uint32) error {
 // delete returns the new root of the trie with key deleted.
 // It reduces the trie to minimal form by simplifying
 // nodes on the way up after deleting recursively.
-func (t *Trie) delete(n node, key []byte, keyStart int, blockNr uint32) (bool, node, error) {
+func (t *Trie) delete(n node, key []byte, keyStart int, blockNr uint32, respMap map[string]*PrefetchResponse) (bool, node, error) {
 	switch n := n.(type) {
 	case *shortNode:
 		matchlen := prefixLen(key[keyStart:], n.Key)
@@ -357,7 +377,7 @@ func (t *Trie) delete(n node, key []byte, keyStart int, blockNr uint32) (bool, n
 		// from the subtrie. Child can never be nil here since the
 		// subtrie must contain at least two other values with keys
 		// longer than n.Key.
-		dirty, child, err := t.delete(n.Val, key, keyStart+len(n.Key), blockNr)
+		dirty, child, err := t.delete(n.Val, key, keyStart+len(n.Key), blockNr, respMap)
 		if !dirty || err != nil {
 			return false, n, err
 		}
@@ -375,7 +395,7 @@ func (t *Trie) delete(n node, key []byte, keyStart int, blockNr uint32) (bool, n
 		}
 
 	case *fullNode:
-		dirty, nn, err := t.delete(n.Children[key[keyStart]], key, keyStart+1, blockNr)
+		dirty, nn, err := t.delete(n.Children[key[keyStart]], key, keyStart+1, blockNr, respMap)
 		if !dirty || err != nil {
 			return false, n, err
 		}
@@ -437,11 +457,11 @@ func (t *Trie) delete(n node, key []byte, keyStart int, blockNr uint32) (bool, n
 		// We've hit a part of the trie that isn't loaded yet. Load
 		// the node and delete from it. This leaves all child nodes on
 		// the path to the value in the trie.
-		rn, err := t.resolveHash(n, key[:keyStart], blockNr, nil)
+		rn, err := t.resolveHash(n, key[:keyStart], blockNr, respMap)
 		if err != nil {
 			return false, nil, err
 		}
-		dirty, nn, err := t.delete(rn, key, keyStart, blockNr)
+		dirty, nn, err := t.delete(rn, key, keyStart, blockNr, respMap)
 		if !dirty || err != nil {
 			return false, rn, err
 		}
@@ -481,18 +501,24 @@ func (t *Trie) readResolve(prefix []byte, blockNr uint32) ([]byte, error) {
 	return enc, err
 }
 
-func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32, chanMap map[string]chan PrefetchResponse) (node, error) {
+func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32, respMap map[string]*PrefetchResponse) (node, error) {
 	cacheMissCounter.Inc(1)
 	var enc []byte
 	var err error
-	if chanMap == nil {
+	if respMap == nil {
 		enc, err = t.readResolve(prefix, blockNr)
 	} else {
-		if ch, ok := chanMap[string(prefix)]; ok {
-			response := <- ch
+		if response, ok := respMap[string(prefix)]; ok {
+			//fmt.Printf("Resolving %s with prefetch %d\n", hex.EncodeToString(prefix), blockNr)
+			response.mu.Lock()
+			for !response.ready {
+				response.c.Wait()
+			}
+			defer response.mu.Unlock()
 			enc, err = response.value, response.err
 		} else {
 			enc, err = t.readResolve(prefix, blockNr)
+			fmt.Printf("Had to resolve %s without prefetch\n", hex.EncodeToString(prefix))
 		}
 	}
 	if err != nil || enc == nil {
@@ -517,13 +543,14 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32, chanMap ma
 
 // Finds the part of the key that can be explored without loading anything from the
 // underlying database
-func (t *Trie) CachedPrefixFor(key []byte) int {
-	return t.cachedPrefixFor(t.root, key, 0)
+func (t *Trie) CachedPrefixFor(key []byte) ([]byte, int) {
+	k := keybytesToHex(key)
+	return t.cachedPrefixFor(t.root, k, 0)
 }
 
-func (t *Trie) cachedPrefixFor(n node, key []byte, pos int) int {
+func (t *Trie) cachedPrefixFor(n node, key []byte, pos int) ([]byte, int) {
 	if pos == len(key) {
-		return pos
+		return key, pos
 	}
 	switch n := n.(type) {
 	case *shortNode:
@@ -534,21 +561,33 @@ func (t *Trie) cachedPrefixFor(n node, key []byte, pos int) int {
 			return t.cachedPrefixFor(n.Val, key, pos + matchlen)
 		}
 		// No further resolutions of the trie required, apart from edge cases of deleting penultimate slot in a full node
-		return len(key)
+		return key, len(key)
 	case *fullNode:
 		return t.cachedPrefixFor(n.Children[key[pos]], key, pos + 1)
 
 	case nil:
 		// No further resolutions of the trie required
-		return len(key)
+		return key, len(key)
 
 	case hashNode:
 		// We've hit a part of the trie that isn't loaded yet.
-		return pos
+		return key, pos
 
 	default:
 		fmt.Printf("Key: %s\n", hex.EncodeToString(key))
 		panic(fmt.Sprintf("%T: invalid node: %v", n, n))
+	}
+}
+
+func (t *Trie) RequestPrefetch(key []byte, prefixEnd int, blockNr uint32, respMap map[string]*PrefetchResponse) {
+	for i := prefixEnd; i <= len(key); i++ {
+		keyStr := string(key[:i])
+		if _, ok := respMap[keyStr]; !ok {
+			var response PrefetchResponse
+			response.c = sync.NewCond(&response.mu)
+			respMap[keyStr] = &response
+			t.prefetchCh <- PrefetchRequest{key: key, prefixEnd: i, responsePtr: &response, blockNr: blockNr}
+		}
 	}
 }
 

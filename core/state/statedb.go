@@ -333,20 +333,21 @@ func (self *StateDB) Suicide(addr common.Address, blockNr uint32) bool {
 //
 
 // updateStateObject writes the given object to the trie.
-func (self *StateDB) updateStateObject(stateObject *stateObject, blockNr uint32) {
+func (self *StateDB) updateStateObject(stateObject *stateObject, blockNr uint32, respMap map[string]*trie.PrefetchResponse) {
 	addr := stateObject.Address()
 	data, err := rlp.EncodeToBytes(stateObject)
 	if err != nil {
 		panic(fmt.Errorf("can't encode object at %x: %v", addr[:], err))
 	}
-	self.setError(self.trie.TryUpdate(addr[:], data, blockNr))
+	//fmt.Printf("TryUpdate %s\n", hex.EncodeToString(addr[:]))
+	self.setError(self.trie.TryUpdate(addr[:], data, blockNr, respMap))
 }
 
 // deleteStateObject removes the given object from the state trie.
-func (self *StateDB) deleteStateObject(stateObject *stateObject, blockNr uint32) {
+func (self *StateDB) deleteStateObject(stateObject *stateObject, blockNr uint32, respMap map[string]*trie.PrefetchResponse) {
 	stateObject.deleted = true
 	addr := stateObject.Address()
-	self.setError(self.trie.TryDelete(addr[:], blockNr))
+	self.setError(self.trie.TryDelete(addr[:], blockNr, respMap))
 }
 
 // Retrieve a state object given my the address. Returns nil if not found.
@@ -516,16 +517,26 @@ func (self *StateDB) GetRefund() *big.Int {
 	return self.refund
 }
 
+func (s *StateDB) CachedPrefixes(blockNr uint32) map[string]*trie.PrefetchResponse {
+	respMap := make(map[string]*trie.PrefetchResponse)
+	for _, addr := range s.sortedDirtyAccounts() {
+		k, pos := s.trie.CachedPrefixFor(addr[:])
+		s.trie.RequestPrefetch(k, pos, blockNr, respMap)
+	}
+	return respMap
+}
+
 // Finalise finalises the state by removing the self destructed objects
 // and clears the journal as well as the refunds.
 func (s *StateDB) Finalise(deleteEmptyObjects bool, blockNr uint32) {
+	chanMap := s.CachedPrefixes(blockNr)
 	for _, addr := range s.sortedDirtyAccounts() {
 		stateObject := s.stateObjects[addr]
 		if stateObject.suicided || (deleteEmptyObjects && stateObject.empty()) {
-			s.deleteStateObject(stateObject, blockNr)
+			s.deleteStateObject(stateObject, blockNr, chanMap)
 		} else {
 			stateObject.updateRoot(s.db, blockNr)
-			s.updateStateObject(stateObject, blockNr)
+			s.updateStateObject(stateObject, blockNr, chanMap)
 		}
 	}
 	// Invalidate journal because reverting across transactions is not allowed.
@@ -591,7 +602,7 @@ func keybytesToHex(str []byte) []byte {
 // CommitTo writes the state to the given database.
 func (s *StateDB) CommitTo(dbw trie.DatabaseWriter, deleteEmptyObjects bool, blockNr uint32, writeBlockNr uint32) (root common.Hash, err error) {
 	defer s.clearJournalAndRefund()
-
+	//chanMap := s.CachedPrefixes(blockNr)
 	suffix := make([]byte, 4)
 	binary.BigEndian.PutUint32(suffix, writeBlockNr^0xffffffff - 1)	// Commit objects to the trie.
 	for _, addr := range s.sortedAllAccounts() {
@@ -601,7 +612,7 @@ func (s *StateDB) CommitTo(dbw trie.DatabaseWriter, deleteEmptyObjects bool, blo
 		case stateObject.suicided || (isDirty && deleteEmptyObjects && stateObject.empty()):
 			// If the object has been removed, don't bother syncing it
 			// and just mark it for deletion in the trie.
-			s.deleteStateObject(stateObject, blockNr)
+			s.deleteStateObject(stateObject, blockNr, nil)
 			sha := sha3.NewKeccak256()
 			sha.Write(addr[:])
 			seckey := sha.Sum(nil)
@@ -622,7 +633,7 @@ func (s *StateDB) CommitTo(dbw trie.DatabaseWriter, deleteEmptyObjects bool, blo
 				return common.Hash{}, err
 			}
 			// Update the object in the main account trie.
-			s.updateStateObject(stateObject, blockNr)
+			s.updateStateObject(stateObject, blockNr, nil)
 		}
 		delete(s.stateObjectsDirty, addr)
 		if !isDirty {

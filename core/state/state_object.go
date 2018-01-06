@@ -225,7 +225,7 @@ func (self *stateObject) updateTrie(db Database, dbw trie.DatabaseWriter, blockN
 	for _, key := range self.sortedDirtyStorageKeys() {
 		value := self.dirtyStorage[key]
 		if (value == common.Hash{}) {
-			self.setError(tr.TryDelete(key[:], blockNr))
+			self.setError(tr.TryDelete(key[:], blockNr, nil))
 			if dbw != nil {
 				sha := sha3.NewKeccak256()
 				sha.Write(key[:])
@@ -239,7 +239,7 @@ func (self *stateObject) updateTrie(db Database, dbw trie.DatabaseWriter, blockN
 		delete(self.dirtyStorage, key)
 		// Encoding []byte cannot fail, ok to ignore the error.
 		v, _ := rlp.EncodeToBytes(bytes.TrimLeft(value[:], "\x00"))
-		self.setError(tr.TryUpdate(key[:], v, blockNr))
+		self.setError(tr.TryUpdate(key[:], v, blockNr, nil))
 	}
 	return tr
 }

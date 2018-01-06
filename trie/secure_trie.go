@@ -99,7 +99,7 @@ func (t *SecureTrie) TryGet(key []byte, blockNr uint32) ([]byte, error) {
 // The value bytes must not be modified by the caller while they are
 // stored in the trie.
 func (t *SecureTrie) Update(key, value []byte, blockNr uint32) {
-	if err := t.TryUpdate(key, value, blockNr); err != nil {
+	if err := t.TryUpdate(key, value, blockNr, nil); err != nil {
 		log.Error(fmt.Sprintf("Unhandled trie error: %v", err))
 	}
 }
@@ -112,9 +112,9 @@ func (t *SecureTrie) Update(key, value []byte, blockNr uint32) {
 // stored in the trie.
 //
 // If a node was not found in the database, a MissingNodeError is returned.
-func (t *SecureTrie) TryUpdate(key, value []byte, blockNr uint32) error {
+func (t *SecureTrie) TryUpdate(key, value []byte, blockNr uint32, respMap map[string]*PrefetchResponse) error {
 	hk := t.hashKey(key)
-	err := t.trie.TryUpdate(hk, value, blockNr)
+	err := t.trie.TryUpdate(hk, value, blockNr, respMap)
 	if err != nil {
 		return err
 	}
@@ -124,17 +124,26 @@ func (t *SecureTrie) TryUpdate(key, value []byte, blockNr uint32) error {
 
 // Delete removes any existing value for key from the trie.
 func (t *SecureTrie) Delete(key []byte, blockNr uint32) {
-	if err := t.TryDelete(key, blockNr); err != nil {
+	if err := t.TryDelete(key, blockNr, nil); err != nil {
 		log.Error(fmt.Sprintf("Unhandled trie error: %v", err))
 	}
 }
 
 // TryDelete removes any existing value for key from the trie.
 // If a node was not found in the database, a MissingNodeError is returned.
-func (t *SecureTrie) TryDelete(key []byte, blockNr uint32) error {
+func (t *SecureTrie) TryDelete(key []byte, blockNr uint32, respMap map[string]*PrefetchResponse) error {
 	hk := t.hashKey(key)
 	delete(t.getSecKeyCache(), string(hk))
-	return t.trie.TryDelete(hk, blockNr)
+	return t.trie.TryDelete(hk, blockNr, respMap)
+}
+
+func (t *SecureTrie) CachedPrefixFor(key []byte) ([]byte, int) {
+	hk := t.hashKey(key)
+	return t.trie.CachedPrefixFor(hk)
+}
+
+func (t *SecureTrie) RequestPrefetch(key []byte, prefixEnd int, blockNr uint32, respMap map[string]*PrefetchResponse) {
+	t.trie.RequestPrefetch(key, prefixEnd, blockNr, respMap)
 }
 
 // GetKey returns the sha3 preimage of a hashed key that was
