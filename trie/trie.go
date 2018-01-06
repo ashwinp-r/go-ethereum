@@ -83,6 +83,8 @@ type DatabaseWriter interface {
 	Put(key, value []byte) error
 }
 
+var TrieNodeCounter uint64
+
 // Trie is a Merkle Patricia Trie.
 // The zero value is an empty trie with no database.
 // Use New to create a trie that sits on top of a database.
@@ -481,7 +483,8 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32, respMap ma
 			response.Mu.Unlock()
 		} else {
 			enc, err = ReadResolve(t.db, t.prefix, prefix, blockNr)
-			fmt.Printf("Had to resolve %s without prefetch\n", hex.EncodeToString(prefix))
+			//fmt.Printf("Had to resolve %s without prefetch\n", hex.EncodeToString(prefix))
+			//fmt.Printf("%s\n", debug.Stack())
 		}
 	}
 	if err != nil || enc == nil {

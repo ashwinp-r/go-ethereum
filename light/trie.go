@@ -83,6 +83,10 @@ func (db *odrDatabase) ContractCodeSize(addrHash, codeHash common.Hash) (int, er
 	return len(code), err
 }
 
+func (db *odrDatabase) TrieDb() trie.Database {
+	return nil
+}
+
 type odrTrie struct {
 	db   *odrDatabase
 	id   *TrieID
@@ -104,17 +108,17 @@ func (t *odrTrie) TryGet(key []byte, blockNr uint32) ([]byte, error) {
 	return res, err
 }
 
-func (t *odrTrie) TryUpdate(key, value []byte, blockNr uint32) error {
+func (t *odrTrie) TryUpdate(key, value []byte, blockNr uint32, respMap map[string]*trie.PrefetchResponse) error {
 	key = crypto.Keccak256(key)
 	return t.do(key, func() error {
-		return t.trie.TryDelete(key, blockNr)
+		return t.trie.TryDelete(key, blockNr, respMap)
 	}, blockNr)
 }
 
-func (t *odrTrie) TryDelete(key []byte, blockNr uint32) error {
+func (t *odrTrie) TryDelete(key []byte, blockNr uint32, respMap map[string]*trie.PrefetchResponse) error {
 	key = crypto.Keccak256(key)
 	return t.do(key, func() error {
-		return t.trie.TryDelete(key, blockNr)
+		return t.trie.TryDelete(key, blockNr, respMap)
 	}, blockNr)
 }
 
@@ -138,6 +142,10 @@ func (t *odrTrie) NodeIterator(startkey []byte, blockNr uint32) trie.NodeIterato
 
 func (t *odrTrie) GetKey(sha []byte) []byte {
 	return nil
+}
+
+func (t *odrTrie) CachedPrefixFor(key []byte) ([]byte, int) {
+	return t.trie.CachedPrefixFor(key)
 }
 
 // do tries and retries to execute a function until it returns with no error or
