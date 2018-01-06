@@ -113,6 +113,8 @@ type PrefetchResponse struct {
 }
 
 type PrefetchRequest struct {
+	db Database
+	triePrefix []byte
 	key []byte
 	prefixEnd int
 	blockNr uint32
@@ -152,7 +154,7 @@ func New(root common.Hash, db Database, prefix []byte, blockNr uint32) (*Trie, e
 			}
 		}()
 		for request := range trie.prefetchCh {
-			enc, err := trie.readResolve(request.key[:request.prefixEnd], request.blockNr)
+			enc, err := readResolve(request.db, request.triePrefix, request.key[:request.prefixEnd], request.blockNr)
 			response := request.responsePtr
 			response.mu.Lock()
 			response.value, response.err = enc, err
@@ -486,14 +488,14 @@ func (t *Trie) resolve(n node, prefix []byte, blockNr uint32) (node, error) {
 	return n, nil
 }
 
-func (t *Trie) readResolve(prefix []byte, blockNr uint32) ([]byte, error) {
+func readResolve(db Database, triePrefix, prefix []byte, blockNr uint32) ([]byte, error) {
 	suffix := make([]byte, 4)
 	binary.BigEndian.PutUint32(suffix, blockNr^0xffffffff - 1) // Invert the block number
-	startKey := CompositeKey(prefix, t.prefix, suffix)
-	limitKey := CompositeKey(prefix, t.prefix, []byte{0xff, 0xff, 0xff, 0xff})
+	startKey := CompositeKey(prefix, triePrefix, suffix)
+	limitKey := CompositeKey(prefix, triePrefix, []byte{0xff, 0xff, 0xff, 0xff})
 	//fmt.Printf("Resolving prefix %s, startkey %s limitkey %s block %d\n",
 	//		hex.EncodeToString(prefix), hex.EncodeToString(startKey), hex.EncodeToString(limitKey), blockNr)
-	enc, err := t.db.Resolve(startKey, limitKey)
+	enc, err := db.Resolve(startKey, limitKey)
 	if err != nil {
 		//fmt.Printf("Resolving wrong hash for prefix %s, startkey %s limitkey %s block %d: %v\n",
 		//	hex.EncodeToString(prefix), hex.EncodeToString(startKey), hex.EncodeToString(limitKey), blockNr, err)
@@ -506,7 +508,7 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32, respMap ma
 	var enc []byte
 	var err error
 	if respMap == nil {
-		enc, err = t.readResolve(prefix, blockNr)
+		enc, err = readResolve(t.db, t.prefix, prefix, blockNr)
 	} else {
 		if response, ok := respMap[string(prefix)]; ok {
 			//fmt.Printf("Resolving %s with prefetch %d\n", hex.EncodeToString(prefix), blockNr)
@@ -517,7 +519,7 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte, blockNr uint32, respMap ma
 			defer response.mu.Unlock()
 			enc, err = response.value, response.err
 		} else {
-			enc, err = t.readResolve(prefix, blockNr)
+			enc, err = readResolve(t.db, t.prefix, prefix, blockNr)
 			fmt.Printf("Had to resolve %s without prefetch\n", hex.EncodeToString(prefix))
 		}
 	}
@@ -579,14 +581,16 @@ func (t *Trie) cachedPrefixFor(n node, key []byte, pos int) ([]byte, int) {
 	}
 }
 
+const PrefetchDepth int = 5
+
 func (t *Trie) RequestPrefetch(key []byte, prefixEnd int, blockNr uint32, respMap map[string]*PrefetchResponse) {
-	for i := prefixEnd; i <= len(key); i++ {
+	for i := prefixEnd; i < prefixEnd + PrefetchDepth && i <= len(key); i++ {
 		keyStr := string(key[:i])
 		if _, ok := respMap[keyStr]; !ok {
 			var response PrefetchResponse
 			response.c = sync.NewCond(&response.mu)
 			respMap[keyStr] = &response
-			t.prefetchCh <- PrefetchRequest{key: key, prefixEnd: i, responsePtr: &response, blockNr: blockNr}
+			t.prefetchCh <- PrefetchRequest{db: t.db, triePrefix: t.prefix, key: key, prefixEnd: i, responsePtr: &response, blockNr: blockNr}
 		}
 	}
 }
