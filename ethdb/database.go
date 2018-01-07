@@ -17,8 +17,9 @@
 package ethdb
 
 import (
-	"strconv"
-	"strings"
+	"bytes"
+	//"strconv"
+	//"strings"
 	"sync"
 	"time"
 	//"encoding/hex"
@@ -27,20 +28,24 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/syndtr/goleveldb/leveldb"
+	/*
 	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/filter"
 	"github.com/syndtr/goleveldb/leveldb/iterator"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
+	*/
 
 	gometrics "github.com/rcrowley/go-metrics"
+
+	"github.com/boltdb/bolt"
 )
 
 var OpenFileLimit = 64
 
 type LDBDatabase struct {
 	fn string      // filename for reporting
-	db *leveldb.DB // LevelDB instance
+	db *bolt.DB // BoltDB instance
 
 	getTimer       gometrics.Timer // Timer for measuring the database get request counts and latencies
 	putTimer       gometrics.Timer // Timer for measuring the database put request counts and latencies
@@ -72,16 +77,15 @@ func NewLDBDatabase(file string, cache int, handles int) (*LDBDatabase, error) {
 	logger.Info("Allocated cache and file handles", "cache", cache, "handles", handles)
 
 	// Open the db and recover any potential corruptions
-	db, err := leveldb.OpenFile(file, &opt.Options{
-		OpenFilesCacheCapacity: handles,
-		BlockCacheCapacity:     cache / 2 * opt.MiB,
-		WriteBuffer:            cache / 4 * opt.MiB, // Two of these are used internally
-		Filter:                 filter.NewBloomFilter(10),
-	})
-	if _, corrupted := err.(*errors.ErrCorrupted); corrupted {
-		db, err = leveldb.RecoverFile(file, nil)
-	}
+	db, err := bolt.Open(file, 0600, nil)
 	// (Re)check for errors and abort if opening of the db failed
+	if err != nil {
+		return nil, err
+	}
+	err = db.Update(func(tx *bolt.Tx) error {
+		_, err := tx.CreateBucketIfNotExists([]byte("B"))
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -109,11 +113,16 @@ func (db *LDBDatabase) Put(key []byte, value []byte) error {
 	if db.writeMeter != nil {
 		db.writeMeter.Mark(int64(len(value)))
 	}
-	return db.db.Put(key, value, nil)
+	err := db.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("B"))
+		return b.Put(key, value)
+	})
+	return err
 }
 
 func (db *LDBDatabase) Has(key []byte) (bool, error) {
-	return db.db.Has(key, nil)
+	dat, err := db.Get(key)
+	return dat != nil, err
 }
 
 // Get returns the given key if it's present.
@@ -123,7 +132,12 @@ func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
 		defer db.getTimer.UpdateSince(time.Now())
 	}
 	// Retrieve the key and increment the miss counter if not found
-	dat, err := db.db.Get(key, nil)
+	var dat []byte
+	err := db.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("B"))
+		dat = b.Get(key)
+		return nil
+	})
 	if err != nil {
 		if db.missMeter != nil {
 			db.missMeter.Mark(1)
@@ -134,20 +148,24 @@ func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
 	if db.readMeter != nil {
 		db.readMeter.Mark(int64(len(dat)))
 	}
-	return dat, nil
+	return dat, err
 	//return rle.Decompress(dat)
 }
 
 // Resolve returns the value corresponding to the lowest key from the range, matching given hash
 func (db *LDBDatabase) Resolve(start, limit []byte) ([]byte, error) {
-	it := db.db.NewIterator(&util.Range{start, limit}, nil)
-	defer it.Release()
-	for it.Next() {
-		if len(it.Key()) == len(start) {
-			return it.Value(), nil
+	var dat []byte
+	err := db.db.View(func(tx *bolt.Tx) error {
+		c := tx.Bucket([]byte("B")).Cursor()
+		for k, v := c.Seek(start); k != nil && bytes.Compare(k, limit) < 0; k, v = c.Next() {
+			if len(k) == len(start) {
+				dat = v
+				return nil
+			}
 		}
-	}
-	return nil, errors.ErrNotFound
+		return nil
+	})
+	return dat, err
 }
 
 // Delete deletes the key from the queue and database
@@ -157,11 +175,11 @@ func (db *LDBDatabase) Delete(key []byte) error {
 		defer db.delTimer.UpdateSince(time.Now())
 	}
 	// Execute the actual operation
-	return db.db.Delete(key, nil)
-}
-
-func (db *LDBDatabase) NewIterator() iterator.Iterator {
-	return db.db.NewIterator(nil, nil)
+	err := db.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("B"))
+		return b.Delete(key)
+	})
+	return err
 }
 
 func (db *LDBDatabase) Close() {
@@ -182,10 +200,6 @@ func (db *LDBDatabase) Close() {
 	} else {
 		db.log.Error("Failed to close database", "err", err)
 	}
-}
-
-func (db *LDBDatabase) LDB() *leveldb.DB {
-	return db.db
 }
 
 // Meter configures the database metrics collectors and
@@ -210,7 +224,7 @@ func (db *LDBDatabase) Meter(prefix string) {
 	db.quitChan = make(chan chan error)
 	db.quitLock.Unlock()
 
-	go db.meter(3 * time.Second)
+	//go db.meter(3 * time.Second)
 }
 
 // meter periodically retrieves internal leveldb counters and reports them to
@@ -224,6 +238,7 @@ func (db *LDBDatabase) Meter(prefix string) {
 //      1   |         85 |     109.27913 |      28.09293 |     213.92493 |     214.26294
 //      2   |        523 |    1000.37159 |       7.26059 |      66.86342 |      66.77884
 //      3   |        570 |    1113.18458 |       0.00000 |       0.00000 |       0.00000
+/*
 func (db *LDBDatabase) meter(refresh time.Duration) {
 	// Create the counters to store current and previous values
 	counters := make([][]float64, 2)
@@ -289,29 +304,44 @@ func (db *LDBDatabase) meter(refresh time.Duration) {
 		}
 	}
 }
+*/
+
+func (db *LDBDatabase) LDB() *leveldb.DB {
+	return nil
+}
 
 func (db *LDBDatabase) NewBatch() Batch {
-	return &ldbBatch{db: db.db, b: new(leveldb.Batch)}
+	return &ldbBatch{db: db.db, b: make(map[string][]byte)}
 }
 
 type ldbBatch struct {
-	db   *leveldb.DB
-	b    *leveldb.Batch
+	db   *bolt.DB
+	b    map[string][]byte
 	size int
 }
 
 func (b *ldbBatch) Put(key, value []byte) error {
-	b.b.Put(key, value)
-	b.size += len(value)
+	b.b[string(key)] = value
 	return nil
 }
 
 func (b *ldbBatch) Write() error {
-	return b.db.Write(b.b, nil)
+	err := b.db.Batch(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket([]byte("B"))
+		for k, v := range b.b {
+			err := bucket.Put([]byte(k), v)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	b.b = make(map[string][]byte)
+	return err
 }
 
 func (b *ldbBatch) ValueSize() int {
-	return b.size
+	return len(b.b)
 }
 
 type table struct {

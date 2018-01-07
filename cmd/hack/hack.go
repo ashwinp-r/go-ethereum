@@ -103,6 +103,7 @@ func main() {
         }
         defer pprof.StopCPUProfile()
     }
+
     ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024, 512)
 	defer ethDb.Close()
 	if err != nil {
