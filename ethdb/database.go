@@ -17,6 +17,7 @@
 package ethdb
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,14 +31,36 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/iterator"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 
+	"gopkg.in/redis.v5"
+
 	gometrics "github.com/rcrowley/go-metrics"
 )
 
 var OpenFileLimit = 64
 
+type RedisDatabase struct {
+	addr string      // network address for reporting
+	db *redis.Client  // Redis client handle
+
+	getTimer       gometrics.Timer // Timer for measuring the database get request counts and latencies
+	putTimer       gometrics.Timer // Timer for measuring the database put request counts and latencies
+	delTimer       gometrics.Timer // Timer for measuring the database delete request counts and latencies
+	missMeter      gometrics.Meter // Meter for measuring the missed database get requests
+	readMeter      gometrics.Meter // Meter for measuring the database get request data usage
+	writeMeter     gometrics.Meter // Meter for measuring the database put request data usage
+	compTimeMeter  gometrics.Meter // Meter for measuring the total time spent in database compaction
+	compReadMeter  gometrics.Meter // Meter for measuring the data read during compaction
+	compWriteMeter gometrics.Meter // Meter for measuring the data written during compaction
+
+	quitLock sync.Mutex      // Mutex protecting the quit channel access
+	quitChan chan chan error // Quit channel to stop the metrics collection before closing the database
+
+	log log.Logger // Contextual logger tracking the database path
+}
+
 type LDBDatabase struct {
-	fn string      // filename for reporting
-	db *leveldb.DB // LevelDB instance
+	fn string         // filename for reporting
+	db *leveldb.DB   // LevelDB instance
 
 	getTimer       gometrics.Timer // Timer for measuring the database get request counts and latencies
 	putTimer       gometrics.Timer // Timer for measuring the database put request counts and latencies
@@ -86,6 +109,23 @@ func NewLDBDatabase(file string, cache int, handles int) (*LDBDatabase, error) {
 		fn:  file,
 		db:  db,
 		log: logger,
+	}, nil
+}
+
+
+// NewLDBDatabase returns a LevelDB wrapped object.
+func NewRedisDatabase(address string, cache int, handles int) (*RedisDatabase, error) {
+	client := redis.NewClient(&redis.Options{
+		Addr:     address,
+		Password: "", // no password set
+		DB:       0,  // use default DB
+	})
+	pong, err := client.Ping().Result()
+	fmt.Println(pong, err)
+
+	return &RedisDatabase{
+		addr:  address,
+		db:  client,
 	}, nil
 }
 
