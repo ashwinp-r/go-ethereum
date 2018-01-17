@@ -646,7 +646,17 @@ func (n *Node) OpenDatabase(name string, cache, handles int) (ethdb.Database, er
 	if n.config.DataDir == "" {
 		return ethdb.NewMemDatabase()
 	}
-	return ethdb.NewLDBDatabase(n.config.resolvePath(name), cache, handles)
+	var db ethdb.Database
+	var err error
+	if name == "chaindata" && n.config.RedisAddress != "" {
+		db, err = ethdb.NewRedisDatabase(n.config.RedisAddress)
+	} else {
+		db, err = ethdb.NewLDBDatabase(n.config.resolvePath(name), cache, handles)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return db, nil
 }
 
 // ResolvePath returns the absolute path of a resource in the instance directory.
