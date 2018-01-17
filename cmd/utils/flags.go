@@ -118,6 +118,10 @@ var (
 		Usage: "Data directory for the databases and keystore",
 		Value: DirectoryString{node.DefaultDataDir()},
 	}
+	RedisFlag = cli.StringFlag{
+		Name:  "redis",
+		Usage: "Network address of the redis server, <host>:<port>. If set, chaindata is stored in redis, and not in LevelDB",
+	}
 	KeyStoreDirFlag = DirectoryFlag{
 		Name:  "keystore",
 		Usage: "Directory for the keystore (default = inside the datadir)",
@@ -855,6 +859,9 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "rinkeby")
 	}
 
+	if ctx.GlobalIsSet(RedisFlag.Name) {
+		cfg.RedisAddress = ctx.GlobalString(RedisFlag.Name)
+	}
 	if ctx.GlobalIsSet(KeyStoreDirFlag.Name) {
 		cfg.KeyStoreDir = ctx.GlobalString(KeyStoreDirFlag.Name)
 	}

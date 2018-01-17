@@ -66,6 +66,10 @@ type Config struct {
 	// in memory.
 	DataDir string
 
+	// RedisAddress is the network address of the redis server used to store the
+	// state information instead of LevelDB
+	RedisAddress string
+
 	// Configuration of peer-to-peer networking.
 	P2P p2p.Config
 

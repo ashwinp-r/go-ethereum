@@ -118,6 +118,7 @@ var (
 		utils.GpoBlocksFlag,
 		utils.GpoPercentileFlag,
 		utils.ExtraDataFlag,
+		utils.RedisFlag,
 		configFileFlag,
 	}
 

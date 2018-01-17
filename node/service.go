@@ -47,8 +47,8 @@ func (ctx *ServiceContext) OpenDatabase(name string, cache int, handles int) (et
 	}
 	var db ethdb.Database
 	var err error
-	if name == "chaindata" {
-		db, err = ethdb.NewRedisDatabase("localhost:6379")
+	if name == "chaindata" && ctx.config.RedisAddress != "" {
+		db, err = ethdb.NewRedisDatabase(ctx.config.RedisAddress)
 	} else {
 		db, err = ethdb.NewLDBDatabase(ctx.config.resolvePath(name), cache, handles)
 	}
