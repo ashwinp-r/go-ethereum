@@ -40,7 +40,7 @@ var OpenFileLimit = 64
 
 type RedisDatabase struct {
 	addr string      // network address for reporting
-	db *redis.Client  // Redis client handle
+	client *redis.Client  // Redis client handle
 
 	getTimer       gometrics.Timer // Timer for measuring the database get request counts and latencies
 	putTimer       gometrics.Timer // Timer for measuring the database put request counts and latencies
@@ -114,7 +114,9 @@ func NewLDBDatabase(file string, cache int, handles int) (*LDBDatabase, error) {
 
 
 // NewLDBDatabase returns a LevelDB wrapped object.
-func NewRedisDatabase(address string, cache int, handles int) (*RedisDatabase, error) {
+func NewRedisDatabase(address string) (*RedisDatabase, error) {
+	logger := log.New("database", address)
+
 	client := redis.NewClient(&redis.Options{
 		Addr:     address,
 		Password: "", // no password set
@@ -125,13 +127,18 @@ func NewRedisDatabase(address string, cache int, handles int) (*RedisDatabase, e
 
 	return &RedisDatabase{
 		addr:  address,
-		db:  client,
+		client:  client,
+		log: logger,
 	}, nil
 }
 
 // Path returns the path to the database directory.
 func (db *LDBDatabase) Path() string {
 	return db.fn
+}
+
+func (db *RedisDatabase) Path() string {
+	return db.addr
 }
 
 // Put puts the given key / value to the queue
@@ -149,8 +156,18 @@ func (db *LDBDatabase) Put(key []byte, value []byte) error {
 	return db.db.Put(key, value, nil)
 }
 
+func (db *RedisDatabase) Put(key []byte, value []byte) error {
+	result := db.client.Set(string(key), string(value), 0)
+	return result.Err()
+}
+
 func (db *LDBDatabase) Has(key []byte) (bool, error) {
 	return db.db.Has(key, nil)
+}
+
+func (db *RedisDatabase) Has(key []byte) (bool, error) {
+	result := db.client.Exists(string(key))
+	return result.Result()
 }
 
 // Get returns the given key if it's present.
@@ -175,6 +192,17 @@ func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
 	//return rle.Decompress(dat)
 }
 
+func (db *RedisDatabase) Get(key []byte) ([]byte, error) {
+	result := db.client.Get(string(key))
+	value, err := result.Bytes()
+	if err != nil {
+		return nil, err
+	}
+	v := make([]byte, len(value))
+	copy(v, value)
+	return v, nil
+}
+
 // Delete deletes the key from the queue and database
 func (db *LDBDatabase) Delete(key []byte) error {
 	// Measure the database delete latency, if requested
@@ -183,6 +211,11 @@ func (db *LDBDatabase) Delete(key []byte) error {
 	}
 	// Execute the actual operation
 	return db.db.Delete(key, nil)
+}
+
+func (db *RedisDatabase) Delete(key []byte) error {
+	result := db.client.Del(string(key))
+	return result.Err()
 }
 
 func (db *LDBDatabase) NewIterator() iterator.Iterator {
@@ -207,6 +240,10 @@ func (db *LDBDatabase) Close() {
 	} else {
 		db.log.Error("Failed to close database", "err", err)
 	}
+}
+
+func (db *RedisDatabase) Close() {
+	db.client.Close()
 }
 
 func (db *LDBDatabase) LDB() *leveldb.DB {
@@ -319,9 +356,20 @@ func (db *LDBDatabase) NewBatch() Batch {
 	return &ldbBatch{db: db.db, b: new(leveldb.Batch)}
 }
 
+func (db *RedisDatabase) NewBatch() Batch {
+	return &redisBatch{client: db.client, keys: []string{}, values: []string{}}
+}
+
 type ldbBatch struct {
 	db   *leveldb.DB
 	b    *leveldb.Batch
+	size int
+}
+
+type redisBatch struct {
+	client *redis.Client
+	keys []string
+	values []string
 	size int
 }
 
@@ -331,11 +379,38 @@ func (b *ldbBatch) Put(key, value []byte) error {
 	return nil
 }
 
+func (b *redisBatch) Put(key, value []byte) error {
+	k := make([]byte, len(key))
+	copy(k, key)
+	v := make([]byte, len(value))
+	copy(v, value)
+	b.keys = append(b.keys, string(k))
+	b.values = append(b.values, string(v))
+	b.size += len(value)
+	return nil
+}
+
 func (b *ldbBatch) Write() error {
 	return b.db.Write(b.b, nil)
 }
 
+func (b *redisBatch) Write() error {
+	var err error
+	for i, key := range b.keys {
+		result := b.client.Set(key, b.values[i], 0)
+		if result.Err() != nil {
+			err = result.Err()
+			break
+		}
+	}
+	return err
+}
+
 func (b *ldbBatch) ValueSize() int {
+	return b.size
+}
+
+func (b *redisBatch) ValueSize() int {
 	return b.size
 }
 

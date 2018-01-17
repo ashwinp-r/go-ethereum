@@ -17,6 +17,7 @@
 package node
 
 import (
+	"fmt"
 	"reflect"
 
 	"github.com/ethereum/go-ethereum/accounts"
@@ -40,10 +41,17 @@ type ServiceContext struct {
 // if no previous can be found) from within the node's data directory. If the
 // node is an ephemeral one, a memory database is returned.
 func (ctx *ServiceContext) OpenDatabase(name string, cache int, handles int) (ethdb.Database, error) {
+	fmt.Printf("Opening database for %s\n", name)
 	if ctx.config.DataDir == "" {
 		return ethdb.NewMemDatabase()
 	}
-	db, err := ethdb.NewLDBDatabase(ctx.config.resolvePath(name), cache, handles)
+	var db ethdb.Database
+	var err error
+	if name == "chaindata" {
+		db, err = ethdb.NewRedisDatabase("localhost:6379")
+	} else {
+		db, err = ethdb.NewLDBDatabase(ctx.config.resolvePath(name), cache, handles)
+	}
 	if err != nil {
 		return nil, err
 	}
