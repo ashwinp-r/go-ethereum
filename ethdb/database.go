@@ -357,7 +357,7 @@ func (db *LDBDatabase) NewBatch() Batch {
 }
 
 func (db *RedisDatabase) NewBatch() Batch {
-	return &redisBatch{client: db.client, keys: []string{}, values: []string{}}
+	return &redisBatch{client: db.client, mset: []interface{}{}}
 }
 
 type ldbBatch struct {
@@ -368,8 +368,7 @@ type ldbBatch struct {
 
 type redisBatch struct {
 	client *redis.Client
-	keys []string
-	values []string
+	mset []interface{}
 	size int
 }
 
@@ -384,8 +383,7 @@ func (b *redisBatch) Put(key, value []byte) error {
 	copy(k, key)
 	v := make([]byte, len(value))
 	copy(v, value)
-	b.keys = append(b.keys, string(k))
-	b.values = append(b.values, string(v))
+	b.mset = append(b.mset, string(k), string(v))
 	b.size += len(value)
 	return nil
 }
@@ -395,15 +393,8 @@ func (b *ldbBatch) Write() error {
 }
 
 func (b *redisBatch) Write() error {
-	var err error
-	for i, key := range b.keys {
-		result := b.client.Set(key, b.values[i], 0)
-		if result.Err() != nil {
-			err = result.Err()
-			break
-		}
-	}
-	return err
+	result := b.client.MSet(b.mset...)
+	return result.Err()
 }
 
 func (b *ldbBatch) ValueSize() int {
