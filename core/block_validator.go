@@ -18,6 +18,7 @@ package core
 
 import (
 	"fmt"
+	"runtime/debug"
 
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -54,6 +55,7 @@ func (v *BlockValidator) ValidateBody(block *types.Block) error {
 		return ErrKnownBlock
 	}
 	if !v.bc.HasBlockAndState(block.ParentHash()) {
+		fmt.Printf("%s\n", debug.Stack())
 		return consensus.ErrUnknownAncestor
 	}
 	// Header validity is known at this point, check the uncles and transactions
