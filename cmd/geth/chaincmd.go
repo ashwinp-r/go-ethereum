@@ -67,6 +67,7 @@ It expects the genesis file as argument.`,
 			utils.DataDirFlag,
 			utils.CacheFlag,
 			utils.LightModeFlag,
+			utils.RedisFlag,
 		},
 		Category: "BLOCKCHAIN COMMANDS",
 		Description: `
