@@ -393,6 +393,9 @@ func (b *ldbBatch) Write() error {
 }
 
 func (b *redisBatch) Write() error {
+	if len(b.mset) == 0 {
+		return nil
+	}
 	result := b.client.MSet(b.mset...)
 	return result.Err()
 }
