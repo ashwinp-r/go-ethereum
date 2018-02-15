@@ -1066,6 +1066,9 @@ func setEthash(ctx *cli.Context, cfg *eth.Config) {
 	if ctx.GlobalIsSet(EthashDatasetsOnDiskFlag.Name) {
 		cfg.Ethash.DatasetsOnDisk = ctx.GlobalInt(EthashDatasetsOnDiskFlag.Name)
 	}
+	if ctx.GlobalIsSet(FakePoWFlag.Name) {
+		cfg.Ethash.PowMode = ethash.ModeFake
+	}
 }
 
 // checkExclusive verifies that only a single instance of the provided flags was
@@ -1244,7 +1247,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *eth.Config) {
 	}
 	// TODO(fjl): move trie cache generations into config
 	if gen := ctx.GlobalInt(TrieCacheGenFlag.Name); gen > 0 {
-		state.MaxTrieCacheGen = uint16(gen)
+		state.MaxTrieCacheGen = uint32(gen)
 	}
 }
 
@@ -1333,15 +1336,11 @@ func SetupMetrics(ctx *cli.Context) {
 
 // MakeChainDatabase open an LevelDB using the flags passed to the client and will hard crash if it fails.
 func MakeChainDatabase(ctx *cli.Context, stack *node.Node) ethdb.Database {
-	var (
-		cache   = ctx.GlobalInt(CacheFlag.Name) * ctx.GlobalInt(CacheDatabaseFlag.Name) / 100
-		handles = makeDatabaseHandles()
-	)
 	name := "chaindata"
 	if ctx.GlobalString(SyncModeFlag.Name) == "light" {
 		name = "lightchaindata"
 	}
-	chainDb, err := stack.OpenDatabase(name, cache, handles)
+	chainDb, err := stack.OpenDatabase(name)
 	if err != nil {
 		Fatalf("Could not open database: %v", err)
 	}
@@ -1366,7 +1365,7 @@ func MakeChain(ctx *cli.Context, stack *node.Node) (chain *core.BlockChain, chai
 	var err error
 	chainDb = MakeChainDatabase(ctx, stack)
 
-	config, _, err := core.SetupGenesisBlock(chainDb, MakeGenesis(ctx))
+	config, _, _, err := core.SetupGenesisBlock(chainDb, MakeGenesis(ctx))
 	if err != nil {
 		Fatalf("%v", err)
 	}

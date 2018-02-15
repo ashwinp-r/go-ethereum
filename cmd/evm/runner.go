@@ -80,13 +80,15 @@ func runCmd(ctx *cli.Context) error {
 	}
 
 	var (
-		tracer        vm.Tracer
-		debugLogger   *vm.StructLogger
-		statedb       *state.StateDB
-		chainConfig   *params.ChainConfig
-		sender        = common.BytesToAddress([]byte("sender"))
-		receiver      = common.BytesToAddress([]byte("receiver"))
+		tracer      vm.Tracer
+		debugLogger *vm.StructLogger
+		statedb     *state.StateDB
+		tds         *state.TrieDbState
+		chainConfig *params.ChainConfig
+		sender      = common.BytesToAddress([]byte("sender"))
+		receiver    = common.BytesToAddress([]byte("receiver"))
 		genesisConfig *core.Genesis
+		blockNumber uint64
 	)
 	if ctx.GlobalBool(MachineFlag.Name) {
 		tracer = NewJSONLogger(logconfig, os.Stdout)
@@ -100,17 +102,20 @@ func runCmd(ctx *cli.Context) error {
 		gen := readGenesis(ctx.GlobalString(GenesisFlag.Name))
 		genesisConfig = gen
 		db := ethdb.NewMemDatabase()
-		genesis := gen.ToBlock(db)
-		statedb, _ = state.New(genesis.Root(), state.NewDatabase(db))
+		genesis, _, tds, _ := gen.ToBlock(db)
+		tds, _ = state.NewTrieDbState(genesis.Root(), db, 0)
+		statedb = state.New(tds)
 		chainConfig = gen.Config
 	} else {
-		statedb, _ = state.New(common.Hash{}, state.NewDatabase(ethdb.NewMemDatabase()))
+		db := ethdb.NewMemDatabase()
+		tds, _ = state.NewTrieDbState(common.Hash{}, db, 0)
+		statedb = state.New(tds)
 		genesisConfig = new(core.Genesis)
 	}
 	if ctx.GlobalString(SenderFlag.Name) != "" {
 		sender = common.HexToAddress(ctx.GlobalString(SenderFlag.Name))
 	}
-	statedb.CreateAccount(sender)
+	statedb.CreateAccount(sender, true)
 
 	if ctx.GlobalString(ReceiverFlag.Name) != "" {
 		receiver = common.HexToAddress(ctx.GlobalString(ReceiverFlag.Name))
@@ -196,7 +201,7 @@ func runCmd(ctx *cli.Context) error {
 	var leftOverGas uint64
 	if ctx.GlobalBool(CreateFlag.Name) {
 		input := append(code, common.Hex2Bytes(ctx.GlobalString(InputFlag.Name))...)
-		ret, _, leftOverGas, err = runtime.Create(input, &runtimeConfig)
+		ret, _, leftOverGas, err = runtime.Create(input, &runtimeConfig, 0)
 	} else {
 		if len(code) > 0 {
 			statedb.SetCode(receiver, code)
@@ -206,8 +211,8 @@ func runCmd(ctx *cli.Context) error {
 	execTime := time.Since(tstart)
 
 	if ctx.GlobalBool(DumpFlag.Name) {
-		statedb.IntermediateRoot(true)
-		fmt.Println(string(statedb.Dump()))
+		tds.IntermediateRoot(statedb, true)
+		fmt.Println(string(tds.Dump()))
 	}
 
 	if memProfilePath := ctx.GlobalString(MemProfileFlag.Name); memProfilePath != "" {
