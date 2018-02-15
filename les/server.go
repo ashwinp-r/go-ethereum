@@ -242,7 +242,7 @@ func newCostStats(db ethdb.Database) *requestCostStats {
 	}
 
 	if db != nil {
-		data, err := db.Get(rcStatsKey)
+		data, err := db.Get(rcStatsKey, rcStatsKey)
 		var statsRlp requestCostStatsRlp
 		if err == nil {
 			err = rlp.DecodeBytes(data, &statsRlp)
@@ -275,7 +275,7 @@ func (s *requestCostStats) store() {
 	}
 
 	if data, err := rlp.EncodeToBytes(statsRlp); err == nil {
-		s.db.Put(rcStatsKey, data)
+		s.db.Put(rcStatsKey, rcStatsKey, data)
 	}
 }
 

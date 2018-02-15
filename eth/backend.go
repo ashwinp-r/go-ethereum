@@ -113,7 +113,7 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 		return nil, err
 	}
 	stopDbUpgrade := upgradeDeduplicateData(chainDb)
-	chainConfig, genesisHash, genesisErr := core.SetupGenesisBlock(chainDb, config.Genesis)
+	chainConfig, genesisHash, _, genesisErr := core.SetupGenesisBlock(chainDb, config.Genesis)
 	if _, ok := genesisErr.(*params.ConfigCompatError); genesisErr != nil && !ok {
 		return nil, genesisErr
 	}
@@ -168,8 +168,8 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 	if eth.protocolManager, err = NewProtocolManager(eth.chainConfig, config.SyncMode, config.NetworkId, eth.eventMux, eth.txPool, eth.engine, eth.blockchain, chainDb); err != nil {
 		return nil, err
 	}
-	eth.miner = miner.New(eth, eth.chainConfig, eth.EventMux(), eth.engine)
-	eth.miner.SetExtra(makeExtraData(config.ExtraData))
+	//eth.miner = miner.New(eth, eth.chainConfig, eth.EventMux(), eth.engine)
+	//eth.miner.SetExtra(makeExtraData(config.ExtraData))
 
 	eth.ApiBackend = &EthApiBackend{eth, nil}
 	gpoParams := config.GPO
@@ -203,9 +203,6 @@ func CreateDB(ctx *node.ServiceContext, config *Config, name string) (ethdb.Data
 	db, err := ctx.OpenDatabase(name, config.DatabaseCache, config.DatabaseHandles)
 	if err != nil {
 		return nil, err
-	}
-	if db, ok := db.(*ethdb.LDBDatabase); ok {
-		db.Meter("eth/db/chaindata/")
 	}
 	return db, nil
 }
@@ -256,11 +253,13 @@ func (s *Ethereum) APIs() []rpc.API {
 			Version:   "1.0",
 			Service:   NewPublicEthereumAPI(s),
 			Public:    true,
+/*
 		}, {
 			Namespace: "eth",
 			Version:   "1.0",
 			Service:   NewPublicMinerAPI(s),
 			Public:    true,
+*/
 		}, {
 			Namespace: "eth",
 			Version:   "1.0",
@@ -331,7 +330,7 @@ func (self *Ethereum) SetEtherbase(etherbase common.Address) {
 	self.etherbase = etherbase
 	self.lock.Unlock()
 
-	self.miner.SetEtherbase(etherbase)
+	//self.miner.SetEtherbase(etherbase)
 }
 
 func (s *Ethereum) StartMining(local bool) error {
@@ -421,7 +420,7 @@ func (s *Ethereum) Stop() error {
 		s.lesServer.Stop()
 	}
 	s.txPool.Stop()
-	s.miner.Stop()
+	//s.miner.Stop()
 	s.eventMux.Stop()
 
 	s.chainDb.Close()
