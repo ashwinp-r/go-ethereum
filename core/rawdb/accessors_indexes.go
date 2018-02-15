@@ -28,7 +28,7 @@ import (
 // ReadTxLookupEntry retrieves the positional metadata associated with a transaction
 // hash to allow retrieving the transaction or receipt by hash.
 func ReadTxLookupEntry(db DatabaseReader, hash common.Hash) (common.Hash, uint64, uint64) {
-	data, _ := db.Get(append(txLookupPrefix, hash.Bytes()...))
+	data, _ := db.Get(txLookupPrefix, hash.Bytes())
 	if len(data) == 0 {
 		return common.Hash{}, 0, 0
 	}
@@ -53,7 +53,7 @@ func WriteTxLookupEntries(db DatabaseWriter, block *types.Block) {
 		if err != nil {
 			log.Crit("Failed to encode transaction lookup entry", "err", err)
 		}
-		if err := db.Put(append(txLookupPrefix, tx.Hash().Bytes()...), data); err != nil {
+		if err := db.Put(txLookupPrefix, tx.Hash().Bytes(), data); err != nil {
 			log.Crit("Failed to store transaction lookup entry", "err", err)
 		}
 	}
@@ -61,7 +61,7 @@ func WriteTxLookupEntries(db DatabaseWriter, block *types.Block) {
 
 // DeleteTxLookupEntry removes all transaction data associated with a hash.
 func DeleteTxLookupEntry(db DatabaseDeleter, hash common.Hash) {
-	db.Delete(append(txLookupPrefix, hash.Bytes()...))
+	db.Delete(txLookupPrefix, hash.Bytes())
 }
 
 // ReadTransaction retrieves a specific transaction from the database, along with
@@ -97,23 +97,23 @@ func ReadReceipt(db DatabaseReader, hash common.Hash) (*types.Receipt, common.Ha
 // ReadBloomBits retrieves the compressed bloom bit vector belonging to the given
 // section and bit index from the.
 func ReadBloomBits(db DatabaseReader, bit uint, section uint64, head common.Hash) ([]byte, error) {
-	key := append(append(bloomBitsPrefix, make([]byte, 10)...), head.Bytes()...)
+	key := append(make([]byte, 10), head.Bytes()...)
 
-	binary.BigEndian.PutUint16(key[1:], uint16(bit))
-	binary.BigEndian.PutUint64(key[3:], section)
+	binary.BigEndian.PutUint16(key[0:], uint16(bit))
+	binary.BigEndian.PutUint64(key[2:], section)
 
-	return db.Get(key)
+	return db.Get(bloomBitsPrefix, key)
 }
 
 // WriteBloomBits stores the compressed bloom bits vector belonging to the given
 // section and bit index.
 func WriteBloomBits(db DatabaseWriter, bit uint, section uint64, head common.Hash, bits []byte) {
-	key := append(append(bloomBitsPrefix, make([]byte, 10)...), head.Bytes()...)
+	key := append(make([]byte, 10), head.Bytes()...)
 
-	binary.BigEndian.PutUint16(key[1:], uint16(bit))
-	binary.BigEndian.PutUint64(key[3:], section)
+	binary.BigEndian.PutUint16(key[0:], uint16(bit))
+	binary.BigEndian.PutUint64(key[2:], section)
 
-	if err := db.Put(key, bits); err != nil {
+	if err := db.Put(bloomBitsPrefix, key, bits); err != nil {
 		log.Crit("Failed to store bloom bits", "err", err)
 	}
 }

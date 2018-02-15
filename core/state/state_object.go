@@ -74,7 +74,7 @@ type stateObject struct {
 	dbErr error
 
 	// Write caches.
-	trie Trie // storage trie, which becomes non-nil on first access
+	//trie Trie // storage trie, which becomes non-nil on first access
 	code Code // contract bytecode, which gets set when code is loaded
 
 	cachedStorage Storage // Storage entry cache to avoid duplicate reads
@@ -95,6 +95,10 @@ func (s *stateObject) empty() bool {
 
 // Account is the Ethereum consensus representation of accounts.
 // These objects are stored in the main account trie.
+type ExtAccount struct {
+	Nonce uint64
+	Balance *big.Int	
+}
 type Account struct {
 	Nonce    uint64
 	Balance  *big.Int
@@ -147,47 +151,29 @@ func (c *stateObject) touch() {
 	}
 }
 
-func (c *stateObject) getTrie(db Database) Trie {
-	if c.trie == nil {
-		var err error
-		c.trie, err = db.OpenStorageTrie(c.addrHash, c.data.Root)
-		if err != nil {
-			c.trie, _ = db.OpenStorageTrie(c.addrHash, common.Hash{})
-			c.setError(fmt.Errorf("can't create storage trie: %v", err))
-		}
-	}
-	return c.trie
-}
-
 // GetState returns a value in account storage.
-func (self *stateObject) GetState(db Database, key common.Hash) common.Hash {
+func (self *stateObject) GetState(key common.Hash) common.Hash {
 	value, exists := self.cachedStorage[key]
 	if exists {
 		return value
 	}
 	// Load from DB in case it is missing.
-	enc, err := self.getTrie(db).TryGet(key[:])
+	enc, err := self.db.stateReader.ReadAccountStorage(&self.address, &key)
 	if err != nil {
 		self.setError(err)
 		return common.Hash{}
 	}
-	if len(enc) > 0 {
-		_, content, _, err := rlp.Split(enc)
-		if err != nil {
-			self.setError(err)
-		}
-		value.SetBytes(content)
-	}
+	value.SetBytes(enc)
 	self.cachedStorage[key] = value
 	return value
 }
 
 // SetState updates a value in account storage.
-func (self *stateObject) SetState(db Database, key, value common.Hash) {
+func (self *stateObject) SetState(key, value common.Hash) {
 	self.db.journal.append(storageChange{
 		account:  &self.address,
 		key:      key,
-		prevalue: self.GetState(db, key),
+		prevalue: self.GetState(key),
 	})
 	self.setState(key, value)
 }
@@ -198,39 +184,13 @@ func (self *stateObject) setState(key, value common.Hash) {
 }
 
 // updateTrie writes cached storage modifications into the object's storage trie.
-func (self *stateObject) updateTrie(db Database) Trie {
-	tr := self.getTrie(db)
+func (self *stateObject) updateTrie(stateWriter StateWriter) error {
 	for key, value := range self.dirtyStorage {
-		delete(self.dirtyStorage, key)
-		if (value == common.Hash{}) {
-			self.setError(tr.TryDelete(key[:]))
-			continue
+		if err := stateWriter.WriteAccountStorage(&self.address, &key, &value); err != nil {
+			return err
 		}
-		// Encoding []byte cannot fail, ok to ignore the error.
-		v, _ := rlp.EncodeToBytes(bytes.TrimLeft(value[:], "\x00"))
-		self.setError(tr.TryUpdate(key[:], v))
 	}
-	return tr
-}
-
-// UpdateRoot sets the trie root to the current root hash of
-func (self *stateObject) updateRoot(db Database) {
-	self.updateTrie(db)
-	self.data.Root = self.trie.Hash()
-}
-
-// CommitTrie the storage trie of the object to db.
-// This updates the trie root.
-func (self *stateObject) CommitTrie(db Database) error {
-	self.updateTrie(db)
-	if self.dbErr != nil {
-		return self.dbErr
-	}
-	root, err := self.trie.Commit(nil)
-	if err == nil {
-		self.data.Root = root
-	}
-	return err
+	return nil
 }
 
 // AddBalance removes amount from c's balance.
@@ -274,9 +234,6 @@ func (c *stateObject) ReturnGas(gas *big.Int) {}
 
 func (self *stateObject) deepCopy(db *StateDB) *stateObject {
 	stateObject := newObject(db, self.address, self.data)
-	if self.trie != nil {
-		stateObject.trie = db.db.CopyTrie(self.trie)
-	}
 	stateObject.code = self.code
 	stateObject.dirtyStorage = self.dirtyStorage.Copy()
 	stateObject.cachedStorage = self.dirtyStorage.Copy()
@@ -296,14 +253,14 @@ func (c *stateObject) Address() common.Address {
 }
 
 // Code returns the contract code associated with this object, if any.
-func (self *stateObject) Code(db Database) []byte {
+func (self *stateObject) Code() []byte {
 	if self.code != nil {
 		return self.code
 	}
 	if bytes.Equal(self.CodeHash(), emptyCodeHash) {
 		return nil
 	}
-	code, err := db.ContractCode(self.addrHash, common.BytesToHash(self.CodeHash()))
+	code, err := self.db.stateReader.ReadAccountCode(common.BytesToHash(self.CodeHash()))
 	if err != nil {
 		self.setError(fmt.Errorf("can't load code hash %x: %v", self.CodeHash(), err))
 	}
@@ -312,7 +269,7 @@ func (self *stateObject) Code(db Database) []byte {
 }
 
 func (self *stateObject) SetCode(codeHash common.Hash, code []byte) {
-	prevcode := self.Code(self.db.db)
+	prevcode := self.Code()
 	self.db.journal.append(codeChange{
 		account:  &self.address,
 		prevhash: self.CodeHash(),
@@ -357,3 +314,4 @@ func (self *stateObject) Nonce() uint64 {
 func (self *stateObject) Value() *big.Int {
 	panic("Value on stateObject should never be called")
 }
+
