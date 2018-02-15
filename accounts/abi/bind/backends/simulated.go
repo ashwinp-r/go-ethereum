@@ -56,6 +56,7 @@ type SimulatedBackend struct {
 
 	mu           sync.Mutex
 	pendingBlock *types.Block   // Currently pending block that will be imported on request
+	pendingTds   *state.TrieDbState
 	pendingState *state.StateDB // Currently pending state that will be the active on on request
 
 	events *filters.EventSystem // Event system for filtering log events live
@@ -69,7 +70,10 @@ func NewSimulatedBackend(alloc core.GenesisAlloc) *SimulatedBackend {
 	database := ethdb.NewMemDatabase()
 	genesis := core.Genesis{Config: params.AllEthashProtocolChanges, Alloc: alloc}
 	genesis.MustCommit(database)
-	blockchain, _ := core.NewBlockChain(database, nil, genesis.Config, ethash.NewFaker(), vm.Config{})
+	blockchain, err := core.NewBlockChain(database, nil, genesis.Config, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		panic(fmt.Sprintf("%v", err))
+	}
 
 	backend := &SimulatedBackend{
 		database:   database,
@@ -103,10 +107,11 @@ func (b *SimulatedBackend) Rollback() {
 
 func (b *SimulatedBackend) rollback() {
 	blocks, _ := core.GenerateChain(b.config, b.blockchain.CurrentBlock(), ethash.NewFaker(), b.database, 1, func(int, *core.BlockGen) {})
-	statedb, _ := b.blockchain.State()
+	_, tds, _ := b.blockchain.State()
 
 	b.pendingBlock = blocks[0]
-	b.pendingState, _ = state.New(b.pendingBlock.Root(), statedb.Database())
+	b.pendingTds, _ = state.NewTrieDbState(b.pendingBlock.Root(), tds.Database(), b.pendingBlock.NumberU64())
+	b.pendingState = state.New(b.pendingTds)
 }
 
 // CodeAt returns the code associated with a certain account in the blockchain.
@@ -117,7 +122,7 @@ func (b *SimulatedBackend) CodeAt(ctx context.Context, contract common.Address, 
 	if blockNumber != nil && blockNumber.Cmp(b.blockchain.CurrentBlock().Number()) != 0 {
 		return nil, errBlockNumberUnsupported
 	}
-	statedb, _ := b.blockchain.State()
+	statedb, _, _ := b.blockchain.State()
 	return statedb.GetCode(contract), nil
 }
 
@@ -129,7 +134,7 @@ func (b *SimulatedBackend) BalanceAt(ctx context.Context, contract common.Addres
 	if blockNumber != nil && blockNumber.Cmp(b.blockchain.CurrentBlock().Number()) != 0 {
 		return nil, errBlockNumberUnsupported
 	}
-	statedb, _ := b.blockchain.State()
+	statedb, _, _ := b.blockchain.State()
 	return statedb.GetBalance(contract), nil
 }
 
@@ -141,7 +146,7 @@ func (b *SimulatedBackend) NonceAt(ctx context.Context, contract common.Address,
 	if blockNumber != nil && blockNumber.Cmp(b.blockchain.CurrentBlock().Number()) != 0 {
 		return 0, errBlockNumberUnsupported
 	}
-	statedb, _ := b.blockchain.State()
+	statedb, _, _ := b.blockchain.State()
 	return statedb.GetNonce(contract), nil
 }
 
@@ -153,7 +158,7 @@ func (b *SimulatedBackend) StorageAt(ctx context.Context, contract common.Addres
 	if blockNumber != nil && blockNumber.Cmp(b.blockchain.CurrentBlock().Number()) != 0 {
 		return nil, errBlockNumberUnsupported
 	}
-	statedb, _ := b.blockchain.State()
+	statedb, _, _ := b.blockchain.State()
 	val := statedb.GetState(contract, key)
 	return val[:], nil
 }
@@ -180,7 +185,7 @@ func (b *SimulatedBackend) CallContract(ctx context.Context, call ethereum.CallM
 	if blockNumber != nil && blockNumber.Cmp(b.blockchain.CurrentBlock().Number()) != 0 {
 		return nil, errBlockNumberUnsupported
 	}
-	state, err := b.blockchain.State()
+	state, _, err := b.blockchain.State()
 	if err != nil {
 		return nil, err
 	}
@@ -312,10 +317,11 @@ func (b *SimulatedBackend) SendTransaction(ctx context.Context, tx *types.Transa
 		}
 		block.AddTxWithChain(b.blockchain, tx)
 	})
-	statedb, _ := b.blockchain.State()
+	_, tds, _ := b.blockchain.State()
 
 	b.pendingBlock = blocks[0]
-	b.pendingState, _ = state.New(b.pendingBlock.Root(), statedb.Database())
+	b.pendingTds, _ = state.NewTrieDbState(b.pendingBlock.Root(), tds.Database(), b.pendingBlock.NumberU64())
+	b.pendingState = state.New(b.pendingTds)
 	return nil
 }
 
@@ -397,10 +403,11 @@ func (b *SimulatedBackend) AdjustTime(adjustment time.Duration) error {
 		}
 		block.OffsetTime(int64(adjustment.Seconds()))
 	})
-	statedb, _ := b.blockchain.State()
+	_, tds, _ := b.blockchain.State()
 
 	b.pendingBlock = blocks[0]
-	b.pendingState, _ = state.New(b.pendingBlock.Root(), statedb.Database())
+	b.pendingTds, _ = state.NewTrieDbState(b.pendingBlock.Root(), tds.Database(), b.pendingBlock.NumberU64())
+	b.pendingState = state.New(b.pendingTds)
 
 	return nil
 }

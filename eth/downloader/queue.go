@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"sync"
 	"time"
+	"runtime/debug"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -69,7 +70,7 @@ type queue struct {
 
 	// Headers are "special", they download in batches, supported by a skeleton chain
 	headerHead      common.Hash                    // [eth/62] Hash of the last queued header to verify order
-	headerTaskPool  map[uint64]*types.Header       // [eth/62] Pending header retrieval tasks, mapping starting indexes to skeleton headers
+	headerTaskPool  map[uint64]common.Hash         // [eth/62] Pending header retrieval tasks, mapping starting indexes to skeleton headers
 	headerTaskQueue *prque.Prque                   // [eth/62] Priority queue of the skeleton indexes to fetch the filling headers for
 	headerPeerMiss  map[string]map[uint64]struct{} // [eth/62] Set of per-peer header batches known to be unavailable
 	headerPendPool  map[string]*fetchRequest       // [eth/62] Currently pending header retrieval operations
@@ -79,12 +80,12 @@ type queue struct {
 	headerContCh    chan bool                      // [eth/62] Channel to notify when header download finishes
 
 	// All data retrievals below are based on an already assembles header chain
-	blockTaskPool  map[common.Hash]*types.Header // [eth/62] Pending block (body) retrieval tasks, mapping hashes to headers
+	blockTaskPool  map[common.Hash]struct{}      // [eth/62] Pending block (body) retrieval tasks, mapping hashes to headers
 	blockTaskQueue *prque.Prque                  // [eth/62] Priority queue of the headers to fetch the blocks (bodies) for
 	blockPendPool  map[string]*fetchRequest      // [eth/62] Currently pending block (body) retrieval operations
 	blockDonePool  map[common.Hash]struct{}      // [eth/62] Set of the completed block (body) fetches
 
-	receiptTaskPool  map[common.Hash]*types.Header // [eth/63] Pending receipt retrieval tasks, mapping hashes to headers
+	receiptTaskPool  map[common.Hash]struct{}      // [eth/63] Pending receipt retrieval tasks, mapping hashes to headers
 	receiptTaskQueue *prque.Prque                  // [eth/63] Priority queue of the headers to fetch the receipts for
 	receiptPendPool  map[string]*fetchRequest      // [eth/63] Currently pending receipt retrieval operations
 	receiptDonePool  map[common.Hash]struct{}      // [eth/63] Set of the completed receipt fetches
@@ -104,11 +105,11 @@ func newQueue() *queue {
 	return &queue{
 		headerPendPool:   make(map[string]*fetchRequest),
 		headerContCh:     make(chan bool),
-		blockTaskPool:    make(map[common.Hash]*types.Header),
+		blockTaskPool:    make(map[common.Hash]struct{}),
 		blockTaskQueue:   prque.New(),
 		blockPendPool:    make(map[string]*fetchRequest),
 		blockDonePool:    make(map[common.Hash]struct{}),
-		receiptTaskPool:  make(map[common.Hash]*types.Header),
+		receiptTaskPool:  make(map[common.Hash]struct{}),
 		receiptTaskQueue: prque.New(),
 		receiptPendPool:  make(map[string]*fetchRequest),
 		receiptDonePool:  make(map[common.Hash]struct{}),
@@ -129,12 +130,12 @@ func (q *queue) Reset() {
 	q.headerHead = common.Hash{}
 	q.headerPendPool = make(map[string]*fetchRequest)
 
-	q.blockTaskPool = make(map[common.Hash]*types.Header)
+	q.blockTaskPool = make(map[common.Hash]struct{})
 	q.blockTaskQueue.Reset()
 	q.blockPendPool = make(map[string]*fetchRequest)
 	q.blockDonePool = make(map[common.Hash]struct{})
 
-	q.receiptTaskPool = make(map[common.Hash]*types.Header)
+	q.receiptTaskPool = make(map[common.Hash]struct{})
 	q.receiptTaskQueue.Reset()
 	q.receiptPendPool = make(map[string]*fetchRequest)
 	q.receiptDonePool = make(map[common.Hash]struct{})
@@ -276,7 +277,7 @@ func (q *queue) ScheduleSkeleton(from uint64, skeleton []*types.Header) {
 		panic("skeleton assembly already in progress")
 	}
 	// Schedule all the header retrieval tasks for the skeleton assembly
-	q.headerTaskPool = make(map[uint64]*types.Header)
+	q.headerTaskPool = make(map[uint64]common.Hash)
 	q.headerTaskQueue = prque.New()
 	q.headerPeerMiss = make(map[string]map[uint64]struct{}) // Reset availability to correct invalid chains
 	q.headerResults = make([]*types.Header, len(skeleton)*MaxHeaderFetch)
@@ -287,7 +288,7 @@ func (q *queue) ScheduleSkeleton(from uint64, skeleton []*types.Header) {
 	for i, header := range skeleton {
 		index := from + uint64(i*MaxHeaderFetch)
 
-		q.headerTaskPool[index] = header
+		q.headerTaskPool[index] = header.Hash()
 		q.headerTaskQueue.Push(index, -float32(index))
 	}
 }
@@ -333,11 +334,11 @@ func (q *queue) Schedule(headers []*types.Header, from uint64) []*types.Header {
 			continue
 		}
 		// Queue the header for content retrieval
-		q.blockTaskPool[hash] = header
+		q.blockTaskPool[hash] = struct{}{}
 		q.blockTaskQueue.Push(header, -float32(header.Number.Uint64()))
 
 		if q.mode == FastSync {
-			q.receiptTaskPool[hash] = header
+			q.receiptTaskPool[hash] = struct{}{}
 			q.receiptTaskQueue.Push(header, -float32(header.Number.Uint64()))
 		}
 		inserts = append(inserts, header)
@@ -484,7 +485,7 @@ func (q *queue) ReserveReceipts(p *peerConnection, count int) (*fetchRequest, bo
 // Note, this method expects the queue lock to be already held for writing. The
 // reason the lock is not obtained in here is because the parameters already need
 // to access the queue, so they already need a lock anyway.
-func (q *queue) reserveHeaders(p *peerConnection, count int, taskPool map[common.Hash]*types.Header, taskQueue *prque.Prque,
+func (q *queue) reserveHeaders(p *peerConnection, count int, taskPool map[common.Hash]struct{}, taskQueue *prque.Prque,
 	pendPool map[string]*fetchRequest, donePool map[common.Hash]struct{}, isNoop func(*types.Header) bool) (*fetchRequest, bool, error) {
 	// Short circuit if the pool has been depleted, or if the peer's already
 	// downloading something (sanity check not to corrupt state)
@@ -693,7 +694,7 @@ func (q *queue) DeliverHeaders(id string, headers []*types.Header, headerProcCh 
 	delete(q.headerPendPool, id)
 
 	// Ensure headers can be mapped onto the skeleton chain
-	target := q.headerTaskPool[request.From].Hash()
+	target := q.headerTaskPool[request.From]
 
 	accepted := len(headers) == MaxHeaderFetch
 	if accepted {
@@ -770,6 +771,16 @@ func (q *queue) DeliverBodies(id string, txLists [][]*types.Transaction, uncleLi
 
 	reconstruct := func(header *types.Header, index int, result *fetchResult) error {
 		if types.DeriveSha(types.Transactions(txLists[index])) != header.TxHash || types.CalcUncleHash(uncleLists[index]) != header.UncleHash {
+			fmt.Printf("INVALID body %d ", header.Number.Uint64())
+			txHash := types.DeriveSha(types.Transactions(txLists[index]))
+			if txHash != header.TxHash {
+				fmt.Printf("due to wrong tx hash, got %x, expected %x\n", txHash, header.TxHash)
+			}
+			if types.CalcUncleHash(uncleLists[index]) != header.UncleHash {
+				fmt.Printf("due to wrong uncle hash\n")
+			}
+			fmt.Printf("%s\n", debug.Stack())
+			//types.DeriveSha1(types.Transactions(txLists[index]))
 			return errInvalidBody
 		}
 		result.Transactions = txLists[index]
@@ -788,6 +799,7 @@ func (q *queue) DeliverReceipts(id string, receiptList [][]*types.Receipt) (int,
 
 	reconstruct := func(header *types.Header, index int, result *fetchResult) error {
 		if types.DeriveSha(types.Receipts(receiptList[index])) != header.ReceiptHash {
+			fmt.Printf("INVALID repeipt\n")
 			return errInvalidReceipt
 		}
 		result.Receipts = receiptList[index]
@@ -801,7 +813,7 @@ func (q *queue) DeliverReceipts(id string, receiptList [][]*types.Receipt) (int,
 // Note, this method expects the queue lock to be already held for writing. The
 // reason the lock is not obtained in here is because the parameters already need
 // to access the queue, so they already need a lock anyway.
-func (q *queue) deliver(id string, taskPool map[common.Hash]*types.Header, taskQueue *prque.Prque,
+func (q *queue) deliver(id string, taskPool map[common.Hash]struct{}, taskQueue *prque.Prque,
 	pendPool map[string]*fetchRequest, donePool map[common.Hash]struct{}, reqTimer metrics.Timer,
 	results int, reconstruct func(header *types.Header, index int, result *fetchResult) error) (int, error) {
 

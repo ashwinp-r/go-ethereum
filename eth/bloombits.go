@@ -108,9 +108,8 @@ func NewBloomIndexer(db ethdb.Database, size uint64) *core.ChainIndexer {
 		db:   db,
 		size: size,
 	}
-	table := ethdb.NewTable(db, string(rawdb.BloomBitsIndexPrefix))
 
-	return core.NewChainIndexer(db, table, backend, size, bloomConfirms, bloomThrottling, "bloombits")
+	return core.NewChainIndexer(db, rawdb.BloomBitsIndexPrefix, backend, size, bloomConfirms, bloomThrottling, "bloombits")
 }
 
 // Reset implements core.ChainIndexerBackend, starting a new bloombits index
@@ -130,7 +129,7 @@ func (b *BloomIndexer) Process(header *types.Header) {
 
 // Commit implements core.ChainIndexerBackend, finalizing the bloom section and
 // writing it out into the database.
-func (b *BloomIndexer) Commit() error {
+func (b *BloomIndexer) Commit(blockNr uint64) error {
 	batch := b.db.NewBatch()
 
 	for i := 0; i < types.BloomBitLength; i++ {
@@ -140,5 +139,5 @@ func (b *BloomIndexer) Commit() error {
 		}
 		rawdb.WriteBloomBits(batch, uint(i), b.section, b.head, bitutil.CompressBytes(bits))
 	}
-	return batch.Write()
+	return batch.Commit()
 }
