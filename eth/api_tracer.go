@@ -25,6 +25,7 @@ import (
 	"runtime"
 	"sync"
 	"time"
+	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -142,7 +143,7 @@ func (api *PrivateDebugAPI) traceChain(ctx context.Context, start, end *types.Bl
 			return nil, fmt.Errorf("parent block #%d not found", number-1)
 		}
 	}
-	statedb, err := state.New(start.Root(), database)
+	tds, err := state.NewTrieDbState(start.Root(), database, start.NumberU64())
 	if err != nil {
 		// If the starting state is missing, allow some number of blocks to be reexecuted
 		reexec := defaultTraceReexec
@@ -155,7 +156,7 @@ func (api *PrivateDebugAPI) traceChain(ctx context.Context, start, end *types.Bl
 			if start == nil {
 				break
 			}
-			if statedb, err = state.New(start.Root(), database); err == nil {
+			if tds, err = state.NewTrieDbState(start.Root(), database, start.NumberU64()); err == nil {
 				break
 			}
 		}
@@ -169,6 +170,7 @@ func (api *PrivateDebugAPI) traceChain(ctx context.Context, start, end *types.Bl
 			}
 		}
 	}
+	statedb := state.New(tds)
 	// Execute all the transaction contained within the chain concurrently for each block
 	blocks := int(end.NumberU64() - origin)
 
@@ -274,28 +276,27 @@ func (api *PrivateDebugAPI) traceChain(ctx context.Context, start, end *types.Bl
 				traced += uint64(len(txs))
 			}
 			// Generate the next state snapshot fast without tracing
-			_, _, _, err := api.eth.blockchain.Processor().Process(block, statedb, vm.Config{})
+			_, _, _, err := api.eth.blockchain.Processor().Process(block, statedb, tds, vm.Config{})
 			if err != nil {
 				failed = err
 				break
 			}
 			// Finalize the state so any modifications are written to the trie
-			root, err := statedb.Commit(true)
+			tds.SetBlockNr(number)
+			err = statedb.Finalise(true, tds.DbStateWriter())
 			if err != nil {
 				failed = err
 				break
 			}
-			if err := statedb.Reset(root); err != nil {
+			root, err := tds.IntermediateRoot(statedb, api.eth.chainConfig.IsEIP158(big.NewInt(int64(number))))
+			if err != nil {
 				failed = err
 				break
 			}
-			// Reference the trie twice, once for us, once for the trancer
-			database.TrieDB().Reference(root, common.Hash{})
-			if number >= origin {
-				database.TrieDB().Reference(root, common.Hash{})
+			if err := statedb.Reset(); err != nil {
+				failed = err
+				break
 			}
-			// Dereference all past tries we ourselves are done working with
-			database.TrieDB().Dereference(proot, common.Hash{})
 			proot = root
 		}
 	}()
@@ -314,9 +315,6 @@ func (api *PrivateDebugAPI) traceChain(ctx context.Context, start, end *types.Bl
 				Traces: res.results,
 			}
 			done[uint64(result.Block)] = result
-
-			// Dereference any paret tries held in memory by this task
-			database.TrieDB().Dereference(res.rootref, common.Hash{})
 
 			// Stream completed traces to the user, aborting on the first error
 			for result, ok := done[next]; ok; result, ok = done[next] {
@@ -394,14 +392,7 @@ func (api *PrivateDebugAPI) traceBlock(ctx context.Context, block *types.Block, 
 	if parent == nil {
 		return nil, fmt.Errorf("parent %x not found", block.ParentHash())
 	}
-	reexec := defaultTraceReexec
-	if config != nil && config.Reexec != nil {
-		reexec = *config.Reexec
-	}
-	statedb, err := api.computeStateDB(parent, reexec)
-	if err != nil {
-		return nil, err
-	}
+	statedb, _ := api.computeStateDB(parent)
 	// Execute all the transaction contained within the block concurrently
 	var (
 		signer = types.MakeSigner(api.config, block.Number())
@@ -450,8 +441,6 @@ func (api *PrivateDebugAPI) traceBlock(ctx context.Context, block *types.Block, 
 			failed = err
 			break
 		}
-		// Finalize the state so any modifications are written to the trie
-		statedb.Finalise(true)
 	}
 	close(jobs)
 	pend.Wait()
@@ -466,67 +455,11 @@ func (api *PrivateDebugAPI) traceBlock(ctx context.Context, block *types.Block, 
 // computeStateDB retrieves the state database associated with a certain block.
 // If no state is locally available for the given block, a number of blocks are
 // attempted to be reexecuted to generate the desired state.
-func (api *PrivateDebugAPI) computeStateDB(block *types.Block, reexec uint64) (*state.StateDB, error) {
+func (api *PrivateDebugAPI) computeStateDB(block *types.Block) (*state.StateDB, *state.DbState) {
 	// If we have the state fully available, use that
-	statedb, err := api.eth.blockchain.StateAt(block.Root())
-	if err == nil {
-		return statedb, nil
-	}
-	// Otherwise try to reexec blocks until we find a state or reach our limit
-	origin := block.NumberU64()
-	database := state.NewDatabase(api.eth.ChainDb())
-
-	for i := uint64(0); i < reexec; i++ {
-		block = api.eth.blockchain.GetBlock(block.ParentHash(), block.NumberU64()-1)
-		if block == nil {
-			break
-		}
-		if statedb, err = state.New(block.Root(), database); err == nil {
-			break
-		}
-	}
-	if err != nil {
-		switch err.(type) {
-		case *trie.MissingNodeError:
-			return nil, errors.New("required historical state unavailable")
-		default:
-			return nil, err
-		}
-	}
-	// State was available at historical point, regenerate
-	var (
-		start  = time.Now()
-		logged time.Time
-		proot  common.Hash
-	)
-	for block.NumberU64() < origin {
-		// Print progress logs if long enough time elapsed
-		if time.Since(logged) > 8*time.Second {
-			log.Info("Regenerating historical state", "block", block.NumberU64()+1, "target", origin, "elapsed", time.Since(start))
-			logged = time.Now()
-		}
-		// Retrieve the next block to regenerate and process it
-		if block = api.eth.blockchain.GetBlockByNumber(block.NumberU64() + 1); block == nil {
-			return nil, fmt.Errorf("block #%d not found", block.NumberU64()+1)
-		}
-		_, _, _, err := api.eth.blockchain.Processor().Process(block, statedb, vm.Config{})
-		if err != nil {
-			return nil, err
-		}
-		// Finalize the state so any modifications are written to the trie
-		root, err := statedb.Commit(true)
-		if err != nil {
-			return nil, err
-		}
-		if err := statedb.Reset(root); err != nil {
-			return nil, err
-		}
-		database.TrieDB().Reference(root, common.Hash{})
-		database.TrieDB().Dereference(proot, common.Hash{})
-		proot = root
-	}
-	log.Info("Historical state regenerated", "block", block.NumberU64(), "elapsed", time.Since(start), "size", database.TrieDB().Size())
-	return statedb, nil
+	dbstate := state.NewDbState(api.eth.ChainDb(), block.NumberU64())
+	statedb := state.New(dbstate)
+	return statedb, dbstate
 }
 
 // TraceTransaction returns the structured logs created during the execution of EVM
@@ -541,7 +474,7 @@ func (api *PrivateDebugAPI) TraceTransaction(ctx context.Context, hash common.Ha
 	if config != nil && config.Reexec != nil {
 		reexec = *config.Reexec
 	}
-	msg, vmctx, statedb, err := api.computeTxEnv(blockHash, int(index), reexec)
+	msg, vmctx, statedb, _, _, err := api.computeTxEnv(blockHash, int(index), reexec)
 	if err != nil {
 		return nil, err
 	}
@@ -552,7 +485,8 @@ func (api *PrivateDebugAPI) TraceTransaction(ctx context.Context, hash common.Ha
 // traceTx configures a new tracer according to the provided configuration, and
 // executes the given message in the provided environment. The return value will
 // be tracer dependent.
-func (api *PrivateDebugAPI) traceTx(ctx context.Context, message core.Message, vmctx vm.Context, statedb *state.StateDB, config *TraceConfig) (interface{}, error) {
+func (api *PrivateDebugAPI) traceTx(ctx context.Context, message core.Message, vmctx vm.Context, statedb *state.StateDB,
+	config *TraceConfig) (interface{}, error) {
 	// Assemble the structured logger or the JavaScript tracer
 	var (
 		tracer vm.Tracer
@@ -611,20 +545,17 @@ func (api *PrivateDebugAPI) traceTx(ctx context.Context, message core.Message, v
 }
 
 // computeTxEnv returns the execution environment of a certain transaction.
-func (api *PrivateDebugAPI) computeTxEnv(blockHash common.Hash, txIndex int, reexec uint64) (core.Message, vm.Context, *state.StateDB, error) {
+func (api *PrivateDebugAPI) computeTxEnv(blockHash common.Hash, txIndex int, reexec uint64) (core.Message, vm.Context, *state.StateDB, *state.DbState, uint64, error) {
 	// Create the parent state database
 	block := api.eth.blockchain.GetBlockByHash(blockHash)
 	if block == nil {
-		return nil, vm.Context{}, nil, fmt.Errorf("block %x not found", blockHash)
+		return nil, vm.Context{}, nil, nil, 0, fmt.Errorf("block %x not found", blockHash)
 	}
 	parent := api.eth.blockchain.GetBlock(block.ParentHash(), block.NumberU64()-1)
 	if parent == nil {
-		return nil, vm.Context{}, nil, fmt.Errorf("parent %x not found", block.ParentHash())
+		return nil, vm.Context{}, nil, nil, 0, fmt.Errorf("parent %x not found", block.ParentHash())
 	}
-	statedb, err := api.computeStateDB(parent, reexec)
-	if err != nil {
-		return nil, vm.Context{}, nil, err
-	}
+	statedb, dbstate := api.computeStateDB(parent)
 	// Recompute transactions up to the target index.
 	signer := types.MakeSigner(api.config, block.Number())
 
@@ -633,14 +564,14 @@ func (api *PrivateDebugAPI) computeTxEnv(blockHash common.Hash, txIndex int, ree
 		msg, _ := tx.AsMessage(signer)
 		context := core.NewEVMContext(msg, block.Header(), api.eth.blockchain, nil)
 		if idx == txIndex {
-			return msg, context, statedb, nil
+			return msg, context, statedb, dbstate, parent.NumberU64(), nil
 		}
 		// Not yet the searched for transaction, execute on top of the current state
 		vmenv := vm.NewEVM(context, statedb, api.config, vm.Config{})
 		if _, _, _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(tx.Gas())); err != nil {
-			return nil, vm.Context{}, nil, fmt.Errorf("tx %x failed: %v", tx.Hash(), err)
+			return nil, vm.Context{}, nil, nil, 0, fmt.Errorf("tx %x failed: %v", tx.Hash(), err)
 		}
 		statedb.DeleteSuicides()
 	}
-	return nil, vm.Context{}, nil, fmt.Errorf("tx index %d out of range for block %x", txIndex, blockHash)
+	return nil, vm.Context{}, nil, nil, 0, fmt.Errorf("tx index %d out of range for block %x", txIndex, blockHash)
 }

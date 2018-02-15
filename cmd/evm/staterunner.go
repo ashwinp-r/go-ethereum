@@ -94,18 +94,27 @@ func stateTestCmd(ctx *cli.Context) error {
 		for _, st := range test.Subtests() {
 			// Run the test and aggregate the result
 			result := &StatetestResult{Name: key, Fork: st.Fork, Pass: true}
-			state, err := test.Run(st, cfg)
+			state, tds, err := test.Run(st, cfg)
 			if err != nil {
 				// Test failed, mark as so and dump any state to aid debugging
 				result.Pass, result.Error = false, err.Error()
-				if ctx.GlobalBool(DumpFlag.Name) && state != nil {
-					dump := state.RawDump()
+				if ctx.GlobalBool(DumpFlag.Name) && tds != nil {
+					dump := tds.RawDump()
 					result.State = &dump
 				}
 			}
 			// print state root for evmlab tracing (already committed above, so no need to delete objects again
-			if ctx.GlobalBool(MachineFlag.Name) && state != nil {
-				fmt.Fprintf(os.Stderr, "{\"stateRoot\": \"%x\"}\n", state.IntermediateRoot(false))
+			if ctx.GlobalBool(MachineFlag.Name) && state != nil && tds != nil {
+				if root, err := tds.IntermediateRoot(state, false); err != nil {
+					// Test failed, mark as so and dump any state to aid debugging
+					result.Pass, result.Error = false, err.Error()
+					if ctx.GlobalBool(DumpFlag.Name) && tds != nil {
+						dump := tds.RawDump()
+						result.State = &dump
+					}
+				} else {
+					fmt.Fprintf(os.Stderr, "{\"stateRoot\": \"%x\"}\n", root)
+				}
 			}
 
 			results = append(results, *result)
