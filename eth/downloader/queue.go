@@ -770,6 +770,15 @@ func (q *queue) DeliverBodies(id string, txLists [][]*types.Transaction, uncleLi
 
 	reconstruct := func(header *types.Header, index int, result *fetchResult) error {
 		if types.DeriveSha(types.Transactions(txLists[index])) != header.TxHash || types.CalcUncleHash(uncleLists[index]) != header.UncleHash {
+			fmt.Printf("INVALID body %d ", header.Number.Uint64())
+			txHash := types.DeriveSha(types.Transactions(txLists[index]))
+			if txHash != header.TxHash {
+				fmt.Printf("due to wrong tx hash, got %x, expected %x\n", txHash, header.TxHash)
+			}
+			if types.CalcUncleHash(uncleLists[index]) != header.UncleHash {
+				fmt.Printf("due to wrong uncle hash\n")
+			}
+			//types.DeriveSha1(types.Transactions(txLists[index]))
 			return errInvalidBody
 		}
 		result.Transactions = txLists[index]
@@ -788,6 +797,7 @@ func (q *queue) DeliverReceipts(id string, receiptList [][]*types.Receipt) (int,
 
 	reconstruct := func(header *types.Header, index int, result *fetchResult) error {
 		if types.DeriveSha(types.Receipts(receiptList[index])) != header.ReceiptHash {
+			fmt.Printf("INVALID repeipt\n")
 			return errInvalidReceipt
 		}
 		result.Receipts = receiptList[index]

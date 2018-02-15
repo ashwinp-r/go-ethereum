@@ -43,19 +43,25 @@ var (
 	memcacheCommitSizeMeter  = metrics.NewRegisteredMeter("trie/memcache/commit/size", nil)
 )
 
-// secureKeyPrefix is the database key prefix used to store trie node preimages.
-var secureKeyPrefix = []byte("secure-key-")
+// SecureKeyPrefix is the database key prefix used to store trie node preimages.
+var SecureKeyPrefix = []byte("secure-key-")
 
 // secureKeyLength is the length of the above prefix + 32byte hash.
 const secureKeyLength = 11 + 32
 
-// DatabaseReader wraps the Get and Has method of a backing store for the trie.
+// DatabaseReader wraps the Get method of a backing store for the trie.
 type DatabaseReader interface {
 	// Get retrieves the value associated with key form the database.
-	Get(key []byte) (value []byte, err error)
+	Get(bucket, key []byte) (value []byte, err error)
+
+	GetAsOf(bucket, key []byte, timestamp uint64) ([]byte, error)
 
 	// Has retrieves whether a key is present in the database.
-	Has(key []byte) (bool, error)
+	Has(bucket, key []byte) (bool, error)
+
+	Walk(bucket, key []byte, keybits uint, walker ethdb.WalkerFunc) error
+
+	GetHash(index uint32) []byte
 }
 
 // Database is an intermediate write layer between the trie data structures and
@@ -144,121 +150,36 @@ type cachedNode struct {
 // rlp returns the raw rlp encoded blob of the cached node, either directly from
 // the cache, or by regenerating it from the collapsed node.
 func (n *cachedNode) rlp() []byte {
-	if node, ok := n.node.(rawNode); ok {
-		return node
-	}
-	blob, err := rlp.EncodeToBytes(n.node)
-	if err != nil {
-		panic(err)
-	}
-	return blob
+	return nil
 }
 
 // obj returns the decoded and expanded trie node, either directly from the cache,
 // or by regenerating it from the rlp encoded blob.
 func (n *cachedNode) obj(hash common.Hash, cachegen uint16) node {
-	if node, ok := n.node.(rawNode); ok {
-		return mustDecodeNode(hash[:], node, cachegen)
-	}
-	return expandNode(hash[:], n.node, cachegen)
+	return nil
 }
 
 // childs returns all the tracked children of this node, both the implicit ones
 // from inside the node as well as the explicit ones from outside the node.
 func (n *cachedNode) childs() []common.Hash {
-	children := make([]common.Hash, 0, 16)
-	for child := range n.children {
-		children = append(children, child)
-	}
-	if _, ok := n.node.(rawNode); !ok {
-		gatherChildren(n.node, &children)
-	}
-	return children
+	return nil
 }
 
 // gatherChildren traverses the node hierarchy of a collapsed storage node and
 // retrieves all the hashnode children.
 func gatherChildren(n node, children *[]common.Hash) {
-	switch n := n.(type) {
-	case *rawShortNode:
-		gatherChildren(n.Val, children)
-
-	case rawFullNode:
-		for i := 0; i < 16; i++ {
-			gatherChildren(n[i], children)
-		}
-	case hashNode:
-		*children = append(*children, common.BytesToHash(n))
-
-	case valueNode, nil:
-
-	default:
-		panic(fmt.Sprintf("unknown node type: %T", n))
-	}
 }
 
 // simplifyNode traverses the hierarchy of an expanded memory node and discards
 // all the internal caches, returning a node that only contains the raw data.
 func simplifyNode(n node) node {
-	switch n := n.(type) {
-	case *shortNode:
-		// Short nodes discard the flags and cascade
-		return &rawShortNode{Key: n.Key, Val: simplifyNode(n.Val)}
-
-	case *fullNode:
-		// Full nodes discard the flags and cascade
-		node := rawFullNode(n.Children)
-		for i := 0; i < len(node); i++ {
-			if node[i] != nil {
-				node[i] = simplifyNode(node[i])
-			}
-		}
-		return node
-
-	case valueNode, hashNode, rawNode:
-		return n
-
-	default:
-		panic(fmt.Sprintf("unknown node type: %T", n))
-	}
+	return nil
 }
 
 // expandNode traverses the node hierarchy of a collapsed storage node and converts
 // all fields and keys into expanded memory form.
 func expandNode(hash hashNode, n node, cachegen uint16) node {
-	switch n := n.(type) {
-	case *rawShortNode:
-		// Short nodes need key and child expansion
-		return &shortNode{
-			Key: compactToHex(n.Key),
-			Val: expandNode(nil, n.Val, cachegen),
-			flags: nodeFlag{
-				hash: hash,
-				gen:  cachegen,
-			},
-		}
-
-	case rawFullNode:
-		// Full nodes need child expansion
-		node := &fullNode{
-			flags: nodeFlag{
-				hash: hash,
-				gen:  cachegen,
-			},
-		}
-		for i := 0; i < len(node.Children); i++ {
-			if n[i] != nil {
-				node.Children[i] = expandNode(nil, n[i], cachegen)
-			}
-		}
-		return node
-
-	case valueNode, hashNode:
-		return n
-
-	default:
-		panic(fmt.Sprintf("unknown node type: %T", n))
-	}
+	return nil
 }
 
 // NewDatabase creates a new trie database to store ephemeral trie content before
@@ -281,10 +202,6 @@ func (db *Database) DiskDB() DatabaseReader {
 // reference counting, since trie nodes are garbage collected directly through
 // their embedded children.
 func (db *Database) InsertBlob(hash common.Hash, blob []byte) {
-	db.lock.Lock()
-	defer db.lock.Unlock()
-
-	db.insert(hash, blob, rawNode(blob))
 }
 
 // insert inserts a collapsed trie node into the memory database. This method is
@@ -333,20 +250,7 @@ func (db *Database) insertPreimage(hash common.Hash, preimage []byte) {
 // node retrieves a cached trie node from memory, or returns nil if none can be
 // found in the memory cache.
 func (db *Database) node(hash common.Hash, cachegen uint16) node {
-	// Retrieve the node from cache if available
-	db.lock.RLock()
-	node := db.nodes[hash]
-	db.lock.RUnlock()
-
-	if node != nil {
-		return node.obj(hash, cachegen)
-	}
-	// Content unavailable in memory, attempt to retrieve from disk
-	enc, err := db.diskdb.Get(hash[:])
-	if err != nil || enc == nil {
-		return nil
-	}
-	return mustDecodeNode(hash[:], enc, cachegen)
+	return nil
 }
 
 // Node retrieves an encoded cached trie node from memory. If it cannot be found
@@ -361,7 +265,7 @@ func (db *Database) Node(hash common.Hash) ([]byte, error) {
 		return node.rlp(), nil
 	}
 	// Content unavailable in memory, attempt to retrieve from disk
-	return db.diskdb.Get(hash[:])
+	return db.diskdb.Get(nil, hash[:])
 }
 
 // preimage retrieves a cached trie node pre-image from memory. If it cannot be
@@ -376,14 +280,14 @@ func (db *Database) preimage(hash common.Hash) ([]byte, error) {
 		return preimage, nil
 	}
 	// Content unavailable in memory, attempt to retrieve from disk
-	return db.diskdb.Get(db.secureKey(hash[:]))
+	return db.diskdb.Get(nil, db.secureKey(hash[:]))
 }
 
 // secureKey returns the database key for the preimage of key, as an ephemeral
 // buffer. The caller must not hold onto the return value because it will become
 // invalid on the next call.
 func (db *Database) secureKey(key []byte) []byte {
-	buf := append(db.seckeybuf[:0], secureKeyPrefix...)
+	buf := append(db.seckeybuf[:0], SecureKeyPrefix...)
 	buf = append(buf, key...)
 	return buf
 }
@@ -493,101 +397,6 @@ func (db *Database) dereference(child common.Hash, parent common.Hash) {
 // Cap iteratively flushes old but still referenced trie nodes until the total
 // memory usage goes below the given threshold.
 func (db *Database) Cap(limit common.StorageSize) error {
-	// Create a database batch to flush persistent data out. It is important that
-	// outside code doesn't see an inconsistent state (referenced data removed from
-	// memory cache during commit but not yet in persistent storage). This is ensured
-	// by only uncaching existing data when the database write finalizes.
-	db.lock.RLock()
-
-	nodes, storage, start := len(db.nodes), db.nodesSize, time.Now()
-	batch := db.diskdb.NewBatch()
-
-	// db.nodesSize only contains the useful data in the cache, but when reporting
-	// the total memory consumption, the maintenance metadata is also needed to be
-	// counted. For every useful node, we track 2 extra hashes as the flushlist.
-	size := db.nodesSize + common.StorageSize((len(db.nodes)-1)*2*common.HashLength)
-
-	// If the preimage cache got large enough, push to disk. If it's still small
-	// leave for later to deduplicate writes.
-	flushPreimages := db.preimagesSize > 4*1024*1024
-	if flushPreimages {
-		for hash, preimage := range db.preimages {
-			if err := batch.Put(db.secureKey(hash[:]), preimage); err != nil {
-				log.Error("Failed to commit preimage from trie database", "err", err)
-				db.lock.RUnlock()
-				return err
-			}
-			if batch.ValueSize() > ethdb.IdealBatchSize {
-				if err := batch.Write(); err != nil {
-					db.lock.RUnlock()
-					return err
-				}
-				batch.Reset()
-			}
-		}
-	}
-	// Keep committing nodes from the flush-list until we're below allowance
-	oldest := db.oldest
-	for size > limit && oldest != (common.Hash{}) {
-		// Fetch the oldest referenced node and push into the batch
-		node := db.nodes[oldest]
-		if err := batch.Put(oldest[:], node.rlp()); err != nil {
-			db.lock.RUnlock()
-			return err
-		}
-		// If we exceeded the ideal batch size, commit and reset
-		if batch.ValueSize() >= ethdb.IdealBatchSize {
-			if err := batch.Write(); err != nil {
-				log.Error("Failed to write flush list to disk", "err", err)
-				db.lock.RUnlock()
-				return err
-			}
-			batch.Reset()
-		}
-		// Iterate to the next flush item, or abort if the size cap was achieved. Size
-		// is the total size, including both the useful cached data (hash -> blob), as
-		// well as the flushlist metadata (2*hash). When flushing items from the cache,
-		// we need to reduce both.
-		size -= common.StorageSize(3*common.HashLength + int(node.size))
-		oldest = node.flushNext
-	}
-	// Flush out any remainder data from the last batch
-	if err := batch.Write(); err != nil {
-		log.Error("Failed to write flush list to disk", "err", err)
-		db.lock.RUnlock()
-		return err
-	}
-	db.lock.RUnlock()
-
-	// Write successful, clear out the flushed data
-	db.lock.Lock()
-	defer db.lock.Unlock()
-
-	if flushPreimages {
-		db.preimages = make(map[common.Hash][]byte)
-		db.preimagesSize = 0
-	}
-	for db.oldest != oldest {
-		node := db.nodes[db.oldest]
-		delete(db.nodes, db.oldest)
-		db.oldest = node.flushNext
-
-		db.nodesSize -= common.StorageSize(common.HashLength + int(node.size))
-	}
-	if db.oldest != (common.Hash{}) {
-		db.nodes[db.oldest].flushPrev = common.Hash{}
-	}
-	db.flushnodes += uint64(nodes - len(db.nodes))
-	db.flushsize += storage - db.nodesSize
-	db.flushtime += time.Since(start)
-
-	memcacheFlushTimeTimer.Update(time.Since(start))
-	memcacheFlushSizeMeter.Mark(int64(storage - db.nodesSize))
-	memcacheFlushNodesMeter.Mark(int64(nodes - len(db.nodes)))
-
-	log.Debug("Persisted nodes from memory database", "nodes", nodes-len(db.nodes), "size", storage-db.nodesSize, "time", time.Since(start),
-		"flushnodes", db.flushnodes, "flushsize", db.flushsize, "flushtime", db.flushtime, "livenodes", len(db.nodes), "livesize", db.nodesSize)
-
 	return nil
 }
 
@@ -596,93 +405,6 @@ func (db *Database) Cap(limit common.StorageSize) error {
 //
 // As a side effect, all pre-images accumulated up to this point are also written.
 func (db *Database) Commit(node common.Hash, report bool) error {
-	// Create a database batch to flush persistent data out. It is important that
-	// outside code doesn't see an inconsistent state (referenced data removed from
-	// memory cache during commit but not yet in persistent storage). This is ensured
-	// by only uncaching existing data when the database write finalizes.
-	db.lock.RLock()
-
-	start := time.Now()
-	batch := db.diskdb.NewBatch()
-
-	// Move all of the accumulated preimages into a write batch
-	for hash, preimage := range db.preimages {
-		if err := batch.Put(db.secureKey(hash[:]), preimage); err != nil {
-			log.Error("Failed to commit preimage from trie database", "err", err)
-			db.lock.RUnlock()
-			return err
-		}
-		if batch.ValueSize() > ethdb.IdealBatchSize {
-			if err := batch.Write(); err != nil {
-				return err
-			}
-			batch.Reset()
-		}
-	}
-	// Move the trie itself into the batch, flushing if enough data is accumulated
-	nodes, storage := len(db.nodes), db.nodesSize
-	if err := db.commit(node, batch); err != nil {
-		log.Error("Failed to commit trie from trie database", "err", err)
-		db.lock.RUnlock()
-		return err
-	}
-	// Write batch ready, unlock for readers during persistence
-	if err := batch.Write(); err != nil {
-		log.Error("Failed to write trie to disk", "err", err)
-		db.lock.RUnlock()
-		return err
-	}
-	db.lock.RUnlock()
-
-	// Write successful, clear out the flushed data
-	db.lock.Lock()
-	defer db.lock.Unlock()
-
-	db.preimages = make(map[common.Hash][]byte)
-	db.preimagesSize = 0
-
-	db.uncache(node)
-
-	memcacheCommitTimeTimer.Update(time.Since(start))
-	memcacheCommitSizeMeter.Mark(int64(storage - db.nodesSize))
-	memcacheCommitNodesMeter.Mark(int64(nodes - len(db.nodes)))
-
-	logger := log.Info
-	if !report {
-		logger = log.Debug
-	}
-	logger("Persisted trie from memory database", "nodes", nodes-len(db.nodes)+int(db.flushnodes), "size", storage-db.nodesSize+db.flushsize, "time", time.Since(start)+db.flushtime,
-		"gcnodes", db.gcnodes, "gcsize", db.gcsize, "gctime", db.gctime, "livenodes", len(db.nodes), "livesize", db.nodesSize)
-
-	// Reset the garbage collection statistics
-	db.gcnodes, db.gcsize, db.gctime = 0, 0, 0
-	db.flushnodes, db.flushsize, db.flushtime = 0, 0, 0
-
-	return nil
-}
-
-// commit is the private locked version of Commit.
-func (db *Database) commit(hash common.Hash, batch ethdb.Batch) error {
-	// If the node does not exist, it's a previously committed node
-	node, ok := db.nodes[hash]
-	if !ok {
-		return nil
-	}
-	for _, child := range node.childs() {
-		if err := db.commit(child, batch); err != nil {
-			return err
-		}
-	}
-	if err := batch.Put(hash[:], node.rlp()); err != nil {
-		return err
-	}
-	// If we've reached an optimal batch size, commit and start over
-	if batch.ValueSize() >= ethdb.IdealBatchSize {
-		if err := batch.Write(); err != nil {
-			return err
-		}
-		batch.Reset()
-	}
 	return nil
 }
 
