@@ -114,16 +114,21 @@ func testBlockChainImport(chain types.Blocks, blockchain *BlockChain) error {
 			}
 			return err
 		}
-		statedb, err := state.New(blockchain.GetBlockByHash(block.ParentHash()).Root(), blockchain.stateCache)
+		parent := blockchain.GetBlockByHash(block.ParentHash())
+		tds, err := state.NewTrieDbState(parent.Root(), blockchain.db, parent.NumberU64())
 		if err != nil {
 			return err
 		}
-		receipts, _, usedGas, err := blockchain.Processor().Process(block, statedb, vm.Config{})
+		statedb := state.New(tds)
+		if err = blockchain.db.DeleteTimestamp(block.NumberU64()); err != nil {
+			return err
+		}
+		receipts, _, usedGas, err := blockchain.Processor().Process(block, statedb, tds, vm.Config{})
 		if err != nil {
 			blockchain.reportBlock(block, receipts, err)
 			return err
 		}
-		err = blockchain.validator.ValidateState(block, blockchain.GetBlockByHash(block.ParentHash()), statedb, receipts, usedGas)
+		err = blockchain.validator.ValidateState(block, parent, statedb, tds, receipts, usedGas)
 		if err != nil {
 			blockchain.reportBlock(block, receipts, err)
 			return err
@@ -131,7 +136,9 @@ func testBlockChainImport(chain types.Blocks, blockchain *BlockChain) error {
 		blockchain.mu.Lock()
 		rawdb.WriteTd(blockchain.db, block.Hash(), block.NumberU64(), new(big.Int).Add(block.Difficulty(), blockchain.GetTdByHash(block.ParentHash())))
 		rawdb.WriteBlock(blockchain.db, block)
-		statedb.Commit(false)
+		tds.IntermediateRoot(statedb, false)
+		tds.SetBlockNr(block.NumberU64())
+		statedb.Finalise(false, tds.DbStateWriter())
 		blockchain.mu.Unlock()
 	}
 	return nil
@@ -229,12 +236,12 @@ func testShorterFork(t *testing.T, full bool) {
 		}
 	}
 	// Sum of numbers must be less than `length` for this to be a shorter fork
-	testFork(t, processor, 0, 3, full, worse)
-	testFork(t, processor, 0, 7, full, worse)
-	testFork(t, processor, 1, 1, full, worse)
-	testFork(t, processor, 1, 7, full, worse)
 	testFork(t, processor, 5, 3, full, worse)
 	testFork(t, processor, 5, 4, full, worse)
+	testFork(t, processor, 1, 1, full, worse)
+	testFork(t, processor, 1, 7, full, worse)
+	testFork(t, processor, 0, 3, full, worse)
+	testFork(t, processor, 0, 7, full, worse)
 }
 
 // Tests that given a starting canonical chain of a given size, creating longer
@@ -259,12 +266,12 @@ func testLongerFork(t *testing.T, full bool) {
 		}
 	}
 	// Sum of numbers must be greater than `length` for this to be a longer fork
-	testFork(t, processor, 0, 11, full, better)
-	testFork(t, processor, 0, 15, full, better)
-	testFork(t, processor, 1, 10, full, better)
-	testFork(t, processor, 1, 12, full, better)
 	testFork(t, processor, 5, 6, full, better)
 	testFork(t, processor, 5, 8, full, better)
+	testFork(t, processor, 1, 10, full, better)
+	testFork(t, processor, 1, 12, full, better)
+	testFork(t, processor, 0, 11, full, better)
+	testFork(t, processor, 0, 15, full, better)
 }
 
 // Tests that given a starting canonical chain of a given size, creating equal
@@ -289,12 +296,12 @@ func testEqualFork(t *testing.T, full bool) {
 		}
 	}
 	// Sum of numbers must be equal to `length` for this to be an equal fork
-	testFork(t, processor, 0, 10, full, equal)
-	testFork(t, processor, 1, 9, full, equal)
-	testFork(t, processor, 2, 8, full, equal)
-	testFork(t, processor, 5, 5, full, equal)
-	testFork(t, processor, 6, 4, full, equal)
 	testFork(t, processor, 9, 1, full, equal)
+	testFork(t, processor, 6, 4, full, equal)
+	testFork(t, processor, 5, 5, full, equal)
+	testFork(t, processor, 2, 8, full, equal)
+	testFork(t, processor, 1, 9, full, equal)
+	testFork(t, processor, 0, 10, full, equal)
 }
 
 // Tests that chains missing links do not get accepted by the processor.
@@ -566,7 +573,7 @@ func testInsertNonceError(t *testing.T, full bool) {
 
 // Tests that fast importing a block chain produces the same chain data as the
 // classical full block processing.
-func TestFastVsFullChains(t *testing.T) {
+func testFastVsFullChains(t *testing.T) {
 	// Configure and generate a sample block chain
 	var (
 		gendb   = ethdb.NewMemDatabase()
@@ -654,7 +661,7 @@ func TestFastVsFullChains(t *testing.T) {
 
 // Tests that various import methods move the chain head pointers to the correct
 // positions.
-func TestLightVsFastVsFullChainHeads(t *testing.T) {
+func testLightVsFastVsFullChainHeads(t *testing.T) {
 	// Configure and generate a sample block chain
 	var (
 		gendb   = ethdb.NewMemDatabase()
@@ -896,7 +903,7 @@ func TestLogReorgs(t *testing.T) {
 	}
 }
 
-func TestReorgSideEvent(t *testing.T) {
+func testReorgSideEvent(t *testing.T) {
 	var (
 		db      = ethdb.NewMemDatabase()
 		key1, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
@@ -1035,7 +1042,7 @@ func TestEIP155Transition(t *testing.T) {
 			Config: &params.ChainConfig{ChainID: big.NewInt(1), EIP155Block: big.NewInt(2), HomesteadBlock: new(big.Int)},
 			Alloc:  GenesisAlloc{address: {Balance: funds}, deleteAddr: {Balance: new(big.Int)}},
 		}
-		genesis = gspec.MustCommit(db)
+		genesis    = gspec.MustCommit(db)
 	)
 
 	blockchain, _ := NewBlockChain(db, nil, gspec.Config, ethash.NewFaker(), vm.Config{})
@@ -1172,7 +1179,7 @@ func TestEIP161AccountRemoval(t *testing.T) {
 	if _, err := blockchain.InsertChain(types.Blocks{blocks[0]}); err != nil {
 		t.Fatal(err)
 	}
-	if st, _ := blockchain.State(); !st.Exist(theAddr) {
+	if st, _, _ := blockchain.State(); !st.Exist(theAddr) {
 		t.Error("expected account to exist")
 	}
 
@@ -1180,7 +1187,7 @@ func TestEIP161AccountRemoval(t *testing.T) {
 	if _, err := blockchain.InsertChain(types.Blocks{blocks[1]}); err != nil {
 		t.Fatal(err)
 	}
-	if st, _ := blockchain.State(); st.Exist(theAddr) {
+	if st, _, _ := blockchain.State(); st.Exist(theAddr) {
 		t.Error("account should not exist")
 	}
 
@@ -1188,7 +1195,7 @@ func TestEIP161AccountRemoval(t *testing.T) {
 	if _, err := blockchain.InsertChain(types.Blocks{blocks[2]}); err != nil {
 		t.Fatal(err)
 	}
-	if st, _ := blockchain.State(); st.Exist(theAddr) {
+	if st, _, _ := blockchain.State(); st.Exist(theAddr) {
 		t.Error("account should not exist")
 	}
 }
@@ -1208,12 +1215,15 @@ func TestBlockchainHeaderchainReorgConsistency(t *testing.T) {
 
 	// Generate a bunch of fork blocks, each side forking from the canonical chain
 	forks := make([]*types.Block, len(blocks))
-	for i := 0; i < len(forks); i++ {
+	for i := len(forks)-1; i>=0; i-- {
 		parent := genesis
 		if i > 0 {
 			parent = blocks[i-1]
 		}
-		fork, _ := GenerateChain(params.TestChainConfig, parent, engine, db, 1, func(i int, b *BlockGen) { b.SetCoinbase(common.Address{2}) })
+		fork, _ := GenerateChain(params.TestChainConfig, parent, engine, db, 1, func(i int, b *BlockGen) {
+			b.SetCoinbase(common.Address{2})
+			b.OffsetTime(-2) // By reducing time, we increase difficulty of the fork, so that it can overwrite the canonical chain
+		})
 		forks[i] = fork[0]
 	}
 	// Import the canonical and fork chain side by side, verifying the current block
@@ -1226,64 +1236,20 @@ func TestBlockchainHeaderchainReorgConsistency(t *testing.T) {
 		t.Fatalf("failed to create tester chain: %v", err)
 	}
 	for i := 0; i < len(blocks); i++ {
-		if _, err := chain.InsertChain(blocks[i : i+1]); err != nil {
+		//fmt.Printf("inserting chain %d to %d\n", blocks[0].NumberU64(), blocks[i].NumberU64())
+		if _, err := chain.InsertChain(blocks[0 : i+1]); err != nil {
 			t.Fatalf("block %d: failed to insert into chain: %v", i, err)
 		}
 		if chain.CurrentBlock().Hash() != chain.CurrentHeader().Hash() {
 			t.Errorf("block %d: current block/header mismatch: block #%d [%x…], header #%d [%x…]", i, chain.CurrentBlock().Number(), chain.CurrentBlock().Hash().Bytes()[:4], chain.CurrentHeader().Number, chain.CurrentHeader().Hash().Bytes()[:4])
 		}
+		//fmt.Printf("inserting fork %d to %d\n", blocks[i].NumberU64(), blocks[i].NumberU64())
 		if _, err := chain.InsertChain(forks[i : i+1]); err != nil {
 			t.Fatalf(" fork %d: failed to insert into chain: %v", i, err)
 		}
 		if chain.CurrentBlock().Hash() != chain.CurrentHeader().Hash() {
 			t.Errorf(" fork %d: current block/header mismatch: block #%d [%x…], header #%d [%x…]", i, chain.CurrentBlock().Number(), chain.CurrentBlock().Hash().Bytes()[:4], chain.CurrentHeader().Number, chain.CurrentHeader().Hash().Bytes()[:4])
 		}
-	}
-}
-
-// Tests that importing small side forks doesn't leave junk in the trie database
-// cache (which would eventually cause memory issues).
-func TestTrieForkGC(t *testing.T) {
-	// Generate a canonical chain to act as the main dataset
-	engine := ethash.NewFaker()
-
-	db := ethdb.NewMemDatabase()
-	genesis := new(Genesis).MustCommit(db)
-	blocks, _ := GenerateChain(params.TestChainConfig, genesis, engine, db, 2*triesInMemory, func(i int, b *BlockGen) { b.SetCoinbase(common.Address{1}) })
-
-	// Generate a bunch of fork blocks, each side forking from the canonical chain
-	forks := make([]*types.Block, len(blocks))
-	for i := 0; i < len(forks); i++ {
-		parent := genesis
-		if i > 0 {
-			parent = blocks[i-1]
-		}
-		fork, _ := GenerateChain(params.TestChainConfig, parent, engine, db, 1, func(i int, b *BlockGen) { b.SetCoinbase(common.Address{2}) })
-		forks[i] = fork[0]
-	}
-	// Import the canonical and fork chain side by side, forcing the trie cache to cache both
-	diskdb := ethdb.NewMemDatabase()
-	new(Genesis).MustCommit(diskdb)
-
-	chain, err := NewBlockChain(diskdb, nil, params.TestChainConfig, engine, vm.Config{})
-	if err != nil {
-		t.Fatalf("failed to create tester chain: %v", err)
-	}
-	for i := 0; i < len(blocks); i++ {
-		if _, err := chain.InsertChain(blocks[i : i+1]); err != nil {
-			t.Fatalf("block %d: failed to insert into chain: %v", i, err)
-		}
-		if _, err := chain.InsertChain(forks[i : i+1]); err != nil {
-			t.Fatalf("fork %d: failed to insert into chain: %v", i, err)
-		}
-	}
-	// Dereference all the recent tries and ensure no past trie is left in
-	for i := 0; i < triesInMemory; i++ {
-		chain.stateCache.TrieDB().Dereference(blocks[len(blocks)-1-i].Root(), common.Hash{})
-		chain.stateCache.TrieDB().Dereference(forks[len(blocks)-1-i].Root(), common.Hash{})
-	}
-	if len(chain.stateCache.TrieDB().Nodes()) > 0 {
-		t.Fatalf("stale tries still alive after garbase collection")
 	}
 }
 
@@ -1298,7 +1264,10 @@ func TestLargeReorgTrieGC(t *testing.T) {
 
 	shared, _ := GenerateChain(params.TestChainConfig, genesis, engine, db, 64, func(i int, b *BlockGen) { b.SetCoinbase(common.Address{1}) })
 	original, _ := GenerateChain(params.TestChainConfig, shared[len(shared)-1], engine, db, 2*triesInMemory, func(i int, b *BlockGen) { b.SetCoinbase(common.Address{2}) })
-	competitor, _ := GenerateChain(params.TestChainConfig, shared[len(shared)-1], engine, db, 2*triesInMemory+1, func(i int, b *BlockGen) { b.SetCoinbase(common.Address{3}) })
+	competitor, _ := GenerateChain(params.TestChainConfig, shared[len(shared)-1], engine, db, 2*triesInMemory+1, func(i int, b *BlockGen) {
+		b.SetCoinbase(common.Address{3})
+		b.OffsetTime(-2)
+	})
 
 	// Import the shared chain and the original canonical one
 	diskdb := ethdb.NewMemDatabase()
@@ -1314,29 +1283,15 @@ func TestLargeReorgTrieGC(t *testing.T) {
 	if _, err := chain.InsertChain(original); err != nil {
 		t.Fatalf("failed to insert shared chain: %v", err)
 	}
-	// Ensure that the state associated with the forking point is pruned away
-	if node, _ := chain.stateCache.TrieDB().Node(shared[len(shared)-1].Root()); node != nil {
-		t.Fatalf("common-but-old ancestor still cache")
-	}
 	// Import the competitor chain without exceeding the canonical's TD and ensure
 	// we have not processed any of the blocks (protection against malicious blocks)
 	if _, err := chain.InsertChain(competitor[:len(competitor)-2]); err != nil {
 		t.Fatalf("failed to insert competitor chain: %v", err)
 	}
-	for i, block := range competitor[:len(competitor)-2] {
-		if node, _ := chain.stateCache.TrieDB().Node(block.Root()); node != nil {
-			t.Fatalf("competitor %d: low TD chain became processed", i)
-		}
-	}
 	// Import the head of the competitor chain, triggering the reorg and ensure we
 	// successfully reprocess all the stashed away blocks.
 	if _, err := chain.InsertChain(competitor[len(competitor)-2:]); err != nil {
 		t.Fatalf("failed to finalize competitor chain: %v", err)
-	}
-	for i, block := range competitor[:len(competitor)-triesInMemory] {
-		if node, _ := chain.stateCache.TrieDB().Node(block.Root()); node != nil {
-			t.Fatalf("competitor %d: competing chain state missing", i)
-		}
 	}
 }
 
