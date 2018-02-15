@@ -23,7 +23,7 @@ import (
 )
 
 type journalEntry interface {
-	undo(*StateDB)
+	undo(statedb *StateDB)
 }
 
 type journal []journalEntry

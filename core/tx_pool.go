@@ -118,7 +118,7 @@ const (
 type blockChain interface {
 	CurrentBlock() *types.Block
 	GetBlock(hash common.Hash, number uint64) *types.Block
-	StateAt(root common.Hash) (*state.StateDB, error)
+	StateAt(root common.Hash, blockNr uint64) (*state.StateDB, *state.TrieDbState, error)
 
 	SubscribeChainHeadEvent(ch chan<- ChainHeadEvent) event.Subscription
 }
@@ -196,6 +196,7 @@ type TxPool struct {
 	mu           sync.RWMutex
 
 	currentState  *state.StateDB      // Current state in the blockchain head
+	currentTds    *state.TrieDbState
 	pendingState  *state.ManagedState // Pending state tracking virtual nonces
 	currentMaxGas uint64              // Current gas limit for transaction caps
 
@@ -402,12 +403,13 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 	if newHead == nil {
 		newHead = pool.chain.CurrentBlock().Header() // Special case during testing
 	}
-	statedb, err := pool.chain.StateAt(newHead.Root)
+	statedb, tds, err := pool.chain.StateAt(newHead.Root, newHead.Number.Uint64())
 	if err != nil {
 		log.Error("Failed to reset txpool state", "err", err)
 		return
 	}
 	pool.currentState = statedb
+	pool.currentTds = tds
 	pool.pendingState = state.ManageState(statedb)
 	pool.currentMaxGas = newHead.GasLimit
 

@@ -98,8 +98,8 @@ func (t *BlockTest) Run() error {
 	}
 
 	// import pre accounts & construct test genesis block & state root
-	db, _ := ethdb.NewMemDatabase()
-	gblock, err := t.genesis(config).Commit(db)
+	db := ethdb.NewMemDatabase()
+	gblock, _, err := t.genesis(config).Commit(db)
 	if err != nil {
 		return err
 	}
@@ -124,7 +124,7 @@ func (t *BlockTest) Run() error {
 	if common.Hash(t.json.BestBlock) != cmlast {
 		return fmt.Errorf("last block hash validation mismatch: want: %x, have: %x", t.json.BestBlock, cmlast)
 	}
-	newDB, err := chain.State()
+	newDB, _, err := chain.State()
 	if err != nil {
 		return err
 	}

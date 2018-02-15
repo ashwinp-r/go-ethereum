@@ -21,6 +21,11 @@ swarm:
 	@echo "Done building."
 	@echo "Run \"$(GOBIN)/swarm\" to launch swarm."
 
+hack:
+	build/env.sh go run build/ci.go install ./cmd/hack
+	@echo "Done building."
+	@echo "Run \"$(GOBIN)/hack\" to launch hack."
+
 all:
 	build/env.sh go run build/ci.go install
 

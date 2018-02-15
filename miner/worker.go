@@ -67,6 +67,7 @@ type Work struct {
 	signer types.Signer
 
 	state     *state.StateDB // apply state changes here
+	tds       *state.TrieDbState
 	ancestors *set.Set       // ancestor set (used for checking uncle parent validity)
 	family    *set.Set       // family set (used for checking uncle invalidity)
 	uncles    *set.Set       // uncle set
@@ -170,7 +171,7 @@ func (self *worker) setExtra(extra []byte) {
 	self.extra = extra
 }
 
-func (self *worker) pending() (*types.Block, *state.StateDB) {
+func (self *worker) pending() (*types.Block, *state.StateDB, *state.TrieDbState) {
 	self.currentMu.Lock()
 	defer self.currentMu.Unlock()
 
@@ -180,9 +181,9 @@ func (self *worker) pending() (*types.Block, *state.StateDB) {
 			self.current.txs,
 			nil,
 			self.current.receipts,
-		), self.current.state.Copy()
+		), self.current.state.Copy(), self.current.tds
 	}
-	return self.current.Block, self.current.state.Copy()
+	return self.current.Block, self.current.state.Copy(), self.current.tds
 }
 
 func (self *worker) pendingBlock() *types.Block {
@@ -309,7 +310,7 @@ func (self *worker) wait() {
 			for _, log := range work.state.Logs() {
 				log.BlockHash = block.Hash()
 			}
-			stat, err := self.chain.WriteBlockWithState(block, work.receipts, work.state)
+			stat, err := self.chain.WriteBlockWithState(block, work.receipts, work.state, work.tds)
 			if err != nil {
 				log.Error("Failed writing block to chain", "err", err)
 				continue
@@ -356,7 +357,7 @@ func (self *worker) push(work *Work) {
 
 // makeCurrent creates a new environment for the current cycle.
 func (self *worker) makeCurrent(parent *types.Block, header *types.Header) error {
-	state, err := self.chain.StateAt(parent.Root())
+	state, tds, err := self.chain.StateAt(parent.Root(), parent.NumberU64())
 	if err != nil {
 		return err
 	}
@@ -364,6 +365,7 @@ func (self *worker) makeCurrent(parent *types.Block, header *types.Header) error
 		config:    self.config,
 		signer:    types.NewEIP155Signer(self.config.ChainId),
 		state:     state,
+		tds:       tds,
 		ancestors: set.New(),
 		family:    set.New(),
 		uncles:    set.New(),
@@ -479,7 +481,7 @@ func (self *worker) commitNewWork() {
 		delete(self.possibleUncles, hash)
 	}
 	// Create the new block to seal with the consensus engine
-	if work.Block, err = self.engine.Finalize(self.chain, header, work.state, work.txs, uncles, work.receipts); err != nil {
+	if work.Block, err = self.engine.Finalize(self.chain, header, work.state, work.tds, work.txs, uncles, work.receipts); err != nil {
 		log.Error("Failed to finalize block for sealing", "err", err)
 		return
 	}
@@ -592,7 +594,7 @@ func (env *Work) commitTransactions(mux *event.TypeMux, txs *types.TransactionsB
 func (env *Work) commitTransaction(tx *types.Transaction, bc *core.BlockChain, coinbase common.Address, gp *core.GasPool) (error, []*types.Log) {
 	snap := env.state.Snapshot()
 
-	receipt, _, err := core.ApplyTransaction(env.config, bc, &coinbase, gp, env.state, env.header, tx, &env.header.GasUsed, vm.Config{})
+	receipt, _, err := core.ApplyTransaction(env.config, bc, &coinbase, gp, env.state, env.tds, env.header, tx, &env.header.GasUsed, vm.Config{})
 	if err != nil {
 		env.state.RevertToSnapshot(snap)
 		return err, nil

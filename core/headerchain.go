@@ -25,6 +25,7 @@ import (
 	mrand "math/rand"
 	"sync/atomic"
 	"time"
+	"runtime/debug"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
@@ -109,11 +110,11 @@ func NewHeaderChain(chainDb ethdb.Database, config *params.ChainConfig, engine c
 
 // GetBlockNumber retrieves the block number belonging to the given hash
 // from the cache or database
-func (hc *HeaderChain) GetBlockNumber(hash common.Hash) uint64 {
+func (hc *HeaderChain) GetBlockNumber(dbr ethdb.Getter, hash common.Hash) uint64 {
 	if cached, ok := hc.numberCache.Get(hash); ok {
 		return cached.(uint64)
 	}
-	number := GetBlockNumber(hc.chainDb, hash)
+	number := GetBlockNumber(dbr, hash)
 	if number != missingNumber {
 		hc.numberCache.Add(hash, number)
 	}
@@ -136,15 +137,16 @@ func (hc *HeaderChain) WriteHeader(header *types.Header) (status WriteStatus, er
 		number = header.Number.Uint64()
 	)
 	// Calculate the total difficulty of the header
-	ptd := hc.GetTd(header.ParentHash, number-1)
+	ptd := hc.GetTd(hc.chainDb, header.ParentHash, number-1)
 	if ptd == nil {
+		fmt.Printf("%s\n", debug.Stack())
 		return NonStatTy, consensus.ErrUnknownAncestor
 	}
-	localTd := hc.GetTd(hc.currentHeaderHash, hc.CurrentHeader().Number.Uint64())
+	localTd := hc.GetTd(hc.chainDb, hc.currentHeaderHash, hc.CurrentHeader().Number.Uint64())
 	externTd := new(big.Int).Add(header.Difficulty, ptd)
 
 	// Irrelevant of the canonical status, write the td and header to the database
-	if err := hc.WriteTd(hash, number, externTd); err != nil {
+	if err := hc.WriteTd(hc.chainDb, hash, number, externTd); err != nil {
 		log.Crit("Failed to write header total difficulty", "err", err)
 	}
 	if err := WriteHeader(hc.chainDb, header); err != nil {
@@ -311,12 +313,12 @@ func (hc *HeaderChain) GetBlockHashesFromHash(hash common.Hash, max uint64) []co
 
 // GetTd retrieves a block's total difficulty in the canonical chain from the
 // database by hash and number, caching it if found.
-func (hc *HeaderChain) GetTd(hash common.Hash, number uint64) *big.Int {
+func (hc *HeaderChain) GetTd(dbr ethdb.Getter, hash common.Hash, number uint64) *big.Int {
 	// Short circuit if the td's already in the cache, retrieve otherwise
 	if cached, ok := hc.tdCache.Get(hash); ok {
 		return cached.(*big.Int)
 	}
-	td := GetTd(hc.chainDb, hash, number)
+	td := GetTd(dbr, hash, number)
 	if td == nil {
 		return nil
 	}
@@ -328,13 +330,13 @@ func (hc *HeaderChain) GetTd(hash common.Hash, number uint64) *big.Int {
 // GetTdByHash retrieves a block's total difficulty in the canonical chain from the
 // database by hash, caching it if found.
 func (hc *HeaderChain) GetTdByHash(hash common.Hash) *big.Int {
-	return hc.GetTd(hash, hc.GetBlockNumber(hash))
+	return hc.GetTd(hc.chainDb, hash, hc.GetBlockNumber(hc.chainDb, hash))
 }
 
 // WriteTd stores a block's total difficulty into the database, also caching it
 // along the way.
-func (hc *HeaderChain) WriteTd(hash common.Hash, number uint64, td *big.Int) error {
-	if err := WriteTd(hc.chainDb, hash, number, td); err != nil {
+func (hc *HeaderChain) WriteTd(dbw ethdb.Putter, hash common.Hash, number uint64, td *big.Int) error {
+	if err := WriteTd(dbw, hash, number, td); err != nil {
 		return err
 	}
 	hc.tdCache.Add(hash, new(big.Int).Set(td))
@@ -360,7 +362,7 @@ func (hc *HeaderChain) GetHeader(hash common.Hash, number uint64) *types.Header 
 // GetHeaderByHash retrieves a block header from the database by hash, caching it if
 // found.
 func (hc *HeaderChain) GetHeaderByHash(hash common.Hash) *types.Header {
-	return hc.GetHeader(hash, hc.GetBlockNumber(hash))
+	return hc.GetHeader(hash, hc.GetBlockNumber(hc.chainDb, hash))
 }
 
 // HasHeader checks if a block header is present in the database or not.
@@ -368,7 +370,7 @@ func (hc *HeaderChain) HasHeader(hash common.Hash, number uint64) bool {
 	if hc.numberCache.Contains(hash) || hc.headerCache.Contains(hash) {
 		return true
 	}
-	ok, _ := hc.chainDb.Has(headerKey(hash, number))
+	ok, _ := hc.chainDb.Has(headerPrefix, headerKey(hash, number))
 	return ok
 }
 
@@ -389,8 +391,8 @@ func (hc *HeaderChain) CurrentHeader() *types.Header {
 }
 
 // SetCurrentHeader sets the current head header of the canonical chain.
-func (hc *HeaderChain) SetCurrentHeader(head *types.Header) {
-	if err := WriteHeadHeaderHash(hc.chainDb, head.Hash()); err != nil {
+func (hc *HeaderChain) SetCurrentHeader(dbw ethdb.Putter, head *types.Header) {
+	if err := WriteHeadHeaderHash(dbw, head.Hash()); err != nil {
 		log.Crit("Failed to insert head header hash", "err", err)
 	}
 	hc.currentHeader.Store(head)

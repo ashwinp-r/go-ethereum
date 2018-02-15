@@ -45,6 +45,7 @@ type Config struct {
 	EVMConfig   vm.Config
 
 	State     *state.StateDB
+	TrieDbSt  *state.TrieDbState
 	GetHashFn func(n uint64) common.Hash
 }
 
@@ -92,15 +93,16 @@ func setDefaults(cfg *Config) {
 //
 // Executes sets up a in memory, temporarily, environment for the execution of
 // the given code. It makes sure that it's restored to it's original state afterwards.
-func Execute(code, input []byte, cfg *Config) ([]byte, *state.StateDB, error) {
+func Execute(code, input []byte, cfg *Config, blockNr uint64) ([]byte, *state.StateDB, error) {
 	if cfg == nil {
 		cfg = new(Config)
 	}
 	setDefaults(cfg)
 
 	if cfg.State == nil {
-		db, _ := ethdb.NewMemDatabase()
-		cfg.State, _ = state.New(common.Hash{}, state.NewDatabase(db))
+		db := ethdb.NewMemDatabase()
+		cfg.TrieDbSt, _ = state.NewTrieDbState(common.Hash{}, state.NewDatabase(db), blockNr)
+		cfg.State = state.New(cfg.TrieDbSt)
 	}
 	var (
 		address = common.StringToAddress("contract")
@@ -123,15 +125,16 @@ func Execute(code, input []byte, cfg *Config) ([]byte, *state.StateDB, error) {
 }
 
 // Create executes the code using the EVM create method
-func Create(input []byte, cfg *Config) ([]byte, common.Address, uint64, error) {
+func Create(input []byte, cfg *Config, blockNr uint64) ([]byte, common.Address, uint64, error) {
 	if cfg == nil {
 		cfg = new(Config)
 	}
 	setDefaults(cfg)
 
 	if cfg.State == nil {
-		db, _ := ethdb.NewMemDatabase()
-		cfg.State, _ = state.New(common.Hash{}, state.NewDatabase(db))
+		db := ethdb.NewMemDatabase()
+		cfg.TrieDbSt, _ = state.NewTrieDbState(common.Hash{}, state.NewDatabase(db), blockNr)
+		cfg.State = state.New(cfg.TrieDbSt)
 	}
 	var (
 		vmenv  = NewEnv(cfg)

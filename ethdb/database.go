@@ -17,37 +17,69 @@
 package ethdb
 
 import (
-	"strconv"
-	"strings"
+	"bytes"
+	"errors"
+	"os"
+	"path"
 	"sync"
-	"time"
+	"encoding/binary"
 
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/syndtr/goleveldb/leveldb"
-	"github.com/syndtr/goleveldb/leveldb/errors"
-	"github.com/syndtr/goleveldb/leveldb/filter"
-	"github.com/syndtr/goleveldb/leveldb/iterator"
-	"github.com/syndtr/goleveldb/leveldb/opt"
-	"github.com/syndtr/goleveldb/leveldb/util"
+
+	"github.com/boltdb/bolt"
+	"github.com/petar/GoLLRB/llrb"
 )
 
 var OpenFileLimit = 64
+var ErrKeyNotFound = errors.New("boltdb: key not found in range")
+var SuffixBucket = []byte("SUFFIX")
+
+const HeapSize = 32*1024*1024
 
 type LDBDatabase struct {
 	fn string      // filename for reporting
-	db *leveldb.DB // LevelDB instance
-
-	compTimeMeter  metrics.Meter // Meter for measuring the total time spent in database compaction
-	compReadMeter  metrics.Meter // Meter for measuring the data read during compaction
-	compWriteMeter metrics.Meter // Meter for measuring the data written during compaction
-	diskReadMeter  metrics.Meter // Meter for measuring the effective amount of data read
-	diskWriteMeter metrics.Meter // Meter for measuring the effective amount of data written
+	db *bolt.DB // BoltDB instance
 
 	quitLock sync.Mutex      // Mutex protecting the quit channel access
 	quitChan chan chan error // Quit channel to stop the metrics collection before closing the database
 
 	log log.Logger // Contextual logger tracking the database path
+
+	hashfile     *os.File
+	hashdata     []byte
+}
+
+func openHashFile(file string) (*os.File, []byte, error) {
+	hashfile, err := os.OpenFile(file+".hash", os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		return nil, nil, err
+	}
+	stat, err := hashfile.Stat()
+	if err != nil {
+		hashfile.Close()
+		return nil, nil, err
+	}
+	if stat.Size() < HeapSize {
+		var buf [4096]byte
+		for i := 0; i < HeapSize; i+=len(buf) {
+			if _, err := hashfile.Write(buf[:]); err != nil {
+				hashfile.Close()
+				return nil, nil, err
+			}
+		}
+	} else if stat.Size() > HeapSize {
+		if err := hashfile.Truncate(HeapSize); err != nil {
+			hashfile.Close()
+			return nil, nil, err
+		}
+	}
+	hashdata, err := mmap(hashfile, HeapSize)
+	if err != nil {
+		hashfile.Close()
+		return nil, nil, err
+	}
+	return hashfile, hashdata, nil
 }
 
 // NewLDBDatabase returns a LevelDB wrapped object.
@@ -63,16 +95,16 @@ func NewLDBDatabase(file string, cache int, handles int) (*LDBDatabase, error) {
 	}
 	logger.Info("Allocated cache and file handles", "cache", cache, "handles", handles)
 
-	// Open the db and recover any potential corruptions
-	db, err := leveldb.OpenFile(file, &opt.Options{
-		OpenFilesCacheCapacity: handles,
-		BlockCacheCapacity:     cache / 2 * opt.MiB,
-		WriteBuffer:            cache / 4 * opt.MiB, // Two of these are used internally
-		Filter:                 filter.NewBloomFilter(10),
-	})
-	if _, corrupted := err.(*errors.ErrCorrupted); corrupted {
-		db, err = leveldb.RecoverFile(file, nil)
+	// Create necessary directories
+	if err := os.MkdirAll(path.Dir(file), os.ModePerm); err != nil {
+		return nil, err
 	}
+	hashfile, hashdata, err := openHashFile(file)
+	if err != nil {
+		return nil, err
+	}
+	// Open the db and recover any potential corruptions
+	db, err := bolt.Open(file, 0600, &bolt.Options{InitialMmapSize: cache*1024*1024})
 	// (Re)check for errors and abort if opening of the db failed
 	if err != nil {
 		return nil, err
@@ -81,6 +113,8 @@ func NewLDBDatabase(file string, cache int, handles int) (*LDBDatabase, error) {
 		fn:  file,
 		db:  db,
 		log: logger,
+		hashfile: hashfile,
+		hashdata: hashdata,
 	}, nil
 }
 
@@ -90,41 +124,256 @@ func (db *LDBDatabase) Path() string {
 }
 
 // Put puts the given key / value to the queue
-func (db *LDBDatabase) Put(key []byte, value []byte) error {
-	// Generate the data to write to disk, update the meter and write
-	//value = rle.Compress(value)
-
-	return db.db.Put(key, value, nil)
+func (db *LDBDatabase) Put(bucket, key []byte, value []byte) error {
+	err := db.db.Update(func(tx *bolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists(bucket)
+		if err != nil {
+			return err
+		}
+		return b.Put(key, value)
+	})
+	return err
 }
 
-func (db *LDBDatabase) Has(key []byte) (bool, error) {
-	return db.db.Has(key, nil)
+// Put puts the given key / value to the queue
+func (db *LDBDatabase) PutS(bucket, key, suffix, value []byte) error {
+	composite := make([]byte, len(key) + len(suffix))
+	copy(composite, key)
+	copy(composite[len(key):], suffix)
+	suffixkey := make([]byte, len(suffix) + len(bucket))
+	copy(suffixkey, suffix)
+	copy(suffixkey[len(suffix):], bucket)
+	err := db.db.Update(func(tx *bolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists(bucket)
+		if err != nil {
+			return err
+		}
+		if err = b.Put(composite, value); err != nil {
+			return err
+		}
+		sb, err := tx.CreateBucketIfNotExists(SuffixBucket)
+		if err != nil {
+			return err
+		}
+		dat := sb.Get(suffixkey)
+		var l int
+		if dat == nil {
+			l = 4
+		} else {
+			l = len(dat)
+		}
+		dv := make([]byte, l+1+len(key))
+		copy(dv, dat)
+		binary.BigEndian.PutUint32(dv, 1 + binary.BigEndian.Uint32(dv)) // Increment the counter of keys
+		dv[l] = byte(len(key))
+		copy(dv[l+1:], key)
+		return sb.Put(suffixkey, dv)
+	})
+	return err
+}
+
+func (db *LDBDatabase) MultiPut(tuples ...[]byte) error {
+	err := db.db.Update(func(tx *bolt.Tx) error {
+		for bucketStart := 0; bucketStart < len(tuples); {
+			bucketEnd := bucketStart
+			for ; bucketEnd < len(tuples) && bytes.Equal(tuples[bucketEnd], tuples[bucketStart]); bucketEnd += 3 {
+			}
+			b, err := tx.CreateBucketIfNotExists(tuples[bucketStart])
+			if err != nil {
+				return err
+			}
+			l := (bucketEnd-bucketStart)/3
+			pairs := make([][]byte, 2*l)
+			for i := 0; i < l; i++ {
+				pairs[2*i] = tuples[bucketStart+3*i+1]
+				pairs[2*i+1] = tuples[bucketStart+3*i+2]
+			}
+			if b.MultiPut(pairs...); err != nil {
+				return err
+			}
+			bucketStart = bucketEnd
+		}
+		return nil
+	})
+	return err
+}
+
+func (db *LDBDatabase) Has(bucket, key []byte) (bool, error) {
+	var has bool
+	err := db.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucket)
+		if b == nil {
+			has = false
+		} else {
+			has = b.Get(key) != nil
+		}
+		return nil
+	})
+	return has, err
+}
+
+func (db *LDBDatabase) Size() int {
+	return db.db.Size()
 }
 
 // Get returns the given key if it's present.
-func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
+func (db *LDBDatabase) Get(bucket, key []byte) ([]byte, error) {
 	// Retrieve the key and increment the miss counter if not found
-	dat, err := db.db.Get(key, nil)
-	if err != nil {
-		return nil, err
+	var dat []byte
+	err := db.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucket)
+		if b != nil {
+			v := b.Get(key)
+			if v != nil {
+				dat = make([]byte, len(v))
+				copy(dat, v)
+			}
+		}
+		return nil
+	})
+	if dat == nil {
+		return nil, ErrKeyNotFound
 	}
-	return dat, nil
-	//return rle.Decompress(dat)
+	return dat, err
+}
+
+// First returns the first pair (k, v) where key is a prefix of key, or nil
+// if there are not such (k, v)
+func (db *LDBDatabase) First(bucket, key, suffix []byte) ([]byte, error) {
+	start := make([]byte, len(key) + len(suffix))
+	copy(start, key)
+	copy(start[len(key):], suffix)
+	var dat []byte
+	err := db.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucket)
+		if b != nil {
+			c := b.Cursor()
+			k, v := c.Seek(start)
+			if k != nil && bytes.HasPrefix(k, key) {
+				dat = make([]byte, len(v))
+				copy(dat, v)
+				return nil
+			}
+		}
+		return ErrKeyNotFound
+	})
+	return dat, err
+}
+
+func (db *LDBDatabase) Walk(bucket, key []byte, keybits uint, walker WalkerFunc) error {
+	keybytes := int((keybits + 7)/8)
+	//start := make([]byte, keybytes)
+	//copy(start, key[:keybytes])
+	shiftbits := keybits&7
+	mask := byte(0xff)
+	if shiftbits != 0 {
+		mask = 0xff << (8-shiftbits)
+		//start[keybytes-1] &= mask
+	}
+	err := db.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucket)
+		if b == nil {
+			return nil
+		}
+		c := b.Cursor()
+		if keybits == 0 {
+			for k, v := c.First(); k != nil; {
+				nextkey, action, err := walker(k, v)
+				if err != nil {
+					return err
+				}
+				switch action {
+				case WalkActionStop:
+					break
+				case WalkActionNext:
+					k, v = c.Next()
+				case WalkActionSeek:
+					k, v = c.SeekTo(nextkey)
+				}
+			}
+		} else {
+			for k, v := c.Seek(key); k != nil && bytes.Equal(k[:keybytes-1], key[:keybytes-1]) && (k[keybytes-1]&mask)==(key[keybytes-1]&mask); {
+				nextkey, action, err := walker(k, v)
+				if err != nil {
+					return err
+				}
+				switch action {
+				case WalkActionStop:
+					break
+				case WalkActionNext:
+					k, v = c.Next()
+				case WalkActionSeek:
+					k, v = c.SeekTo(nextkey)
+				}
+			}
+		}
+		return nil
+	})
+	return err
 }
 
 // Delete deletes the key from the queue and database
-func (db *LDBDatabase) Delete(key []byte) error {
+func (db *LDBDatabase) Delete(bucket, key []byte) error {
 	// Execute the actual operation
-	return db.db.Delete(key, nil)
+	err := db.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucket)
+		if b != nil {
+			return b.Delete(key)
+		} else {
+			return nil
+		}
+	})
+	return err
 }
 
-func (db *LDBDatabase) NewIterator() iterator.Iterator {
-	return db.db.NewIterator(nil, nil)
+// Deletes all keys with specified suffix from all the buckets
+func (db *LDBDatabase) DeleteSuffix(suffix []byte) error {
+	err := db.db.Update(func(tx *bolt.Tx) error {
+		sb := tx.Bucket(SuffixBucket)
+		if sb == nil {
+			return nil
+		}
+		c := sb.Cursor()
+		for k, v := c.Seek(suffix); k != nil && bytes.HasPrefix(k, suffix); k, v = c.Next() {
+			b := tx.Bucket(k[len(suffix):])
+			keycount := int(binary.BigEndian.Uint32(v))
+			for i, ki := 4, 0; ki < keycount; ki++ {
+				l := int(v[i])
+				i++
+				kk := make([]byte, l+len(suffix))
+				copy(kk, v[i:i+l])
+				copy(kk[l:], suffix)
+				if err := b.Delete(kk); err != nil {
+					return err
+				}
+				i += l
+			}
+			sb.Delete(k)
+		}
+		return nil
+	})
+	return err
 }
 
-// NewIteratorWithPrefix returns a iterator to iterate over subset of database content with a particular prefix.
-func (db *LDBDatabase) NewIteratorWithPrefix(prefix []byte) iterator.Iterator {
-	return db.db.NewIterator(util.BytesPrefix(prefix), nil)
+
+func (db *LDBDatabase) DeleteBucket(bucket []byte) error {
+	err := db.db.Update(func(tx *bolt.Tx) error {
+		if err := tx.DeleteBucket(bucket); err != nil {
+			return err
+		}
+		return nil
+	})
+	return err
+}
+
+func (db *LDBDatabase) GetHash(index uint32) []byte {
+	hash := make([]byte, 32)
+	copy(hash, db.hashdata[32*index:32*index+32])
+	return hash
+}
+
+func (db *LDBDatabase) PutHash(index uint32, hash []byte) {
+	copy(db.hashdata[32*index:], hash[:32])
 }
 
 func (db *LDBDatabase) Close() {
@@ -132,6 +381,13 @@ func (db *LDBDatabase) Close() {
 	db.quitLock.Lock()
 	defer db.quitLock.Unlock()
 
+	err := db.hashfile.Close()
+	if err == nil {
+		db.log.Info("Hashfile closed")
+	} else {
+		db.log.Error("Failed to close hashfile", "err", err)
+	}
+	db.hashfile = nil
 	if db.quitChan != nil {
 		errc := make(chan error)
 		db.quitChan <- errc
@@ -139,7 +395,7 @@ func (db *LDBDatabase) Close() {
 			db.log.Error("Metrics collection failed", "err", err)
 		}
 	}
-	err := db.db.Close()
+	err = db.db.Close()
 	if err == nil {
 		db.log.Info("Database closed")
 	} else {
@@ -147,181 +403,477 @@ func (db *LDBDatabase) Close() {
 	}
 }
 
+
 func (db *LDBDatabase) LDB() *leveldb.DB {
-	return db.db
-}
-
-// Meter configures the database metrics collectors and
-func (db *LDBDatabase) Meter(prefix string) {
-	// Short circuit metering if the metrics system is disabled
-	if !metrics.Enabled {
-		return
-	}
-	// Initialize all the metrics collector at the requested prefix
-	db.compTimeMeter = metrics.NewRegisteredMeter(prefix+"compact/time", nil)
-	db.compReadMeter = metrics.NewRegisteredMeter(prefix+"compact/input", nil)
-	db.compWriteMeter = metrics.NewRegisteredMeter(prefix+"compact/output", nil)
-	db.diskReadMeter = metrics.NewRegisteredMeter(prefix+"disk/read", nil)
-	db.diskWriteMeter = metrics.NewRegisteredMeter(prefix+"disk/write", nil)
-
-	// Create a quit channel for the periodic collector and run it
-	db.quitLock.Lock()
-	db.quitChan = make(chan chan error)
-	db.quitLock.Unlock()
-
-	go db.meter(3 * time.Second)
-}
-
-// meter periodically retrieves internal leveldb counters and reports them to
-// the metrics subsystem.
-//
-// This is how a stats table look like (currently):
-//   Compactions
-//    Level |   Tables   |    Size(MB)   |    Time(sec)  |    Read(MB)   |   Write(MB)
-//   -------+------------+---------------+---------------+---------------+---------------
-//      0   |          0 |       0.00000 |       1.27969 |       0.00000 |      12.31098
-//      1   |         85 |     109.27913 |      28.09293 |     213.92493 |     214.26294
-//      2   |        523 |    1000.37159 |       7.26059 |      66.86342 |      66.77884
-//      3   |        570 |    1113.18458 |       0.00000 |       0.00000 |       0.00000
-//
-// This is how the iostats look like (currently):
-// Read(MB):3895.04860 Write(MB):3654.64712
-func (db *LDBDatabase) meter(refresh time.Duration) {
-	// Create the counters to store current and previous compaction values
-	compactions := make([][]float64, 2)
-	for i := 0; i < 2; i++ {
-		compactions[i] = make([]float64, 3)
-	}
-	// Create storage for iostats.
-	var iostats [2]float64
-	// Iterate ad infinitum and collect the stats
-	for i := 1; ; i++ {
-		// Retrieve the database stats
-		stats, err := db.db.GetProperty("leveldb.stats")
-		if err != nil {
-			db.log.Error("Failed to read database stats", "err", err)
-			return
-		}
-		// Find the compaction table, skip the header
-		lines := strings.Split(stats, "\n")
-		for len(lines) > 0 && strings.TrimSpace(lines[0]) != "Compactions" {
-			lines = lines[1:]
-		}
-		if len(lines) <= 3 {
-			db.log.Error("Compaction table not found")
-			return
-		}
-		lines = lines[3:]
-
-		// Iterate over all the table rows, and accumulate the entries
-		for j := 0; j < len(compactions[i%2]); j++ {
-			compactions[i%2][j] = 0
-		}
-		for _, line := range lines {
-			parts := strings.Split(line, "|")
-			if len(parts) != 6 {
-				break
-			}
-			for idx, counter := range parts[3:] {
-				value, err := strconv.ParseFloat(strings.TrimSpace(counter), 64)
-				if err != nil {
-					db.log.Error("Compaction entry parsing failed", "err", err)
-					return
-				}
-				compactions[i%2][idx] += value
-			}
-		}
-		// Update all the requested meters
-		if db.compTimeMeter != nil {
-			db.compTimeMeter.Mark(int64((compactions[i%2][0] - compactions[(i-1)%2][0]) * 1000 * 1000 * 1000))
-		}
-		if db.compReadMeter != nil {
-			db.compReadMeter.Mark(int64((compactions[i%2][1] - compactions[(i-1)%2][1]) * 1024 * 1024))
-		}
-		if db.compWriteMeter != nil {
-			db.compWriteMeter.Mark(int64((compactions[i%2][2] - compactions[(i-1)%2][2]) * 1024 * 1024))
-		}
-
-		// Retrieve the database iostats.
-		ioStats, err := db.db.GetProperty("leveldb.iostats")
-		if err != nil {
-			db.log.Error("Failed to read database iostats", "err", err)
-			return
-		}
-		parts := strings.Split(ioStats, " ")
-		if len(parts) < 2 {
-			db.log.Error("Bad syntax of ioStats", "ioStats", ioStats)
-			return
-		}
-		r := strings.Split(parts[0], ":")
-		if len(r) < 2 {
-			db.log.Error("Bad syntax of read entry", "entry", parts[0])
-			return
-		}
-		read, err := strconv.ParseFloat(r[1], 64)
-		if err != nil {
-			db.log.Error("Read entry parsing failed", "err", err)
-			return
-		}
-		w := strings.Split(parts[1], ":")
-		if len(w) < 2 {
-			db.log.Error("Bad syntax of write entry", "entry", parts[1])
-			return
-		}
-		write, err := strconv.ParseFloat(w[1], 64)
-		if err != nil {
-			db.log.Error("Write entry parsing failed", "err", err)
-			return
-		}
-		if db.diskReadMeter != nil {
-			db.diskReadMeter.Mark(int64((read - iostats[0]) * 1024 * 1024))
-		}
-		if db.diskWriteMeter != nil {
-			db.diskWriteMeter.Mark(int64((write - iostats[1]) * 1024 * 1024))
-		}
-		iostats[0] = read
-		iostats[1] = write
-
-		// Sleep a bit, then repeat the stats collection
-		select {
-		case errc := <-db.quitChan:
-			// Quit requesting, stop hammering the database
-			errc <- nil
-			return
-
-		case <-time.After(refresh):
-			// Timeout, gather a new set of stats
-		}
-	}
-}
-
-func (db *LDBDatabase) NewBatch() Batch {
-	return &ldbBatch{db: db.db, b: new(leveldb.Batch)}
-}
-
-type ldbBatch struct {
-	db   *leveldb.DB
-	b    *leveldb.Batch
-	size int
-}
-
-func (b *ldbBatch) Put(key, value []byte) error {
-	b.b.Put(key, value)
-	b.size += len(value)
 	return nil
 }
 
-func (b *ldbBatch) Write() error {
-	return b.db.Write(b.b, nil)
+type PutItem struct {
+	bucket, key, value []byte
 }
 
-func (b *ldbBatch) ValueSize() int {
-	return b.size
+func (a *PutItem) Less(b llrb.Item) bool {
+	bi := b.(*PutItem)
+	c := bytes.Compare(a.bucket, bi.bucket)
+	if c == 0 {
+		return bytes.Compare(a.key, bi.key) < 0
+	} else {
+		return c < 0
+	}
 }
 
-func (b *ldbBatch) Reset() {
-	b.b.Reset()
-	b.size = 0
+type Hash struct {
+	hash [32]byte
+}
+
+type mutation struct {
+	puts *llrb.LLRB
+	hashes map[uint32]Hash
+
+	mu sync.RWMutex
+	db Database
+}
+
+func (db *LDBDatabase) NewBatch() Mutation {
+	m := &mutation{
+		db: db,
+		puts: llrb.New(),
+		hashes: make(map[uint32]Hash),
+	}
+	return m
+}
+
+func (m *mutation) getMem(bucket, key []byte) ([]byte, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	i := m.puts.Get(&PutItem{bucket: bucket, key: key})
+	if i == nil {
+		return nil, false
+	}
+	if item, ok := i.(*PutItem); ok {
+		if item.value == nil {
+			return nil, true
+		}
+		v := make([]byte, len(item.value))
+		copy(v, item.value)
+		return v, true
+	}
+	return nil, false
+}
+
+// Can only be called from the worker thread
+func (m *mutation) Get(bucket, key []byte) ([]byte, error) {
+	if value, ok := m.getMem(bucket, key); ok {
+		if value == nil {
+			return nil, ErrKeyNotFound
+		}
+		return value, nil
+	}
+	if m.db != nil {
+		return m.db.Get(bucket, key)
+	}
+	return nil, ErrKeyNotFound
+}
+
+func (m *mutation) hasMem(bucket, key []byte) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.puts.Has(&PutItem{bucket: bucket, key: key})
+}
+
+func (m *mutation) Has(bucket, key []byte) (bool, error) {
+	if m.hasMem(bucket, key) {
+		return true, nil
+	}
+	if m.db != nil {
+		return m.db.Has(bucket, key)
+	}
+	return false, nil
+}
+
+func (m *mutation) Size() int {
+	if m.db == nil {
+		return 0
+	}
+	return m.db.Size()
+}
+
+func (m *mutation) Put(bucket, key []byte, value []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	bb := make([]byte, len(bucket))
+	copy(bb, bucket)
+	k := make([]byte, len(key))
+	copy(k, key)
+	v := make([]byte, len(value))
+	copy(v, value)
+	m.puts.ReplaceOrInsert(&PutItem{bucket: bb, key: k, value: v})
+	return nil
+}
+
+func (m *mutation) PutS(bucket, key, suffix, value []byte) error {
+	composite := make([]byte, len(key) + len(suffix))
+	copy(composite, key)
+	copy(composite[len(key):], suffix)
+	bb := make([]byte, len(bucket))
+	copy(bb, bucket)
+	v := make([]byte, len(value))
+	copy(v, value)
+	m.puts.ReplaceOrInsert(&PutItem{bucket: bb, key: composite, value: v})
+	suffixkey := make([]byte, len(suffix) + len(bucket))
+	copy(suffixkey, suffix)
+	copy(suffixkey[len(suffix):], bucket)
+	dat, err := m.Get(SuffixBucket, suffixkey)
+	if err != nil && err != ErrKeyNotFound {
+		return err
+	}
+	var l int
+	if dat == nil {
+		l = 4
+	} else {
+		l = len(dat)
+	}
+	dv := make([]byte, l+1+len(key))
+	copy(dv, dat)
+	binary.BigEndian.PutUint32(dv, 1+binary.BigEndian.Uint32(dv))
+	dv[l] = byte(len(key))
+	copy(dv[l+1:], key)
+	m.puts.ReplaceOrInsert(&PutItem{bucket: SuffixBucket, key: suffixkey, value: dv})
+	return nil
+}
+
+func (m *mutation) MultiPut(tuples ...[]byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l := len(tuples)
+	for i := 0; i < l; i += 3 {
+		m.puts.ReplaceOrInsert(&PutItem{bucket: tuples[i], key: tuples[i+1], value: tuples[i+2]})
+	}
+	return nil
+}
+
+func (m *mutation) firstMem(bucket, key, suffix []byte) ([]byte, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	start := make([]byte, len(key) + len(suffix))
+	copy(start, key)
+	copy(start[len(key):], suffix)
+	var dat []byte
+	m.puts.AscendGreaterOrEqual(&PutItem{bucket: bucket, key: start}, func(i llrb.Item) bool {
+		item := i.(*PutItem)
+		if !bytes.Equal(item.bucket, bucket) {
+			return false
+		}
+		if !bytes.HasPrefix(item.key, key) {
+			return false
+		}
+		if item.value == nil {
+			return true
+		}
+		dat = make([]byte, len(item.value))
+		copy(dat, item.value)
+		return false
+	})
+	if dat != nil {
+		return dat, true
+	}
+	return nil, false
+}
+
+func (m *mutation) First(bucket, key, suffix []byte) ([]byte, error) {
+	if value, ok := m.firstMem(bucket, key, suffix); ok {
+		return value, nil
+	} else {
+		if m.db != nil {
+			return m.db.First(bucket, key, suffix)
+		}
+	}
+	return nil, nil
+}
+
+func (m *mutation) walkMem(bucket, key []byte, keybits uint, walker WalkerFunc) error {
+	keybytes := int((keybits + 7)/8)
+	//start := make([]byte, keybytes)
+	//copy(start, key[:keybytes])
+	shiftbits := keybits&7
+	mask := byte(0xff)
+	if shiftbits != 0 {
+		mask = 0xff << (8-shiftbits)
+		//start[keybytes-1] &= mask
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for nextkey := key; nextkey != nil; {
+		from := nextkey
+		nextkey = nil
+		var extErr error
+		m.puts.AscendGreaterOrEqual(&PutItem{bucket: bucket, key: from}, func(i llrb.Item) bool {
+			item := i.(*PutItem)
+			if !bytes.Equal(item.bucket, bucket) {
+				return false
+			}
+			if item.value == nil {
+				return true
+			}
+			if keybits > 0 && (!bytes.Equal(item.key[:keybytes-1], key[:keybytes-1]) || (item.key[keybytes-1]&mask)!=(key[keybytes-1]&mask)) {
+				return true
+			}
+			wr, action, err := walker(item.key, item.value)
+			if err != nil {
+				extErr = err
+				return false
+			}
+			switch action {
+			case WalkActionStop:
+				return false
+			case WalkActionNext:
+				return true
+			case WalkActionSeek:
+				nextkey = wr
+				return false
+			default:
+				panic("Wrong action")
+			}
+		})
+		if extErr != nil {
+			return extErr
+		}
+	}
+	return nil
+}
+
+func (m *mutation) Walk(bucket, key []byte, keybits uint, walker WalkerFunc) error {
+	if m.db == nil {
+		return m.walkMem(bucket, key, keybits, walker)
+	} else {
+		keybytes := int((keybits + 7)/8)
+		//start := make([]byte, keybytes)
+		//copy(start, key[:keybytes])
+		shiftbits := keybits&7
+		mask := byte(0xff)
+		if shiftbits != 0 {
+			mask = 0xff << (8-shiftbits)
+			//start[keybytes-1] &= mask
+		}
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+		start := key
+		err := m.db.Walk(bucket, key, keybits, func (k, v []byte) ([]byte, WalkAction, error) {
+			for nextkey := start; nextkey != nil; {
+				from := nextkey
+				nextkey = nil
+				var extErr error
+				m.puts.AscendRange(&PutItem{bucket: bucket, key: from}, &PutItem{bucket: bucket, key: k}, func (i llrb.Item) bool {
+					item := i.(*PutItem)
+					if item.value == nil {
+						return true
+					}
+					if keybits > 0 && (!bytes.Equal(item.key[:keybytes-1], key[:keybytes-1]) || (item.key[keybytes-1]&mask)!=(key[keybytes-1]&mask)) {
+						return true
+					}
+					wr, action, err := walker(item.key, item.value)
+					if err != nil {
+						extErr = err
+						return false
+					}
+					switch action {
+					case WalkActionStop:
+						return false
+					case WalkActionNext:
+						return true
+					case WalkActionSeek:
+						nextkey = wr
+						return false
+					default:
+						panic("Wrong action")
+					}
+				})
+				if extErr != nil {
+					return nil, WalkActionStop, extErr
+				}
+			}
+			i := m.puts.Get(&PutItem{bucket: bucket, key: k})
+			if i != nil {
+				// mutation data shadows database data
+				item := i.(*PutItem)
+				if item.value == nil {
+					// item has been deleted in mutation, so we skip it from the database
+					start = k
+					return nil, WalkActionNext, nil
+				}
+				var err error
+				var action WalkAction
+				start, action, err = walker(item.key, item.value)
+				if action == WalkActionNext {
+					start = item.key
+				}
+				return start, action, err
+			}
+			var err error
+			var action WalkAction
+			start, action, err = walker(k, v)
+			if action == WalkActionNext {
+				start = k
+			}
+			return start, action, err
+		})
+		if err != nil {
+			return err
+		}
+		for nextkey := start; nextkey != nil; {
+			from := nextkey
+			nextkey = nil
+			var extErr error
+			m.puts.AscendGreaterOrEqual(&PutItem{bucket: bucket, key: from}, func (i llrb.Item) bool {
+				item := i.(*PutItem)
+				if !bytes.Equal(item.bucket, bucket) {
+					return false
+				}
+				if item.value == nil {
+					return true
+				}
+				if keybits > 0 && (!bytes.Equal(item.key[:keybytes-1], key[:keybytes-1]) || (item.key[keybytes-1]&mask)!=(key[keybytes-1]&mask)) {
+					return true
+				}
+				wr, action, err := walker(item.key, item.value)
+				if err != nil {
+					extErr = err
+					return false
+				}
+				switch action {
+				case WalkActionStop:
+					return false
+				case WalkActionNext:
+					return true
+				case WalkActionSeek:
+					nextkey = wr
+					return false
+				default:
+					panic("Wrong action")
+				}
+			})
+			if extErr != nil {
+				return extErr
+			}
+		}
+		return nil
+	}
+}
+
+func (m *mutation) Delete(bucket, key []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	bb := make([]byte, len(bucket))
+	copy(bb, bucket)
+	k := make([]byte, len(key))
+	copy(k, key)
+	m.puts.ReplaceOrInsert(&PutItem{bucket: bb, key: k, value: nil})
+	return nil
+}
+
+// Deletes all keys with specified suffix from all the buckets
+func (m *mutation) DeleteSuffix(suffix []byte) error {
+	err := m.Walk(SuffixBucket, suffix, uint(8*len(suffix)), func(k, v []byte) ([]byte, WalkAction, error) {
+		bucket := k[len(suffix):]
+		keycount := int(binary.BigEndian.Uint32(v))
+		for i, ki := 4, 0; ki < keycount; ki++ {
+			l := int(v[i])
+			i++
+			bb := make([]byte, len(bucket))
+			copy(bb, bucket)
+			kk := make([]byte, l+len(suffix))
+			copy(kk, v[i:i+l])
+			copy(kk[l:], suffix)
+			m.puts.ReplaceOrInsert(&PutItem{bucket: bb, key: kk, value: nil})
+			i += l
+		}
+		kk := make([]byte, len(k))
+		copy(kk, k)
+		m.puts.ReplaceOrInsert(&PutItem{bucket: SuffixBucket, key: kk, value: nil})
+		return nil, WalkActionNext, nil
+	})
+	return err
+}
+
+func (m *mutation) Commit() error {
+	if m.db == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	tuples := make([][]byte, m.puts.Len()*3)
+	var index int
+	m.puts.AscendGreaterOrEqual(&PutItem{}, func (i llrb.Item) bool {
+		item := i.(*PutItem)
+		tuples[index] = item.bucket
+		index++
+		tuples[index] = item.key
+		index++
+		tuples[index] = item.value
+		index++
+		return true
+	})
+	if putErr := m.db.MultiPut(tuples...); putErr != nil {
+		return putErr
+	}
+	m.puts = llrb.New()
+	for index, h := range m.hashes {
+		m.db.PutHash(index, h.hash[:])
+	}
+	m.hashes = make(map[uint32]Hash)
+	return nil
+}
+
+func (m *mutation) Rollback() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.puts = llrb.New()
+}
+
+func (m *mutation) Keys() [][]byte {
+	pairs := make([][]byte, 2*m.puts.Len())
+	idx := 0
+	m.puts.AscendGreaterOrEqual(&PutItem{}, func(i llrb.Item) bool {
+		item := i.(*PutItem)
+		pairs[idx] = item.bucket
+		idx++
+		pairs[idx] = item.key
+		idx++
+		return true
+	})
+	return pairs
+}
+
+func (m *mutation) Close() {
+	m.Rollback()
+}
+
+func (m *mutation) NewBatch() Mutation {
+	mm := &mutation{
+		db: m,
+		puts: llrb.New(),
+		hashes: make(map[uint32]Hash),
+	}
+	return mm
+}
+
+var emptyHash [32]byte
+
+func (m *mutation) GetHash(index uint32) []byte {
+	h, ok := m.hashes[index]
+	if ok {
+		return h.hash[:]
+	}
+	if m.db == nil {
+		return emptyHash[:]
+	}
+	return m.db.GetHash(index)
+}
+
+func (m *mutation) PutHash(index uint32, hash []byte) {
+	var h Hash
+	copy(h.hash[:], hash)
+	m.hashes[index] = h
 }
 
 type table struct {
@@ -338,52 +890,91 @@ func NewTable(db Database, prefix string) Database {
 	}
 }
 
-func (dt *table) Put(key []byte, value []byte) error {
-	return dt.db.Put(append([]byte(dt.prefix), key...), value)
+func (dt *table) Put(bucket, key []byte, value []byte) error {
+	return dt.db.Put(bucket, append([]byte(dt.prefix), key...), value)
 }
 
-func (dt *table) Has(key []byte) (bool, error) {
-	return dt.db.Has(append([]byte(dt.prefix), key...))
+func (dt *table) PutS(bucket, key, suffix, value []byte) error {
+	return dt.db.PutS(bucket, append([]byte(dt.prefix), key...), suffix, value)
 }
 
-func (dt *table) Get(key []byte) ([]byte, error) {
-	return dt.db.Get(append([]byte(dt.prefix), key...))
+func (dt *table) MultiPut(tuples ...[]byte) error {
+	panic("Not supported")
 }
 
-func (dt *table) Delete(key []byte) error {
-	return dt.db.Delete(append([]byte(dt.prefix), key...))
+func (dt *table) Has(bucket, key []byte) (bool, error) {
+	return dt.db.Has(bucket, append([]byte(dt.prefix), key...))
+}
+
+func (dt *table) Get(bucket, key []byte) ([]byte, error) {
+	return dt.db.Get(bucket, append([]byte(dt.prefix), key...))
+}
+
+func (dt *table) First(bucket, key, suffix []byte) ([]byte, error) {
+	return dt.db.First(bucket, append([]byte(dt.prefix), key...), suffix)
+}
+
+func (dt *table) Walk(bucket, key []byte, keybits uint, walker WalkerFunc) error {
+	return dt.db.Walk(bucket, append([]byte(dt.prefix), key...), keybits+uint(8*len(dt.prefix)), walker)
+}
+
+func (dt *table) Delete(bucket, key []byte) error {
+	return dt.db.Delete(bucket, append([]byte(dt.prefix), key...))
+}
+
+func (dt *table) DeleteSuffix(suffix []byte) error {
+	return dt.db.DeleteSuffix(suffix)
 }
 
 func (dt *table) Close() {
 	// Do nothing; don't close the underlying DB.
 }
 
-type tableBatch struct {
-	batch  Batch
-	prefix string
+func (dt *table) NewBatch() Mutation {
+	panic("Not supported")
 }
 
-// NewTableBatch returns a Batch object which prefixes all keys with a given string.
-func NewTableBatch(db Database, prefix string) Batch {
-	return &tableBatch{db.NewBatch(), prefix}
+func (dt *table) Size() int {
+	return dt.db.Size()
 }
 
-func (dt *table) NewBatch() Batch {
-	return &tableBatch{dt.db.NewBatch(), dt.prefix}
+func (dt *table) GetHash(index uint32) []byte {
+	return dt.db.GetHash(index)
 }
 
-func (tb *tableBatch) Put(key, value []byte) error {
-	return tb.batch.Put(append([]byte(tb.prefix), key...), value)
+func (dt *table) PutHash(index uint32, hash []byte) {
+	dt.db.PutHash(index, hash)
 }
 
-func (tb *tableBatch) Write() error {
-	return tb.batch.Write()
+func SuffixWalk(db Getter, bucket, key []byte, keybits uint, suffix, endSuffix []byte, walker func([]byte, []byte, []byte) (bool, error)) error {
+	l := len(key)
+	keyBuffer := make([]byte, l+len(endSuffix))
+	newsection := true
+	err := db.Walk(bucket, key, keybits, func(k, v []byte) ([]byte, WalkAction, error) {
+		if newsection || (!newsection && !bytes.Equal(k[:l], keyBuffer[:l])) {
+			if bytes.Compare(k[l:], suffix) == 1 || bytes.HasPrefix(k[l:], suffix) {
+				goOn, err := walker(k[:l], k[l:], v)
+				if err != nil || !goOn {
+					return nil, WalkActionStop, err
+				}
+				copy(keyBuffer[:], k[:l])
+				copy(keyBuffer[l:], endSuffix)
+				newsection = true
+				return keyBuffer[:], WalkActionSeek, nil
+			} else {
+				newsection = false
+				return nil, WalkActionNext, nil
+			}
+		}
+		goOn, err := walker(k[:l], k[l:], v)
+		if err != nil || !goOn {
+			return nil, WalkActionStop, err
+		}
+		copy(keyBuffer[:], k[:l])
+		copy(keyBuffer[l:], endSuffix)
+		newsection = true
+		return keyBuffer[:], WalkActionSeek, nil
+	})
+	return err
 }
 
-func (tb *tableBatch) ValueSize() int {
-	return tb.batch.ValueSize()
-}
-
-func (tb *tableBatch) Reset() {
-	tb.batch.Reset()
-}

@@ -43,7 +43,7 @@ type ChainIndexerBackend interface {
 	Process(header *types.Header)
 
 	// Commit finalizes the section metadata and stores it into the database.
-	Commit() error
+	Commit(blockNr uint64) error
 }
 
 // ChainIndexerChain interface is used for connecting the indexer to a blockchain
@@ -66,7 +66,8 @@ type ChainIndexerChain interface {
 // affect already finished sections.
 type ChainIndexer struct {
 	chainDb  ethdb.Database      // Chain database to index the data from
-	indexDb  ethdb.Database      // Prefixed table-view of the db to write index metadata into
+	bucket   []byte
+	sectionHeadBucket []byte
 	backend  ChainIndexerBackend // Background processor generating the index data content
 	children []*ChainIndexer     // Child indexers to cascade chain updates to
 
@@ -90,10 +91,14 @@ type ChainIndexer struct {
 // NewChainIndexer creates a new chain indexer to do background processing on
 // chain segments of a given size after certain number of confirmations passed.
 // The throttling parameter might be used to prevent database thrashing.
-func NewChainIndexer(chainDb, indexDb ethdb.Database, backend ChainIndexerBackend, section, confirm uint64, throttling time.Duration, kind string) *ChainIndexer {
+func NewChainIndexer(chainDb ethdb.Database, bucket []byte, backend ChainIndexerBackend, section, confirm uint64, throttling time.Duration, kind string) *ChainIndexer {
+	sectionHeadBucket := make([]byte, len(bucket) + len("shead"))
+	copy(sectionHeadBucket, bucket)
+	copy(sectionHeadBucket[len(bucket):], []byte("shead"))
 	c := &ChainIndexer{
 		chainDb:     chainDb,
-		indexDb:     indexDb,
+		bucket:      bucket,
+		sectionHeadBucket: sectionHeadBucket,
 		backend:     backend,
 		update:      make(chan struct{}, 1),
 		quit:        make(chan chan error),
@@ -362,7 +367,8 @@ func (c *ChainIndexer) processSection(section uint64, lastHead common.Hash) (com
 		c.backend.Process(header)
 		lastHead = header.Hash()
 	}
-	if err := c.backend.Commit(); err != nil {
+	writeBlockNr := (section+1)*c.sectionSize
+	if err := c.backend.Commit(writeBlockNr-1); err != nil {
 		c.log.Error("Section commit failed", "error", err)
 		return common.Hash{}, err
 	}
@@ -395,7 +401,7 @@ func (c *ChainIndexer) AddChildIndexer(indexer *ChainIndexer) {
 // loadValidSections reads the number of valid sections from the index database
 // and caches is into the local state.
 func (c *ChainIndexer) loadValidSections() {
-	data, _ := c.indexDb.Get([]byte("count"))
+	data, _ := c.chainDb.Get(c.bucket, []byte("count"))
 	if len(data) == 8 {
 		c.storedSections = binary.BigEndian.Uint64(data[:])
 	}
@@ -406,7 +412,7 @@ func (c *ChainIndexer) setValidSections(sections uint64) {
 	// Set the current number of valid sections in the database
 	var data [8]byte
 	binary.BigEndian.PutUint64(data[:], sections)
-	c.indexDb.Put([]byte("count"), data[:])
+	c.chainDb.Put(c.bucket, []byte("count"), data[:])
 
 	// Remove any reorged sections, caching the valids in the mean time
 	for c.storedSections > sections {
@@ -422,7 +428,7 @@ func (c *ChainIndexer) SectionHead(section uint64) common.Hash {
 	var data [8]byte
 	binary.BigEndian.PutUint64(data[:], section)
 
-	hash, _ := c.indexDb.Get(append([]byte("shead"), data[:]...))
+	hash, _ := c.chainDb.Get(c.sectionHeadBucket, data[:])
 	if len(hash) == len(common.Hash{}) {
 		return common.BytesToHash(hash)
 	}
@@ -435,7 +441,7 @@ func (c *ChainIndexer) setSectionHead(section uint64, hash common.Hash) {
 	var data [8]byte
 	binary.BigEndian.PutUint64(data[:], section)
 
-	c.indexDb.Put(append([]byte("shead"), data[:]...), hash.Bytes())
+	c.chainDb.Put(c.sectionHeadBucket, data[:], hash.Bytes())
 }
 
 // removeSectionHead removes the reference to a processed section from the index
@@ -444,5 +450,5 @@ func (c *ChainIndexer) removeSectionHead(section uint64) {
 	var data [8]byte
 	binary.BigEndian.PutUint64(data[:], section)
 
-	c.indexDb.Delete(append([]byte("shead"), data[:]...))
+	c.chainDb.Delete(c.sectionHeadBucket, data[:])
 }

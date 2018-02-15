@@ -78,9 +78,9 @@ type vmExecMarshaling struct {
 	GasPrice *math.HexOrDecimal256
 }
 
-func (t *VMTest) Run(vmconfig vm.Config) error {
-	db, _ := ethdb.NewMemDatabase()
-	statedb := MakePreState(db, t.json.Pre)
+func (t *VMTest) Run(vmconfig vm.Config, blockNr uint64) error {
+	db := ethdb.NewMemDatabase()
+	statedb, _ := MakePreState(db, t.json.Pre, blockNr)
 	ret, gasRemaining, err := t.exec(statedb, vmconfig)
 
 	if t.json.GasRemaining == nil {

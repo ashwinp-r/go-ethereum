@@ -437,7 +437,7 @@ func (self *TxPool) Add(ctx context.Context, tx *types.Transaction) error {
 	//fmt.Println("Send", tx.Hash())
 	self.relay.Send(types.Transactions{tx})
 
-	self.chainDb.Put(tx.Hash().Bytes(), data)
+	self.chainDb.Put([]byte("LightTx"), tx.Hash().Bytes(), data)
 	return nil
 }
 
@@ -509,7 +509,7 @@ func (self *TxPool) RemoveTransactions(txs types.Transactions) {
 		//self.RemoveTx(tx.Hash())
 		hash := tx.Hash()
 		delete(self.pending, hash)
-		self.chainDb.Delete(hash[:])
+		self.chainDb.Delete([]byte("LightTx"), hash[:])
 		hashes = append(hashes, hash)
 	}
 	self.relay.Discard(hashes)
@@ -521,6 +521,6 @@ func (pool *TxPool) RemoveTx(hash common.Hash) {
 	defer pool.mu.Unlock()
 	// delete from pending pool
 	delete(pool.pending, hash)
-	pool.chainDb.Delete(hash[:])
+	pool.chainDb.Delete([]byte("LightTx"), hash[:])
 	pool.relay.Discard([]common.Hash{hash})
 }

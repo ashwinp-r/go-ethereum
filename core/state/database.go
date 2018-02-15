@@ -17,17 +17,24 @@
 package state
 
 import (
+	"bytes"
 	"fmt"
-	"sync"
+	"runtime"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	lru "github.com/hashicorp/golang-lru"
 )
 
 // Trie cache generation limit after which to evic trie nodes from memory.
-var MaxTrieCacheGen = uint16(120)
+var MaxTrieCacheGen = uint32(4*1024*1024)
+
+var AccountsBucket = []byte("AT")
+var CodeBucket = []byte("CODE")
 
 const (
 	// Number of past tries to keep. This value is chosen such that
@@ -37,6 +44,364 @@ const (
 	// Number of codehash->size associations to keep.
 	codeSizeCacheSize = 100000
 )
+
+type StateReader interface {
+	ReadAccountData(address *common.Address) (*Account, error)
+	ReadAccountStorage(address *common.Address, key *common.Hash) ([]byte, error)
+	ReadAccountCode(addres *common.Address) ([]byte, error)
+}
+
+type StateWriter interface {
+	UpdateAccountData(address *common.Address, account *Account) error
+	UpdateAccountCode(codeHash common.Hash, code []byte) error
+	DeleteAccount(address *common.Address) error
+	WriteAccountStorage(address *common.Address, key, value *common.Hash) error
+}
+
+// Implements StateReader by wrapping database only, without trie
+type DbState struct {
+	db ethdb.Mutation
+	blockNr uint64
+}
+
+func NewDbState(db ethdb.Database, blockNr uint64) *DbState {
+	return &DbState{
+		db: db.NewBatch(),
+		blockNr: blockNr,
+	}
+}
+
+func (dbs *DbState) SetBlockNr(blockNr uint64) {
+	dbs.db.DeleteSuffix(ethdb.CreateBlockSuffix(blockNr))
+	dbs.blockNr = blockNr
+}
+
+func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(key, seckey, value common.Hash) bool) {
+	suffix := ethdb.CreateBlockSuffix(dbs.blockNr)
+	endSuffix := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
+	addrHash := crypto.Keccak256Hash(addr[:])
+	var s [32]byte
+	copy(s[:], start)
+	ethdb.SuffixWalk(dbs.db, addrHash[:], s[:], 0, suffix, endSuffix, func(ks, ss, vs []byte) (bool, error) {
+		if vs == nil || len(vs) == 0 {
+			// Skip deleted entries
+			return true, nil
+		}
+		key, err := dbs.db.Get(trie.SecureKeyPrefix, ks)
+		if err != nil {
+			return false, err
+		}
+		return cb(common.BytesToHash(key), common.BytesToHash(ks), common.BytesToHash(vs)), nil
+	})
+}
+
+func (dbs *DbState) ReadAccountData(address *common.Address) (*Account, error) {
+	suffix := ethdb.CreateBlockSuffix(dbs.blockNr)
+	seckey := crypto.Keccak256Hash(address[:])
+	enc, err := dbs.db.First(AccountsBucket, seckey[:], suffix)
+	if err != nil || enc == nil || len(enc) == 0 {
+		return nil, nil
+	}
+	var data Account
+	if err := rlp.DecodeBytes(enc, &data); err != nil {
+		return nil, err
+	}
+	return &data, nil
+}
+
+func (dbs *DbState) ReadAccountStorage(address *common.Address, key *common.Hash) ([]byte, error) {
+	addrHash := crypto.Keccak256Hash(address[:])
+	seckey := crypto.Keccak256Hash(key[:])
+	suffix := ethdb.CreateBlockSuffix(dbs.blockNr)
+	enc, err := dbs.db.First(addrHash[:], seckey[:], suffix)
+	if err != nil || enc == nil {
+		return nil, nil
+	}
+	return enc, nil
+}
+
+func (dbs *DbState) ReadAccountCode(address *common.Address) ([]byte, error) {
+	account, err := dbs.ReadAccountData(address)
+	if err != nil {
+		return nil, err
+	}
+	if account == nil {
+		return nil, nil
+	}
+	if bytes.Equal(account.CodeHash[:], emptyCodeHash) {
+		return nil, nil
+	}
+	return dbs.db.Get(CodeBucket, account.CodeHash[:])
+}
+
+func (dbs *DbState) UpdateAccountData(address *common.Address, account *Account) error {
+	data, err := rlp.EncodeToBytes(account)
+	if err != nil {
+		return err
+	}
+	seckey := crypto.Keccak256Hash(address[:])
+	suffix := ethdb.CreateBlockSuffix(dbs.blockNr)
+	return dbs.db.PutS(AccountsBucket, seckey[:], suffix, data)
+}
+
+func (dbs *DbState) DeleteAccount(address *common.Address) error {
+	seckey := crypto.Keccak256Hash(address[:])
+	suffix := ethdb.CreateBlockSuffix(dbs.blockNr)
+	return dbs.db.PutS(AccountsBucket, seckey[:], suffix, []byte{})
+}
+
+func (dbs *DbState) UpdateAccountCode(codeHash common.Hash, code []byte) error {
+	return dbs.db.Put(CodeBucket, codeHash[:], code)
+}
+
+func (dbs *DbState) WriteAccountStorage(address *common.Address, key, value *common.Hash) error {
+	addrHash := crypto.Keccak256Hash(address[:])
+	seckey := crypto.Keccak256Hash(key[:])
+	suffix := ethdb.CreateBlockSuffix(dbs.blockNr)
+	v := bytes.TrimLeft(value[:], "\x00") // PutS below will make a copy of v
+	return dbs.db.PutS(addrHash[:], seckey[:], suffix, v)
+}
+
+// Implements StateReader by wrapping a trie and a database, where trie acts as a cache for the database
+type TrieDbState struct {
+	t Trie
+	db Database
+	nodeList *trie.List
+	blockNr uint64
+	storageTries map[string]Trie
+	continuations []*trie.TrieContinuation
+}
+
+func NewTrieDbState(root common.Hash, db Database, blockNr uint64) (*TrieDbState, error) {
+	t, err := db.OpenTrie(root)
+	if err != nil {
+		return nil, err
+	}
+	tds := TrieDbState{
+		t: t,
+		db: db,
+		nodeList: trie.NewList(),
+		blockNr: blockNr,
+		storageTries: make(map[string]Trie),
+		continuations: []*trie.TrieContinuation{},
+	}
+	t.MakeListed(tds.nodeList)
+	return &tds, nil
+}
+
+func (tds *TrieDbState) Copy() *TrieDbState {
+	cpy := TrieDbState{
+		t: tds.db.CopyTrie(tds.t),
+		db: tds.db,
+		nodeList: nil,
+		blockNr: tds.blockNr,
+		storageTries: make(map[string]Trie),
+	}
+	return &cpy
+}
+
+func (tds *TrieDbState) Database() Database {
+	return tds.db
+}
+
+func (tds *TrieDbState) Trie() *trie.Trie {
+	sectrie, _ := tds.t.(*trie.SecureTrie)
+	return sectrie.GetTrie()
+}
+
+func (tds *TrieDbState) TrieRoot() common.Hash {
+	return tds.t.Hash()
+}
+
+func (tds *TrieDbState) Rebuild() error {
+	tr := tds.t.(*trie.SecureTrie).GetTrie()
+	tr.Rebuild(tds.db.TrieDB(), tds.blockNr)
+	return nil
+}
+
+func (tds *TrieDbState) SetBlockNr(blockNr uint64) {
+	tds.blockNr = blockNr
+}
+
+func (tds *TrieDbState) ReadAccountData(address *common.Address) (*Account, error) {
+	enc, err := tds.t.TryGet(tds.db.TrieDB(), address[:], tds.blockNr)
+	if err != nil {
+		return nil, err
+	}
+	if enc == nil || len(enc) == 0 {
+		return nil, nil
+	}
+	var data Account
+	if err := rlp.DecodeBytes(enc, &data); err != nil {
+		return nil, err
+	}
+	return &data, nil
+}
+
+func (tds *TrieDbState) getStorageTrie(address *common.Address) (Trie, error) {
+	t, ok := tds.storageTries[string(address[:])]
+	if !ok {
+		account, err := tds.ReadAccountData(address)
+		if err != nil {
+			return nil, err
+		}
+		addrHash := crypto.Keccak256Hash(address[:])
+		if account == nil {
+			t, err = tds.db.OpenStorageTrie(addrHash, common.Hash{})
+		} else {
+			t, err = tds.db.OpenStorageTrie(addrHash, account.Root)
+		}
+		if err != nil {
+			return nil, err
+		}
+		t.MakeListed(tds.nodeList)
+		tds.storageTries[string(common.CopyBytes(address[:]))] = t
+	}
+	return t, nil
+}
+
+func (tds *TrieDbState) ReadAccountStorage(address *common.Address, key *common.Hash) ([]byte, error) {
+	t, err := tds.getStorageTrie(address)
+	if err != nil {
+		return nil, err
+	}
+	enc, err := t.TryGet(tds.db.TrieDB(), key[:], tds.blockNr)
+	if err != nil {
+		return nil, err
+	}
+	return enc, nil
+}
+
+func (tds *TrieDbState) ReadAccountCode(address *common.Address) ([]byte, error) {
+	account, err := tds.ReadAccountData(address)
+	if err != nil {
+		return nil, err
+	}
+	if account == nil {
+		return nil, nil
+	}
+	if bytes.Equal(account.CodeHash[:], emptyCodeHash) {
+		return nil, nil
+	}
+	return tds.db.TrieDB().Get(CodeBucket, account.CodeHash[:])
+}
+
+var prevMemStats runtime.MemStats
+
+func (tds *TrieDbState) PruneTries() {
+	if tds.nodeList.Len() > int(MaxTrieCacheGen) {
+		tds.nodeList.ShrinkTo(int(MaxTrieCacheGen))
+		nodeCount := 0
+		for addr, storageTrie := range tds.storageTries {
+			count, empty, _ := storageTrie.TryPrune()
+			nodeCount += count
+			if empty {
+				delete(tds.storageTries, addr)
+			}
+		}
+		count, _, _ := tds.t.TryPrune()
+		nodeCount += count
+		log.Info("Nodes", "trie", nodeCount, "list", tds.nodeList.Len())
+	} else {
+		log.Info("Nodes", "list", tds.nodeList.Len())
+	}
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	churn := (m.TotalAlloc - prevMemStats.TotalAlloc) - (prevMemStats.Alloc - m.Alloc)
+	log.Info("Memory", "alloc", int(m.Alloc / 1024), "churn", int(churn / 1024), "sys", int(m.Sys / 1024), "numGC", int(m.NumGC))
+	prevMemStats = m
+}
+
+type TrieStateWriter struct {
+	tds *TrieDbState
+}
+
+type DbStateWriter struct {
+	tds *TrieDbState
+}
+
+func (tds *TrieDbState) TrieStateWriter() *TrieStateWriter {
+	return &TrieStateWriter{tds: tds}
+}
+
+func (tds *TrieDbState) DbStateWriter() *DbStateWriter {
+	return &DbStateWriter{tds: tds}
+}
+
+var emptyRoot = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
+
+func (tsw *TrieStateWriter) UpdateAccountData(address *common.Address, account *Account) error {
+	storageTrie, err := tsw.tds.getStorageTrie(address)
+	if err != nil {
+		return err
+	}
+	account.Root = storageTrie.Hash()
+	data, err := rlp.EncodeToBytes(account)
+	if err != nil {
+		return err
+	}
+	return tsw.tds.t.TryUpdate(tsw.tds.db.TrieDB(), address[:], data, tsw.tds.blockNr)
+}
+
+func (dsw *DbStateWriter) UpdateAccountData(address *common.Address, account *Account) error {
+	storageTrie, err := dsw.tds.getStorageTrie(address)
+	if err != nil {
+		return err
+	}
+	account.Root = storageTrie.Hash()
+	data, err := rlp.EncodeToBytes(account)
+	if err != nil {
+		return err
+	}
+	seckey := dsw.tds.t.HashKey(address[:])
+	suffix := ethdb.CreateBlockSuffix(dsw.tds.blockNr)
+	return dsw.tds.db.TrieDB().PutS(AccountsBucket, seckey, suffix, data)
+}
+
+func (tsw *TrieStateWriter) DeleteAccount(address *common.Address) error {
+	storageTrie, err := tsw.tds.getStorageTrie(address)
+	if err != nil {
+		return err
+	}
+	storageTrie.Unlink()
+	delete(tsw.tds.storageTries, string(address[:]))
+	return tsw.tds.t.TryDelete(tsw.tds.db.TrieDB(), address[:], tsw.tds.blockNr)
+}
+
+func (dsw *DbStateWriter) DeleteAccount(address *common.Address) error {
+	seckey := dsw.tds.t.HashKey(address[:])
+	suffix := ethdb.CreateBlockSuffix(dsw.tds.blockNr)
+	return dsw.tds.db.TrieDB().PutS(AccountsBucket, seckey, suffix, []byte{})
+}
+
+func (tsw *TrieStateWriter) UpdateAccountCode(codeHash common.Hash, code []byte) error {
+	return nil
+}
+
+func (dsw *DbStateWriter) UpdateAccountCode(codeHash common.Hash, code []byte) error {
+	return dsw.tds.db.TrieDB().Put(CodeBucket, codeHash[:], code)
+}
+
+func (tsw *TrieStateWriter) WriteAccountStorage(address *common.Address, key, value *common.Hash) error {
+	storageTrie, err := tsw.tds.getStorageTrie(address)
+	if err != nil {
+		return err
+	}
+	v := bytes.TrimLeft(value[:], "\x00")
+	if len(v) > 0 {
+		return storageTrie.TryUpdate(tsw.tds.db.TrieDB(), key[:], common.CopyBytes(v), tsw.tds.blockNr)
+	} else {
+		return storageTrie.TryDelete(tsw.tds.db.TrieDB(), key[:], tsw.tds.blockNr)
+	}
+}
+
+func (dsw *DbStateWriter) WriteAccountStorage(address *common.Address, key, value *common.Hash) error {
+	addrHash := crypto.Keccak256Hash(address[:])
+	seckey := dsw.tds.t.HashKey(key[:])
+	suffix := ethdb.CreateBlockSuffix(dsw.tds.blockNr)
+	v := bytes.TrimLeft(value[:], "\x00") // PutS below will make a copy of v
+	return dsw.tds.db.TrieDB().PutS(addrHash[:], seckey, suffix, v)
+}
 
 // Database wraps access to tries and contract code.
 type Database interface {
@@ -56,19 +421,23 @@ type Database interface {
 	ContractCodeSize(addrHash, codeHash common.Hash) (int, error)
 
 	// TrieDB retrieves the low level trie database used for data storage.
-	TrieDB() *trie.Database
+	TrieDB() ethdb.Database
 }
 
 // Trie is a Ethereum Merkle Trie.
 type Trie interface {
-	TryGet(key []byte) ([]byte, error)
-	TryUpdate(key, value []byte) error
-	TryDelete(key []byte) error
-	Commit(onleaf trie.LeafCallback) (common.Hash, error)
+	Prove(db ethdb.Database, key []byte, fromLevel uint, proofDb ethdb.Putter, blockNr uint64) error
+	TryGet(db ethdb.Database, key []byte, blockNr uint64) ([]byte, error)
+	TryUpdate(db ethdb.Database, key, value []byte, blockNr uint64) error
+	TryDelete(db ethdb.Database, key []byte, blockNr uint64) error
 	Hash() common.Hash
-	NodeIterator(startKey []byte) trie.NodeIterator
-	GetKey([]byte) []byte // TODO(fjl): remove this when SecureTrie is removed
-	Prove(key []byte, fromLevel uint, proofDb ethdb.Putter) error
+	NodeIterator(db ethdb.Database, startKey []byte, blockNr uint64) trie.NodeIterator
+	HashKey([]byte) []byte
+	GetKey(trie.DatabaseReader, []byte) []byte // TODO(fjl): remove this when SecureTrie is removed
+	PrintTrie()
+	TryPrune() (int, bool, error)
+	MakeListed(*trie.List)
+	Unlink()
 }
 
 // NewDatabase creates a backing store for state. The returned database is safe for
@@ -78,57 +447,29 @@ type Trie interface {
 func NewDatabase(db ethdb.Database) Database {
 	csc, _ := lru.New(codeSizeCacheSize)
 	return &cachingDB{
-		db:            trie.NewDatabase(db),
+		db:            db,
 		codeSizeCache: csc,
 	}
 }
 
 type cachingDB struct {
-	db            *trie.Database
-	mu            sync.Mutex
-	pastTries     []*trie.SecureTrie
+	db            ethdb.Database
 	codeSizeCache *lru.Cache
 }
 
 // OpenTrie opens the main account trie.
 func (db *cachingDB) OpenTrie(root common.Hash) (Trie, error) {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
-	for i := len(db.pastTries) - 1; i >= 0; i-- {
-		if db.pastTries[i].Hash() == root {
-			return cachedTrie{db.pastTries[i].Copy(), db}, nil
-		}
-	}
-	tr, err := trie.NewSecure(root, db.db, MaxTrieCacheGen)
-	if err != nil {
-		return nil, err
-	}
-	return cachedTrie{tr, db}, nil
-}
-
-func (db *cachingDB) pushTrie(t *trie.SecureTrie) {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
-	if len(db.pastTries) >= maxPastTries {
-		copy(db.pastTries, db.pastTries[1:])
-		db.pastTries[len(db.pastTries)-1] = t
-	} else {
-		db.pastTries = append(db.pastTries, t)
-	}
+	return trie.NewSecure(root, AccountsBucket, false)
 }
 
 // OpenStorageTrie opens the storage trie of an account.
 func (db *cachingDB) OpenStorageTrie(addrHash, root common.Hash) (Trie, error) {
-	return trie.NewSecure(root, db.db, 0)
+	return trie.NewSecure(root, addrHash[:], true)
 }
 
 // CopyTrie returns an independent copy of the given trie.
 func (db *cachingDB) CopyTrie(t Trie) Trie {
 	switch t := t.(type) {
-	case cachedTrie:
-		return cachedTrie{t.SecureTrie.Copy(), db}
 	case *trie.SecureTrie:
 		return t.Copy()
 	default:
@@ -138,7 +479,7 @@ func (db *cachingDB) CopyTrie(t Trie) Trie {
 
 // ContractCode retrieves a particular contract's code.
 func (db *cachingDB) ContractCode(addrHash, codeHash common.Hash) ([]byte, error) {
-	code, err := db.db.Node(codeHash)
+	code, err := db.db.Get(CodeBucket, codeHash[:])
 	if err == nil {
 		db.codeSizeCache.Add(codeHash, len(code))
 	}
@@ -158,24 +499,6 @@ func (db *cachingDB) ContractCodeSize(addrHash, codeHash common.Hash) (int, erro
 }
 
 // TrieDB retrieves any intermediate trie-node caching layer.
-func (db *cachingDB) TrieDB() *trie.Database {
+func (db *cachingDB) TrieDB() ethdb.Database {
 	return db.db
-}
-
-// cachedTrie inserts its trie into a cachingDB on commit.
-type cachedTrie struct {
-	*trie.SecureTrie
-	db *cachingDB
-}
-
-func (m cachedTrie) Commit(onleaf trie.LeafCallback) (common.Hash, error) {
-	root, err := m.SecureTrie.Commit(onleaf)
-	if err == nil {
-		m.db.pushTrie(m.SecureTrie)
-	}
-	return root, err
-}
-
-func (m cachedTrie) Prove(key []byte, fromLevel uint, proofDb ethdb.Putter) error {
-	return m.SecureTrie.Prove(key, fromLevel, proofDb)
 }

@@ -22,25 +22,54 @@ const IdealBatchSize = 100 * 1024
 
 // Putter wraps the database write operation supported by both batches and regular databases.
 type Putter interface {
-	Put(key []byte, value []byte) error
+	Put(bucket, key, value []byte) error
+	PutS(bucket, key, suffix, value []byte) error
+	DeleteSuffix(suffix []byte) error
+	PutHash(index uint32, hash []byte)
+}
+
+type WalkAction int
+
+const (
+	WalkActionNext = iota
+	WalkActionSeek
+	WalkActionStop
+)
+
+type WalkerFunc = func(key, value []byte) ([]byte, WalkAction, error)
+
+type Getter interface {
+	Get(bucket, key []byte) ([]byte, error)
+	First(bucket, key, suffix []byte) ([]byte, error)
+	Has(bucket, key []byte) (bool, error)
+	Walk(bucket, key []byte, keybits uint, walker WalkerFunc) error
+	GetHash(index uint32) []byte
+}
+
+type Deleter interface {
+	Delete(bucket, key[]byte) error
+}
+
+type GetterPutter interface {
+	Getter
+	Putter
 }
 
 // Database wraps all database operations. All methods are safe for concurrent use.
 type Database interface {
+	Getter
 	Putter
-	Get(key []byte) ([]byte, error)
-	Has(key []byte) (bool, error)
-	Delete(key []byte) error
+	Delete(bucket, key []byte) error
+	MultiPut(tuples ...[]byte) error
 	Close()
-	NewBatch() Batch
+	NewBatch() Mutation
+	Size() int
 }
 
-// Batch is a write-only database that commits changes to its host database
-// when Write is called. Batch cannot be used concurrently.
-type Batch interface {
-	Putter
-	ValueSize() int // amount of data in the batch
-	Write() error
-	// Reset resets the batch for reuse
-	Reset()
+// Extended version of the Batch, with read capabilites
+type Mutation interface {
+	Database
+	Commit() error
+	Rollback()
+	Keys() [][]byte
 }

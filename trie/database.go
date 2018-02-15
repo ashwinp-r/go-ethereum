@@ -25,19 +25,25 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 )
 
-// secureKeyPrefix is the database key prefix used to store trie node preimages.
-var secureKeyPrefix = []byte("secure-key-")
+// SecureKeyPrefix is the database key prefix used to store trie node preimages.
+var SecureKeyPrefix = []byte("secure-key-")
 
 // secureKeyLength is the length of the above prefix + 32byte hash.
 const secureKeyLength = 11 + 32
 
-// DatabaseReader wraps the Get and Has method of a backing store for the trie.
+// DatabaseReader wraps the Get method of a backing store for the trie.
 type DatabaseReader interface {
 	// Get retrieves the value associated with key form the database.
-	Get(key []byte) (value []byte, err error)
+	Get(bucket, key []byte) (value []byte, err error)
+
+	First(bucket, key, suffix []byte) ([]byte, error)
 
 	// Has retrieves whether a key is present in the database.
-	Has(key []byte) (bool, error)
+	Has(bucket, key []byte) (bool, error)
+
+	Walk(bucket, key []byte, keybits uint, walker ethdb.WalkerFunc) error
+
+	GetHash(index uint32) []byte
 }
 
 // Database is an intermediate write layer between the trie data structures and
@@ -130,7 +136,7 @@ func (db *Database) Node(hash common.Hash) ([]byte, error) {
 		return node.blob, nil
 	}
 	// Content unavailable in memory, attempt to retrieve from disk
-	return db.diskdb.Get(hash[:])
+	return db.diskdb.Get(nil, hash[:])
 }
 
 // preimage retrieves a cached trie node pre-image from memory. If it cannot be
@@ -145,14 +151,14 @@ func (db *Database) preimage(hash common.Hash) ([]byte, error) {
 		return preimage, nil
 	}
 	// Content unavailable in memory, attempt to retrieve from disk
-	return db.diskdb.Get(db.secureKey(hash[:]))
+	return db.diskdb.Get(nil, db.secureKey(hash[:]))
 }
 
 // secureKey returns the database key for the preimage of key, as an ephemeral
 // buffer. The caller must not hold onto the return value because it will become
 // invalid on the next call.
 func (db *Database) secureKey(key []byte) []byte {
-	buf := append(db.seckeybuf[:0], secureKeyPrefix...)
+	buf := append(db.seckeybuf[:0], SecureKeyPrefix...)
 	buf = append(buf, key...)
 	return buf
 }
@@ -242,88 +248,6 @@ func (db *Database) dereference(child common.Hash, parent common.Hash) {
 //
 // As a side effect, all pre-images accumulated up to this point are also written.
 func (db *Database) Commit(node common.Hash, report bool) error {
-	// Create a database batch to flush persistent data out. It is important that
-	// outside code doesn't see an inconsistent state (referenced data removed from
-	// memory cache during commit but not yet in persistent storage). This is ensured
-	// by only uncaching existing data when the database write finalizes.
-	db.lock.RLock()
-
-	start := time.Now()
-	batch := db.diskdb.NewBatch()
-
-	// Move all of the accumulated preimages into a write batch
-	for hash, preimage := range db.preimages {
-		if err := batch.Put(db.secureKey(hash[:]), preimage); err != nil {
-			log.Error("Failed to commit preimage from trie database", "err", err)
-			db.lock.RUnlock()
-			return err
-		}
-		if batch.ValueSize() > ethdb.IdealBatchSize {
-			if err := batch.Write(); err != nil {
-				return err
-			}
-			batch.Reset()
-		}
-	}
-	// Move the trie itself into the batch, flushing if enough data is accumulated
-	nodes, storage := len(db.nodes), db.nodesSize+db.preimagesSize
-	if err := db.commit(node, batch); err != nil {
-		log.Error("Failed to commit trie from trie database", "err", err)
-		db.lock.RUnlock()
-		return err
-	}
-	// Write batch ready, unlock for readers during persistence
-	if err := batch.Write(); err != nil {
-		log.Error("Failed to write trie to disk", "err", err)
-		db.lock.RUnlock()
-		return err
-	}
-	db.lock.RUnlock()
-
-	// Write successful, clear out the flushed data
-	db.lock.Lock()
-	defer db.lock.Unlock()
-
-	db.preimages = make(map[common.Hash][]byte)
-	db.preimagesSize = 0
-
-	db.uncache(node)
-
-	logger := log.Info
-	if !report {
-		logger = log.Debug
-	}
-	logger("Persisted trie from memory database", "nodes", nodes-len(db.nodes), "size", storage-db.nodesSize, "time", time.Since(start),
-		"gcnodes", db.gcnodes, "gcsize", db.gcsize, "gctime", db.gctime, "livenodes", len(db.nodes), "livesize", db.nodesSize)
-
-	// Reset the garbage collection statistics
-	db.gcnodes, db.gcsize, db.gctime = 0, 0, 0
-
-	return nil
-}
-
-// commit is the private locked version of Commit.
-func (db *Database) commit(hash common.Hash, batch ethdb.Batch) error {
-	// If the node does not exist, it's a previously committed node
-	node, ok := db.nodes[hash]
-	if !ok {
-		return nil
-	}
-	for child := range node.children {
-		if err := db.commit(child, batch); err != nil {
-			return err
-		}
-	}
-	if err := batch.Put(hash[:], node.blob); err != nil {
-		return err
-	}
-	// If we've reached an optimal match size, commit and start over
-	if batch.ValueSize() >= ethdb.IdealBatchSize {
-		if err := batch.Write(); err != nil {
-			return err
-		}
-		batch.Reset()
-	}
 	return nil
 }
 

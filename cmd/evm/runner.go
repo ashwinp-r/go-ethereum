@@ -82,6 +82,7 @@ func runCmd(ctx *cli.Context) error {
 		tracer      vm.Tracer
 		debugLogger *vm.StructLogger
 		statedb     *state.StateDB
+		tds         *state.TrieDbState
 		chainConfig *params.ChainConfig
 		sender      = common.StringToAddress("sender")
 		receiver    = common.StringToAddress("receiver")
@@ -96,13 +97,15 @@ func runCmd(ctx *cli.Context) error {
 	}
 	if ctx.GlobalString(GenesisFlag.Name) != "" {
 		gen := readGenesis(ctx.GlobalString(GenesisFlag.Name))
-		db, _ := ethdb.NewMemDatabase()
-		genesis := gen.ToBlock(db)
-		statedb, _ = state.New(genesis.Root(), state.NewDatabase(db))
+		db := ethdb.NewMemDatabase()
+		genesis, _, tds, _ := gen.ToBlock(db)
+		tds, _ = state.NewTrieDbState(genesis.Root(), state.NewDatabase(db), 0)
+		statedb = state.New(tds)
 		chainConfig = gen.Config
 	} else {
-		db, _ := ethdb.NewMemDatabase()
-		statedb, _ = state.New(common.Hash{}, state.NewDatabase(db))
+		db := ethdb.NewMemDatabase()
+		tds, _ = state.NewTrieDbState(common.Hash{}, state.NewDatabase(db), 0)
+		statedb = state.New(tds)
 	}
 	if ctx.GlobalString(SenderFlag.Name) != "" {
 		sender = common.HexToAddress(ctx.GlobalString(SenderFlag.Name))
@@ -186,7 +189,7 @@ func runCmd(ctx *cli.Context) error {
 	var leftOverGas uint64
 	if ctx.GlobalBool(CreateFlag.Name) {
 		input := append(code, common.Hex2Bytes(ctx.GlobalString(InputFlag.Name))...)
-		ret, _, leftOverGas, err = runtime.Create(input, &runtimeConfig)
+		ret, _, leftOverGas, err = runtime.Create(input, &runtimeConfig, 0)
 	} else {
 		if len(code) > 0 {
 			statedb.SetCode(receiver, code)
@@ -196,8 +199,8 @@ func runCmd(ctx *cli.Context) error {
 	execTime := time.Since(tstart)
 
 	if ctx.GlobalBool(DumpFlag.Name) {
-		statedb.IntermediateRoot(true)
-		fmt.Println(string(statedb.Dump()))
+		tds.IntermediateRoot(statedb, true)
+		fmt.Println(string(tds.Dump()))
 	}
 
 	if memProfilePath := ctx.GlobalString(MemProfileFlag.Name); memProfilePath != "" {

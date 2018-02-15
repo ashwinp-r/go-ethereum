@@ -33,14 +33,16 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 // Tests that updating a state trie does not leak any database writes prior to
 // actually committing the state.
 func TestUpdateLeaks(t *testing.T) {
 	// Create an empty state database
-	db, _ := ethdb.NewMemDatabase()
-	state, _ := New(common.Hash{}, NewDatabase(db))
+	db := ethdb.NewMemDatabase()
+	tds, _ := NewTrieDbState(common.Hash{}, NewDatabase(db), 0)
+	state := New(tds)
 
 	// Update it with some accounts
 	for i := byte(0); i < 255; i++ {
@@ -53,12 +55,15 @@ func TestUpdateLeaks(t *testing.T) {
 		if i%3 == 0 {
 			state.SetCode(addr, []byte{i, i, i, i, i})
 		}
-		state.IntermediateRoot(false)
+		tds.IntermediateRoot(state, false)
 	}
 	// Ensure that no data was leaked into the database
-	for _, key := range db.Keys() {
-		value, _ := db.Get(key)
-		t.Errorf("State leaked into database: %x -> %x", key, value)
+	for keys, i := db.Keys(), 0; i < len(keys); i += 2 {
+		if bytes.Equal(keys[i], trie.SecureKeyPrefix) {
+			continue
+		}
+		value, _ := db.Get(keys[i], keys[i+1])
+		t.Errorf("State leaked into database: %x:%x -> %x", keys[i], keys[i+1], value)
 	}
 }
 
@@ -66,10 +71,12 @@ func TestUpdateLeaks(t *testing.T) {
 // only the one right before the commit.
 func TestIntermediateLeaks(t *testing.T) {
 	// Create two state databases, one transitioning to the final state, the other final from the beginning
-	transDb, _ := ethdb.NewMemDatabase()
-	finalDb, _ := ethdb.NewMemDatabase()
-	transState, _ := New(common.Hash{}, NewDatabase(transDb))
-	finalState, _ := New(common.Hash{}, NewDatabase(finalDb))
+	transDb := ethdb.NewMemDatabase()
+	finalDb := ethdb.NewMemDatabase()
+	transTds, _ := NewTrieDbState(common.Hash{}, NewDatabase(transDb), 0)
+	transState := New(transTds)
+	finalTds, _ := NewTrieDbState(common.Hash{}, NewDatabase(finalDb), 0)
+	finalState := New(finalTds)
 
 	modify := func(state *StateDB, addr common.Address, i, tweak byte) {
 		state.SetBalance(addr, big.NewInt(int64(11*i)+int64(tweak)))
@@ -88,7 +95,7 @@ func TestIntermediateLeaks(t *testing.T) {
 		modify(transState, common.Address{byte(i)}, i, 0)
 	}
 	// Write modifications to trie.
-	transState.IntermediateRoot(false)
+	transTds.IntermediateRoot(transState, false)
 
 	// Overwrite all the data with new values in the transient database.
 	for i := byte(0); i < 255; i++ {
@@ -97,22 +104,32 @@ func TestIntermediateLeaks(t *testing.T) {
 	}
 
 	// Commit and cross check the databases.
-	if _, err := transState.Commit(false); err != nil {
+	transTds.IntermediateRoot(transState, false)
+	transTds.SetBlockNr(1)
+	if err := transState.Commit(false, transTds.DbStateWriter()); err != nil {
 		t.Fatalf("failed to commit transition state: %v", err)
 	}
-	if _, err := finalState.Commit(false); err != nil {
+	finalState.Finalise(false, finalTds.TrieStateWriter())
+	finalTds.SetBlockNr(1)
+	if err := finalState.Commit(false, finalTds.DbStateWriter()); err != nil {
 		t.Fatalf("failed to commit final state: %v", err)
 	}
-	for _, key := range finalDb.Keys() {
-		if _, err := transDb.Get(key); err != nil {
-			val, _ := finalDb.Get(key)
-			t.Errorf("entry missing from the transition database: %x -> %x", key, val)
+	for finalKeys, i := finalDb.Keys(), 0; i < len(finalKeys); i += 2 {
+		if bytes.Equal(finalKeys[i], trie.SecureKeyPrefix) {
+			continue
+		}
+		if _, err := transDb.Get(finalKeys[i], finalKeys[i+1]); err != nil {
+			val, _ := finalDb.Get(finalKeys[i], finalKeys[i+1])
+			t.Errorf("entry missing from the transition database: %x:%x -> %x", finalKeys[i], finalKeys[i+1], val)
 		}
 	}
-	for _, key := range transDb.Keys() {
-		if _, err := finalDb.Get(key); err != nil {
-			val, _ := transDb.Get(key)
-			t.Errorf("extra entry in the transition database: %x -> %x", key, val)
+	for transKeys, i := transDb.Keys(), 0; i < len(transKeys); i += 2 {
+		if bytes.Equal(transKeys[i], trie.SecureKeyPrefix) {
+			continue
+		}
+		if _, err := finalDb.Get(transKeys[i], transKeys[i+1]); err != nil {
+			val, _ := transDb.Get(transKeys[i], transKeys[i+1])
+			t.Errorf("entry missing in the transition database: %x:%x -> %x", transKeys[i], transKeys[i+1], val)
 		}
 	}
 }
@@ -122,18 +139,22 @@ func TestIntermediateLeaks(t *testing.T) {
 // https://github.com/ethereum/go-ethereum/pull/15549.
 func TestCopy(t *testing.T) {
 	// Create a random state test to copy and modify "independently"
-	db, _ := ethdb.NewMemDatabase()
-	orig, _ := New(common.Hash{}, NewDatabase(db))
+	db := ethdb.NewMemDatabase()
+	origTds, _ := NewTrieDbState(common.Hash{}, NewDatabase(db), 0)
+	orig := New(origTds)
 
 	for i := byte(0); i < 255; i++ {
 		obj := orig.GetOrNewStateObject(common.BytesToAddress([]byte{i}))
 		obj.AddBalance(big.NewInt(int64(i)))
-		orig.updateStateObject(obj)
+		origTds.TrieStateWriter().UpdateAccountData(&obj.address, &obj.data)
 	}
-	orig.Finalise(false)
+	orig.Finalise(false, origTds.TrieStateWriter())
+	origTds.SetBlockNr(1)
+	orig.CleanForNextBlock()
 
 	// Copy the state, modify both in-memory
 	copy := orig.Copy()
+	copyTds := origTds.Copy()
 
 	for i := byte(0); i < 255; i++ {
 		origObj := orig.GetOrNewStateObject(common.BytesToAddress([]byte{i}))
@@ -142,16 +163,20 @@ func TestCopy(t *testing.T) {
 		origObj.AddBalance(big.NewInt(2 * int64(i)))
 		copyObj.AddBalance(big.NewInt(3 * int64(i)))
 
-		orig.updateStateObject(origObj)
-		copy.updateStateObject(copyObj)
+		origTds.TrieStateWriter().UpdateAccountData(&origObj.address, &origObj.data)
+		copyTds.TrieStateWriter().UpdateAccountData(&copyObj.address, &copyObj.data)
 	}
 	// Finalise the changes on both concurrently
 	done := make(chan struct{})
 	go func() {
-		orig.Finalise(true)
+		orig.Finalise(true, origTds.TrieStateWriter())
+		origTds.SetBlockNr(2)
+		orig.CleanForNextBlock()
 		close(done)
 	}()
-	copy.Finalise(true)
+	copy.Finalise(true, copyTds.TrieStateWriter())
+	copyTds.SetBlockNr(2)
+	copy.CleanForNextBlock()
 	<-done
 
 	// Verify that the two states have been updated independently
@@ -334,8 +359,9 @@ func (test *snapshotTest) String() string {
 func (test *snapshotTest) run() bool {
 	// Run all actions and create snapshots.
 	var (
-		db, _        = ethdb.NewMemDatabase()
-		state, _     = New(common.Hash{}, NewDatabase(db))
+		db           = ethdb.NewMemDatabase()
+		tds, _       = NewTrieDbState(common.Hash{}, NewDatabase(db), 0)
+		state        = New(tds)
 		snapshotRevs = make([]int, len(test.snapshots))
 		sindex       = 0
 	)
@@ -349,12 +375,13 @@ func (test *snapshotTest) run() bool {
 	// Revert all snapshots in reverse order. Each revert must yield a state
 	// that is equivalent to fresh state with all actions up the snapshot applied.
 	for sindex--; sindex >= 0; sindex-- {
-		checkstate, _ := New(common.Hash{}, state.Database())
+		checktds, _ := NewTrieDbState(common.Hash{}, tds.Database(), 0)
+		checkstate := New(checktds)
 		for _, action := range test.actions[:test.snapshots[sindex]] {
 			action.fn(action, checkstate)
 		}
 		state.RevertToSnapshot(snapshotRevs[sindex])
-		if err := test.checkEqual(state, checkstate); err != nil {
+		if err := test.checkEqual(state, checkstate, tds, checktds); err != nil {
 			test.err = fmt.Errorf("state mismatch after revert to snapshot %d\n%v", sindex, err)
 			return false
 		}
@@ -363,7 +390,7 @@ func (test *snapshotTest) run() bool {
 }
 
 // checkEqual checks that methods of state and checkstate return the same values.
-func (test *snapshotTest) checkEqual(state, checkstate *StateDB) error {
+func (test *snapshotTest) checkEqual(state, checkstate *StateDB, tds, checktds *TrieDbState) error {
 	for _, addr := range test.addrs {
 		var err error
 		checkeq := func(op string, a, b interface{}) bool {
@@ -383,10 +410,10 @@ func (test *snapshotTest) checkEqual(state, checkstate *StateDB) error {
 		checkeq("GetCodeSize", state.GetCodeSize(addr), checkstate.GetCodeSize(addr))
 		// Check storage.
 		if obj := state.getStateObject(addr); obj != nil {
-			state.ForEachStorage(addr, func(key, val common.Hash) bool {
+			tds.ForEachStorage(state, addr, func(key, val common.Hash) bool {
 				return checkeq("GetState("+key.Hex()+")", val, checkstate.GetState(addr, key))
 			})
-			checkstate.ForEachStorage(addr, func(key, checkval common.Hash) bool {
+			checktds.ForEachStorage(checkstate, addr, func(key, checkval common.Hash) bool {
 				return checkeq("GetState("+key.Hex()+")", state.GetState(addr, key), checkval)
 			})
 		}
@@ -408,8 +435,11 @@ func (test *snapshotTest) checkEqual(state, checkstate *StateDB) error {
 
 func (s *StateSuite) TestTouchDelete(c *check.C) {
 	s.state.GetOrNewStateObject(common.Address{})
-	root, _ := s.state.Commit(false)
-	s.state.Reset(root)
+	s.tds.IntermediateRoot(s.state, false)
+	s.tds.SetBlockNr(1)
+	s.state.Commit(false, s.tds.DbStateWriter())
+
+	s.state.Reset()
 
 	snapshot := s.state.Snapshot()
 	s.state.AddBalance(common.Address{}, new(big.Int))

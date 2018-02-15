@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 )
 
@@ -36,8 +37,14 @@ func ExampleGenerateChain() {
 		addr1   = crypto.PubkeyToAddress(key1.PublicKey)
 		addr2   = crypto.PubkeyToAddress(key2.PublicKey)
 		addr3   = crypto.PubkeyToAddress(key3.PublicKey)
-		db, _   = ethdb.NewMemDatabase()
+		db   = ethdb.NewMemDatabase()
 	)
+
+	h := log.Root().GetHandler()
+	defer func() {
+		log.Root().SetHandler(h)
+	}()
+	log.Root().SetHandler(log.DiscardHandler())
 
 	// Ensure that key1 has some funds in the genesis block.
 	gspec := &Genesis{
@@ -87,7 +94,7 @@ func ExampleGenerateChain() {
 		return
 	}
 
-	state, _ := blockchain.State()
+	state, _, _ := blockchain.State()
 	fmt.Printf("last block: #%d\n", blockchain.CurrentBlock().Number())
 	fmt.Println("balance of addr1:", state.GetBalance(addr1))
 	fmt.Println("balance of addr2:", state.GetBalance(addr2))

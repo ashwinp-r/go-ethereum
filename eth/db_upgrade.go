@@ -18,14 +18,14 @@
 package eth
 
 import (
-	"bytes"
-	"time"
+	//"bytes"
+	//"time"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core"
+	//"github.com/ethereum/go-ethereum/common"
+	//"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/ethdb"
-	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/rlp"
+	//"github.com/ethereum/go-ethereum/log"
+	//"github.com/ethereum/go-ethereum/rlp"
 )
 
 var deduplicateData = []byte("dbUpgrade_20170714deduplicateData")
@@ -35,6 +35,7 @@ var deduplicateData = []byte("dbUpgrade_20170714deduplicateData")
 // Returns a stop function that blocks until the process has
 // been safely stopped.
 func upgradeDeduplicateData(db ethdb.Database) func() error {
+	/*
 	// If the database is already converted or empty, bail out
 	data, _ := db.Get(deduplicateData)
 	if len(data) > 0 && data[0] == 42 {
@@ -47,7 +48,6 @@ func upgradeDeduplicateData(db ethdb.Database) func() error {
 	// Start the deduplication upgrade on a new goroutine
 	log.Warn("Upgrading database to use lookup entries")
 	stop := make(chan chan error)
-
 	go func() {
 		// Create an iterator to read the entire database and covert old lookup entires
 		it := db.(*ethdb.LDBDatabase).NewIterator()
@@ -132,4 +132,6 @@ func upgradeDeduplicateData(db ethdb.Database) func() error {
 		stop <- errc
 		return <-errc
 	}
+	*/
+	return nil
 }

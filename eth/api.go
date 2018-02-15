@@ -309,8 +309,8 @@ func (api *PublicDebugAPI) DumpBlock(blockNr rpc.BlockNumber) (state.Dump, error
 		// If we're dumping the pending state, we need to request
 		// both the pending block as well as the pending state from
 		// the miner and operate on those
-		_, stateDb := api.eth.miner.Pending()
-		return stateDb.RawDump(), nil
+		_, _, tds := api.eth.miner.Pending()
+		return tds.RawDump(), nil
 	}
 	var block *types.Block
 	if blockNr == rpc.LatestBlockNumber {
@@ -321,11 +321,11 @@ func (api *PublicDebugAPI) DumpBlock(blockNr rpc.BlockNumber) (state.Dump, error
 	if block == nil {
 		return state.Dump{}, fmt.Errorf("block #%d not found", blockNr)
 	}
-	stateDb, err := api.eth.BlockChain().StateAt(block.Root())
+	_, tds, err := api.eth.BlockChain().StateAt(block.Root(), uint64(blockNr))
 	if err != nil {
 		return state.Dump{}, err
 	}
-	return stateDb.RawDump(), nil
+	return tds.RawDump(), nil
 }
 
 // PrivateDebugAPI is the collection of Ethereum full node APIs exposed over
@@ -343,8 +343,7 @@ func NewPrivateDebugAPI(config *params.ChainConfig, eth *Ethereum) *PrivateDebug
 
 // Preimage is a debug API function that returns the preimage for a sha3 hash, if known.
 func (api *PrivateDebugAPI) Preimage(ctx context.Context, hash common.Hash) (hexutil.Bytes, error) {
-	db := core.PreimageTable(api.eth.ChainDb())
-	return db.Get(hash.Bytes())
+	return api.eth.ChainDb().Get(core.PreimagePrefix, hash.Bytes())
 }
 
 // GetBadBLocks returns a list of the last 'bad blocks' that the client has seen on the network
@@ -368,37 +367,38 @@ type storageEntry struct {
 
 // StorageRangeAt returns the storage at the given block height and transaction index.
 func (api *PrivateDebugAPI) StorageRangeAt(ctx context.Context, blockHash common.Hash, txIndex int, contractAddress common.Address, keyStart hexutil.Bytes, maxResult int) (StorageRangeResult, error) {
-	_, _, statedb, err := api.computeTxEnv(blockHash, txIndex, 0)
+	block := api.eth.blockchain.GetBlockByHash(blockHash)
+	if block == nil {
+		return StorageRangeResult{}, fmt.Errorf("block %x not found", blockHash)
+	}
+	_, _, statedb, dbstate, _, err := api.computeTxEnv(blockHash, txIndex, 0)
 	if err != nil {
 		return StorageRangeResult{}, err
 	}
-	st := statedb.StorageTrie(contractAddress)
-	if st == nil {
-		return StorageRangeResult{}, fmt.Errorf("account %x doesn't exist", contractAddress)
-	}
-	return storageRangeAt(st, keyStart, maxResult)
+	dbstate.SetBlockNr(block.NumberU64())
+	statedb.Finalise(api.eth.chainConfig.IsEIP158(block.Number()), dbstate)
+	return storageRangeAt(dbstate, contractAddress, keyStart, maxResult)
 }
 
-func storageRangeAt(st state.Trie, start []byte, maxResult int) (StorageRangeResult, error) {
-	it := trie.NewIterator(st.NodeIterator(start))
+func storageRangeAt(dbstate *state.DbState, contractAddress common.Address, start []byte, maxResult int) (StorageRangeResult, error) {
+	account, err := dbstate.ReadAccountData(&contractAddress)
+	if err != nil {
+		return StorageRangeResult{}, fmt.Errorf("error reading account %x: %v", contractAddress, err)
+	}
+	if account == nil {
+		return StorageRangeResult{}, fmt.Errorf("account %x doesn't exist", contractAddress)
+	}
 	result := StorageRangeResult{Storage: storageMap{}}
-	for i := 0; i < maxResult && it.Next(); i++ {
-		_, content, _, err := rlp.Split(it.Value)
-		if err != nil {
-			return StorageRangeResult{}, err
+	resultCount := 0
+	dbstate.ForEachStorage(contractAddress, start, func(key, seckey, value common.Hash) bool {
+		if resultCount < maxResult {
+			result.Storage[seckey] = storageEntry{Key: &key, Value: value}
+		} else {
+			result.NextKey = &seckey
 		}
-		e := storageEntry{Value: common.BytesToHash(content)}
-		if preimage := st.GetKey(it.Key); preimage != nil {
-			preimage := common.BytesToHash(preimage)
-			e.Key = &preimage
-		}
-		result.Storage[common.BytesToHash(it.Key)] = e
-	}
-	// Add the 'next key' so clients can continue downloading.
-	if it.Next() {
-		next := common.BytesToHash(it.Key)
-		result.NextKey = &next
-	}
+		resultCount++
+		return resultCount <= maxResult
+	})
 	return result, nil
 }
 
@@ -462,21 +462,23 @@ func (api *PrivateDebugAPI) getModifiedAccounts(startBlock, endBlock *types.Bloc
 		return nil, fmt.Errorf("start block height (%d) must be less than end block height (%d)", startBlock.Number().Uint64(), endBlock.Number().Uint64())
 	}
 
-	oldTrie, err := trie.NewSecure(startBlock.Root(), trie.NewDatabase(api.eth.chainDb), 0)
+	oldTrie, err := trie.NewSecure(startBlock.Root(), state.AccountsBucket, false)
 	if err != nil {
 		return nil, err
 	}
-	newTrie, err := trie.NewSecure(endBlock.Root(), trie.NewDatabase(api.eth.chainDb), 0)
+	newTrie, err := trie.NewSecure(endBlock.Root(), state.AccountsBucket, false)
 	if err != nil {
 		return nil, err
 	}
 
-	diff, _ := trie.NewDifferenceIterator(oldTrie.NodeIterator([]byte{}), newTrie.NodeIterator([]byte{}))
+	diff, _ := trie.NewDifferenceIterator(
+		oldTrie.NodeIterator(api.eth.chainDb, []byte{}, startBlock.NumberU64()), 
+		newTrie.NodeIterator(api.eth.chainDb, []byte{}, endBlock.NumberU64()))
 	iter := trie.NewIterator(diff)
 
 	var dirty []common.Address
 	for iter.Next() {
-		key := newTrie.GetKey(iter.Key)
+		key := newTrie.GetKey(api.eth.chainDb, iter.Key)
 		if key == nil {
 			return nil, fmt.Errorf("no preimage found for hash %x", iter.Key)
 		}

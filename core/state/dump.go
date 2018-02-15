@@ -17,12 +17,14 @@
 package state
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/trie"
 )
 
 type DumpAccount struct {
@@ -39,39 +41,54 @@ type Dump struct {
 	Accounts map[string]DumpAccount `json:"accounts"`
 }
 
-func (self *StateDB) RawDump() Dump {
+func (self *TrieDbState) RawDump() Dump {
 	dump := Dump{
-		Root:     fmt.Sprintf("%x", self.trie.Hash()),
+		Root:     fmt.Sprintf("%x", self.t.Hash()),
 		Accounts: make(map[string]DumpAccount),
 	}
-
-	it := trie.NewIterator(self.trie.NodeIterator(nil))
-	for it.Next() {
-		addr := self.trie.GetKey(it.Key)
+	// Walk(bucket, key []byte, keybits uint, walker func(key, value []byte) []byte) error
+	suffix := ethdb.CreateBlockSuffix(self.blockNr)
+	endSuffix := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
+	var prefix [32]byte
+	err := ethdb.SuffixWalk(self.db.TrieDB(), AccountsBucket, prefix[:], 0, suffix, endSuffix, func(k, s, v []byte) (bool, error) {
+		addr := self.t.GetKey(self.db.TrieDB(), k)
 		var data Account
-		if err := rlp.DecodeBytes(it.Value, &data); err != nil {
-			panic(err)
+		var err error
+		if err = rlp.DecodeBytes(v, &data); err != nil {
+			return false, err
 		}
-
-		obj := newObject(nil, common.BytesToAddress(addr), data, nil)
+		var code []byte
+		if !bytes.Equal(data.CodeHash[:], emptyCodeHash) {
+			if code, err = self.db.TrieDB().Get(CodeBucket, data.CodeHash[:]); err != nil {
+				return false, err
+			}
+		}
 		account := DumpAccount{
 			Balance:  data.Balance.String(),
 			Nonce:    data.Nonce,
 			Root:     common.Bytes2Hex(data.Root[:]),
 			CodeHash: common.Bytes2Hex(data.CodeHash),
-			Code:     common.Bytes2Hex(obj.Code(self.db)),
+			Code:     common.Bytes2Hex(code),
 			Storage:  make(map[string]string),
 		}
-		storageIt := trie.NewIterator(obj.getTrie(self.db).NodeIterator(nil))
-		for storageIt.Next() {
-			account.Storage[common.Bytes2Hex(self.trie.GetKey(storageIt.Key))] = common.Bytes2Hex(storageIt.Value)
+		addrHash := crypto.Keccak256Hash(addr)
+		err = ethdb.SuffixWalk(self.db.TrieDB(), addrHash[:], []byte{}, 0, suffix, endSuffix, func(ks, ss, vs []byte) (bool, error) {
+			account.Storage[common.Bytes2Hex(self.t.GetKey(self.db.TrieDB(), ks))] = common.Bytes2Hex(vs)
+			return true, nil
+		})
+		if err != nil {
+			return false, err
 		}
 		dump.Accounts[common.Bytes2Hex(addr)] = account
+		return true, nil
+	})
+	if err != nil {
+		panic(err)
 	}
 	return dump
 }
 
-func (self *StateDB) Dump() []byte {
+func (self *TrieDbState) Dump() []byte {
 	json, err := json.MarshalIndent(self.RawDump(), "", "    ")
 	if err != nil {
 		fmt.Println("dump err", err)
