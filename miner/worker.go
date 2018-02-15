@@ -82,6 +82,7 @@ type environment struct {
 	signer types.Signer
 
 	state     *state.StateDB // apply state changes here
+	tds       *state.TrieDbState
 	ancestors mapset.Set     // ancestor set (used for checking uncle parent validity)
 	family    mapset.Set     // family set (used for checking uncle invalidity)
 	uncles    mapset.Set     // uncle set
@@ -97,6 +98,7 @@ type environment struct {
 type task struct {
 	receipts  []*types.Receipt
 	state     *state.StateDB
+	tds       *state.TrieDbState
 	block     *types.Block
 	createdAt time.Time
 }
@@ -163,6 +165,7 @@ type worker struct {
 	snapshotMu    sync.RWMutex // The lock used to protect the block snapshot and state snapshot
 	snapshotBlock *types.Block
 	snapshotState *state.StateDB
+	snapshotTds   *state.TrieDbState
 
 	// atomic status counters
 	running int32 // The indicator whether the consensus engine is running or not.
@@ -241,14 +244,14 @@ func (w *worker) setRecommitInterval(interval time.Duration) {
 }
 
 // pending returns the pending state and corresponding block.
-func (w *worker) pending() (*types.Block, *state.StateDB) {
+func (w *worker) pending() (*types.Block, *state.StateDB, *state.TrieDbState) {
 	// return a snapshot to avoid contention on currentMu mutex
 	w.snapshotMu.RLock()
 	defer w.snapshotMu.RUnlock()
 	if w.snapshotState == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return w.snapshotBlock, w.snapshotState.Copy()
+	return w.snapshotBlock, w.snapshotState.Copy(), w.snapshotTds.Copy()
 }
 
 // pendingBlock returns pending block.
@@ -560,7 +563,7 @@ func (w *worker) resultLoop() {
 				logs = append(logs, receipt.Logs...)
 			}
 			// Commit block and state to database.
-			stat, err := w.chain.WriteBlockWithState(block, receipts, task.state)
+			stat, err := w.chain.WriteBlockWithState(block, receipts, task.state, task.tds)
 			if err != nil {
 				log.Error("Failed writing block to chain", "err", err)
 				continue
@@ -592,13 +595,14 @@ func (w *worker) resultLoop() {
 
 // makeCurrent creates a new environment for the current cycle.
 func (w *worker) makeCurrent(parent *types.Block, header *types.Header) error {
-	state, err := w.chain.StateAt(parent.Root())
+	state, tds, err := w.chain.StateAt(parent.Root(), parent.NumberU64())
 	if err != nil {
 		return err
 	}
 	env := &environment{
 		signer:    types.NewEIP155Signer(w.config.ChainID),
 		state:     state,
+		tds:       tds,
 		ancestors: mapset.NewSet(),
 		family:    mapset.NewSet(),
 		uncles:    mapset.NewSet(),
@@ -672,7 +676,7 @@ func (w *worker) updateSnapshot() {
 func (w *worker) commitTransaction(tx *types.Transaction, coinbase common.Address) ([]*types.Log, error) {
 	snap := w.current.state.Snapshot()
 
-	receipt, _, err := core.ApplyTransaction(w.config, w.chain, &coinbase, w.current.gasPool, w.current.state, w.current.header, tx, &w.current.header.GasUsed, vm.Config{})
+	receipt, _, err := core.ApplyTransaction(w.config, w.chain, &coinbase, w.current.gasPool, w.current.state, w.current.tds, w.current.header, tx, &w.current.header.GasUsed, vm.Config{})
 	if err != nil {
 		w.current.state.RevertToSnapshot(snap)
 		return nil, err
@@ -927,7 +931,8 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 		*receipts[i] = *l
 	}
 	s := w.current.state.Copy()
-	block, err := w.engine.Finalize(w.chain, w.current.header, s, w.current.txs, uncles, w.current.receipts)
+	tds := w.current.tds.Copy()
+	block, err := w.engine.Finalize(w.chain, w.current.header, s, tds, w.current.txs, uncles, w.current.receipts)
 	if err != nil {
 		return err
 	}
@@ -936,7 +941,7 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 			interval()
 		}
 		select {
-		case w.taskCh <- &task{receipts: receipts, state: s, block: block, createdAt: time.Now()}:
+		case w.taskCh <- &task{receipts: receipts, state: s, tds: tds, block: block, createdAt: time.Now()}:
 			w.unconfirmed.Shift(block.NumberU64() - 1)
 
 			feesWei := new(big.Int)
