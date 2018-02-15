@@ -99,13 +99,13 @@ func stateTestCmd(ctx *cli.Context) error {
 			state, err := test.Run(st, cfg)
 			// print state root for evmlab tracing
 			if ctx.GlobalBool(MachineFlag.Name) && state != nil {
-				fmt.Fprintf(os.Stderr, "{\"stateRoot\": \"%x\"}\n", state.IntermediateRoot(false))
+				fmt.Fprintf(os.Stderr, "{\"stateRoot\": \"%x\"}\n", tds.IntermediateRoot(state, false))
 			}
 			if err != nil {
 				// Test failed, mark as so and dump any state to aid debugging
 				result.Pass, result.Error = false, err.Error()
-				if ctx.GlobalBool(DumpFlag.Name) && state != nil {
-					dump := state.RawDump()
+				if ctx.GlobalBool(DumpFlag.Name) && tds != nil {
+					dump := tds.RawDump()
 					result.State = &dump
 				}
 			}
