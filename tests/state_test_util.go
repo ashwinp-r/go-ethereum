@@ -120,18 +120,20 @@ func (t *StateTest) Subtests() []StateSubtest {
 }
 
 // Run executes a specific subtest.
-func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config) (*state.StateDB, error) {
+func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config) (*state.StateDB, *state.TrieDbState, error) {
 	config, ok := Forks[subtest.Fork]
 	if !ok {
-		return nil, UnsupportedForkError{subtest.Fork}
+		return nil, nil, UnsupportedForkError{subtest.Fork}
 	}
-	block := t.genesis(config).ToBlock(nil)
-	statedb := MakePreState(ethdb.NewMemDatabase(), t.json.Pre)
+	block, _, _, _ := t.genesis(config).ToBlock(nil)
+	readBlockNr := block.Number().Uint64()
+	db := ethdb.NewMemDatabase()
+	statedb, tds := MakePreState(db, t.json.Pre, readBlockNr)
 
 	post := t.json.Post[subtest.Fork][subtest.Index]
 	msg, err := t.json.Tx.toMessage(post)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	context := core.NewEVMContext(msg, block.Header(), nil, &t.json.Env.Coinbase)
 	context.GetHash = vmTestBlockHash
@@ -144,10 +146,10 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config) (*state.StateD
 		statedb.RevertToSnapshot(snapshot)
 	}
 	if logs := rlpHash(statedb.Logs()); logs != common.Hash(post.Logs) {
-		return statedb, fmt.Errorf("post state logs hash mismatch: got %x, want %x", logs, post.Logs)
+		return statedb, tds, fmt.Errorf("post state logs hash mismatch: got %x, want %x", logs, post.Logs)
 	}
 	// Commit block
-	statedb.Commit(config.IsEIP158(block.Number()))
+	statedb.Finalise(config.IsEIP158(block.Number()), tds.DbStateWriter())
 	// Add 0-value mining reward. This only makes a difference in the cases
 	// where
 	// - the coinbase suicided, or
@@ -155,22 +157,22 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config) (*state.StateD
 	//   the coinbase gets no txfee, so isn't created, and thus needs to be touched
 	statedb.AddBalance(block.Coinbase(), new(big.Int))
 	// And _now_ get the state root
-	root := statedb.IntermediateRoot(config.IsEIP158(block.Number()))
+	root, _ := tds.IntermediateRoot(statedb, config.IsEIP158(block.Number()))
 	// N.B: We need to do this in a two-step process, because the first Commit takes care
 	// of suicides, and we need to touch the coinbase _after_ it has potentially suicided.
 	if root != common.Hash(post.Root) {
-		return statedb, fmt.Errorf("post state root mismatch: got %x, want %x", root, post.Root)
+		return statedb, tds, fmt.Errorf("post state root mismatch: got %x, want %x", root, post.Root)
 	}
-	return statedb, nil
+	return statedb, tds, nil
 }
 
 func (t *StateTest) gasLimit(subtest StateSubtest) uint64 {
 	return t.json.Tx.GasLimit[t.json.Post[subtest.Fork][subtest.Index].Indexes.Gas]
 }
 
-func MakePreState(db ethdb.Database, accounts core.GenesisAlloc) *state.StateDB {
-	sdb := state.NewDatabase(db)
-	statedb, _ := state.New(common.Hash{}, sdb)
+func MakePreState(db ethdb.Database, accounts core.GenesisAlloc, blockNr uint64) (*state.StateDB, *state.TrieDbState) {
+	tds, _ := state.NewTrieDbState(common.Hash{}, db, blockNr)
+	statedb := state.New(tds)
 	for addr, a := range accounts {
 		statedb.SetCode(addr, a.Code)
 		statedb.SetNonce(addr, a.Nonce)
@@ -180,9 +182,13 @@ func MakePreState(db ethdb.Database, accounts core.GenesisAlloc) *state.StateDB 
 		}
 	}
 	// Commit and re-open to start with a clean state.
-	root, _ := statedb.Commit(false)
-	statedb, _ = state.New(root, sdb)
-	return statedb
+	root, _ := tds.IntermediateRoot(statedb, false)
+	tds.SetBlockNr(blockNr+1)
+	statedb.Finalise(false, tds.DbStateWriter())
+
+	tds, _ = state.NewTrieDbState(root, db, blockNr)
+	statedb = state.New(tds)
+	return statedb, tds
 }
 
 func (t *StateTest) genesis(config *params.ChainConfig) *core.Genesis {

@@ -1060,6 +1060,18 @@ func (s *PublicTransactionPoolAPI) GetTransactionReceipt(ctx context.Context, ha
 	}
 	from, _ := types.Sender(signer, tx)
 
+	// Fill in the derived information in the logs
+	if receipt.Logs != nil {
+		for i, log := range receipt.Logs {
+			log.BlockNumber = blockNumber
+			log.TxHash = hash
+			log.TxIndex = uint(index)
+			log.BlockHash = blockHash
+			log.Index = uint(i)
+		}
+	}
+	// Now reconstruct the bloom filter
+	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
 	fields := map[string]interface{}{
 		"blockHash":         blockHash,
 		"blockNumber":       hexutil.Uint64(blockNumber),

@@ -28,15 +28,26 @@ import (
 var indices = []string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f", "[17]"}
 
 type node interface {
+	print(io.Writer)
 	fstring(string) string
-	cache() (hashNode, bool)
-	canUnload(cachegen, cachelimit uint16) bool
+	dirty() bool
+	hash() []byte
+	makedirty()
+	tod(def uint64) uint64 // Read Touch time of the Oldest Decendant
 }
 
 type (
 	fullNode struct {
 		Children [17]node // Actual trie node data to encode/decode (needs custom encoder)
 		flags    nodeFlag
+	}
+	duoNode struct {
+		mask	uint32 // Bitmask. The set bits indicate the child is not nil
+		child1  node
+		child2  node
+		flags   nodeFlag
+		hashTrue1 bool
+		hashTrue2 bool
 	}
 	shortNode struct {
 		Key   []byte
@@ -65,39 +76,194 @@ func (n *fullNode) EncodeRLP(w io.Writer) error {
 	return rlp.Encode(w, nodes)
 }
 
-func (n *fullNode) copy() *fullNode   { copy := *n; return &copy }
-func (n *shortNode) copy() *shortNode { copy := *n; return &copy }
+func (n *duoNode) EncodeRLP(w io.Writer) error {
+	var children [17]node
+	i1, i2 := n.childrenIdx()
+	children[i1] = n.child1
+	children[i2] = n.child2
+	for i := 0; i < 17; i++ {
+		if i != int(i1) && i != int(i2) {
+			children[i] = valueNode(nil)
+		}
+	}
+	return rlp.Encode(w, children)
+}
+
+func (n *duoNode) childrenIdx() (i1 byte, i2 byte) {
+	child := 1
+	var m uint32 = 1
+	for i := 0; i < 17; i++ {
+		if (n.mask & m) > 0 {
+			if child == 1 {
+				i1 = byte(i)
+				child = 2
+			} else if child == 2 {
+				i2 = byte(i)
+				break
+			}
+		}
+		m <<= 1
+	}
+	return i1, i2
+}
+
+func (n *fullNode) copy() *fullNode   {
+	c := *n
+	return &c
+}
+
+func (n *fullNode) duoCopy() *duoNode {
+	c := duoNode{}
+	first := true
+	for i, child := range n.Children {
+		if child == nil {
+			continue
+		}
+		if first {
+			first = false
+			c.mask |= (uint32(1)<<uint(i))
+			c.child1 = child
+		} else {
+			c.mask |= (uint32(1)<<uint(i))
+			c.child2 = child
+			break
+		}
+	}
+	if !n.flags.dirty {
+		copy(c.flags.hash[:], n.flags.hash[:])
+	}
+	c.flags.dirty = n.flags.dirty
+	return &c
+}
+
+func (n *duoNode) copy() *duoNode {
+	c := *n
+	return &c
+}
+
+func (n *shortNode) copy() *shortNode {
+	c := *n
+	return &c
+}
 
 // nodeFlag contains caching-related metadata about a node.
 type nodeFlag struct {
-	hash  hashNode // cached hash of the node (may be nil)
-	gen   uint16   // cache generation counter
-	dirty bool     // whether the node has changes that must be written to the database
+	t           uint64       // Touch time of the node
+	tod         uint64       // Touch time of the Oldest Decendent
+	hash        common.Hash  // cached hash of the node
+	dirty       bool         // whether the hash field represent the true hash
 }
 
-// canUnload tells whether a node can be unloaded.
-func (n *nodeFlag) canUnload(cachegen, cachelimit uint16) bool {
-	return !n.dirty && cachegen-n.gen >= cachelimit
+func (n hashNode) dirty() bool { return false }
+func (n valueNode) dirty() bool { return true }
+func (n *fullNode) dirty() bool { return n.flags.dirty }
+func (n *duoNode) dirty() bool { return n.flags.dirty }
+func (n *shortNode) dirty() bool { return n.flags.dirty }
+
+func (n hashNode) makedirty() {}
+func (n valueNode) makedirty() {}
+func (n *fullNode) makedirty() {
+	n.flags.dirty = true
+	for _, child := range n.Children {
+		if child != nil {
+			child.makedirty()
+		}
+	}
+}
+func (n *duoNode) makedirty() {
+	n.flags.dirty = true
+	n.child1.makedirty()
+	n.child2.makedirty()
+}
+func (n *shortNode) makedirty() {
+	n.flags.dirty = true
+	n.Val.makedirty()
 }
 
-func (n *fullNode) canUnload(gen, limit uint16) bool  { return n.flags.canUnload(gen, limit) }
-func (n *shortNode) canUnload(gen, limit uint16) bool { return n.flags.canUnload(gen, limit) }
-func (n hashNode) canUnload(uint16, uint16) bool      { return false }
-func (n valueNode) canUnload(uint16, uint16) bool     { return false }
-
-func (n *fullNode) cache() (hashNode, bool)  { return n.flags.hash, n.flags.dirty }
-func (n *shortNode) cache() (hashNode, bool) { return n.flags.hash, n.flags.dirty }
-func (n hashNode) cache() (hashNode, bool)   { return nil, true }
-func (n valueNode) cache() (hashNode, bool)  { return nil, true }
+func (n hashNode) hash() []byte { return n }
+func (n valueNode) hash() []byte { return nil }
+func (n *fullNode) hash() []byte { return n.flags.hash[:] }
+func (n *duoNode) hash() []byte { return n.flags.hash[:] }
+func (n *shortNode) hash() []byte { return n.flags.hash[:] }
 
 // Pretty printing.
-func (n *fullNode) String() string  { return n.fstring("") }
-func (n *shortNode) String() string { return n.fstring("") }
+func (n fullNode) String() string  { return n.fstring("") }
+func (n duoNode) String() string   { return n.fstring("") }
+func (n shortNode) String() string { return n.fstring("") }
 func (n hashNode) String() string   { return n.fstring("") }
 func (n valueNode) String() string  { return n.fstring("") }
 
+func (n hashNode) tod(def uint64) uint64 { return def }
+func (n valueNode) tod(def uint64) uint64 { return def }
+func (n *fullNode) tod(def uint64) uint64 { return n.flags.tod }
+func (n *duoNode) tod(def uint64) uint64 { return n.flags.tod }
+func (n *shortNode) tod(def uint64) uint64 { return n.flags.tod }
+
+func (n *fullNode) updateT(t uint64, joinGeneration, leftGeneration func(uint64)) {
+	if n.flags.t != t {
+		leftGeneration(n.flags.t)
+		joinGeneration(t)
+		n.flags.t = t
+	}
+}
+
+func (n *fullNode) adjustTod(def uint64) {
+	tod := def
+	for _, node := range &n.Children {
+		if node != nil {
+			nodeTod := node.tod(def)
+			if nodeTod < tod {
+				tod = nodeTod
+			}
+		}
+	}
+	n.flags.tod = tod
+}
+
+func (n *duoNode) updateT(t uint64, joinGeneration, leftGeneration func(uint64)) {
+	if n.flags.t != t {
+		leftGeneration(n.flags.t)
+		joinGeneration(t)
+		n.flags.t = t
+	}
+}
+
+func (n *duoNode) adjustTod(def uint64) {
+	tod := def
+	if n.child1 != nil {
+		nodeTod := n.child1.tod(def)
+		if nodeTod < tod {
+			tod = nodeTod
+		}
+	}
+	if n.child2 != nil {
+		nodeTod := n.child2.tod(def)
+		if nodeTod < tod {
+			tod = nodeTod
+		}
+	}
+	n.flags.tod = tod
+}
+
+func (n *shortNode) updateT(t uint64, joinGeneration, leftGeneration func(uint64)) {
+	if n.flags.t != t {
+		leftGeneration(n.flags.t)
+		joinGeneration(t)
+		n.flags.t = t
+	}
+}
+
+func (n *shortNode) adjustTod(def uint64) {
+	tod := def
+	nodeTod := n.Val.tod(def)
+	if nodeTod < tod {
+		tod = nodeTod
+	}
+	n.flags.tod = tod
+}
+
 func (n *fullNode) fstring(ind string) string {
-	resp := fmt.Sprintf("[\n%s  ", ind)
+	resp := fmt.Sprintf("full\n%s  ", ind)
 	for i, node := range &n.Children {
 		if node == nil {
 			resp += fmt.Sprintf("%s: <nil> ", indices[i])
@@ -107,26 +273,59 @@ func (n *fullNode) fstring(ind string) string {
 	}
 	return resp + fmt.Sprintf("\n%s] ", ind)
 }
-func (n *shortNode) fstring(ind string) string {
-	return fmt.Sprintf("{%x: %v} ", n.Key, n.Val.fstring(ind+"  "))
+func (n *fullNode) print(w io.Writer) {
+	fmt.Fprintf(w, "full(")
+	for i, node := range &n.Children {
+		if node != nil {
+			fmt.Fprintf(w, "%d:", i)
+			node.print(w)
+		}
+	}
+	fmt.Fprintf(w, ")")
 }
+
+func (n *duoNode) fstring(ind string) string {
+	resp := fmt.Sprintf("duo[\n%s  ", ind)
+	i1, i2 := n.childrenIdx()
+	resp += fmt.Sprintf("%s: %v", indices[i1], n.child1.fstring(ind+"  "))
+	resp += fmt.Sprintf("%s: %v", indices[i2], n.child2.fstring(ind+"  "))
+	return resp + fmt.Sprintf("\n%s] ", ind)
+}
+func (n *duoNode) print(w io.Writer) {
+	fmt.Fprintf(w, "duo(")
+	i1, i2 := n.childrenIdx()
+	fmt.Fprintf(w, "%d:",i1)
+	n.child1.print(w)
+	fmt.Fprintf(w, "%d:",i2)
+	n.child2.print(w)
+	fmt.Fprintf(w, ")")
+}
+
+func (n *shortNode) fstring(ind string) string {
+	return fmt.Sprintf("{%x: %v} ", compactToHex(n.Key), n.Val.fstring(ind+"  "))
+}
+func (n *shortNode) print(w io.Writer) {
+	fmt.Fprintf(w, "short(%x:", compactToHex(n.Key))
+	n.Val.print(w)
+	fmt.Fprintf(w, ")")
+}
+
 func (n hashNode) fstring(ind string) string {
 	return fmt.Sprintf("<%x> ", []byte(n))
 }
+func (n hashNode) print(w io.Writer) {
+	fmt.Fprintf(w, "hash(%x)", []byte(n))
+}
+
 func (n valueNode) fstring(ind string) string {
 	return fmt.Sprintf("%x ", []byte(n))
 }
-
-func mustDecodeNode(hash, buf []byte, cachegen uint16) node {
-	n, err := decodeNode(hash, buf, cachegen)
-	if err != nil {
-		panic(fmt.Sprintf("node %x: %v", hash, err))
-	}
-	return n
+func (n valueNode) print(w io.Writer) {
+	fmt.Fprintf(w, "value(%x)", []byte(n))
 }
 
 // decodeNode parses the RLP encoding of a trie node.
-func decodeNode(hash, buf []byte, cachegen uint16) (node, error) {
+func decodeNode(hash, buf []byte) (node, error) {
 	if len(buf) == 0 {
 		return nil, io.ErrUnexpectedEOF
 	}
@@ -136,22 +335,21 @@ func decodeNode(hash, buf []byte, cachegen uint16) (node, error) {
 	}
 	switch c, _ := rlp.CountValues(elems); c {
 	case 2:
-		n, err := decodeShort(hash, elems, cachegen)
+		n, err := decodeShort(hash, elems)
 		return n, wrapError(err, "short")
 	case 17:
-		n, err := decodeFull(hash, elems, cachegen)
+		n, err := decodeFull(hash, elems)
 		return n, wrapError(err, "full")
 	default:
 		return nil, fmt.Errorf("invalid number of list elements: %v", c)
 	}
 }
 
-func decodeShort(hash, elems []byte, cachegen uint16) (node, error) {
+func decodeShort(hash, elems []byte) (node, error) {
 	kbuf, rest, err := rlp.SplitString(elems)
 	if err != nil {
 		return nil, err
 	}
-	flag := nodeFlag{hash: hash, gen: cachegen}
 	key := compactToHex(kbuf)
 	if hasTerm(key) {
 		// value node
@@ -159,19 +357,19 @@ func decodeShort(hash, elems []byte, cachegen uint16) (node, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid value node: %v", err)
 		}
-		return &shortNode{key, append(valueNode{}, val...), flag}, nil
+		return &shortNode{Key: key, Val: append(valueNode{}, val...)}, nil
 	}
-	r, _, err := decodeRef(rest, cachegen)
+	r, _, err := decodeRef(rest)
 	if err != nil {
 		return nil, wrapError(err, "val")
 	}
-	return &shortNode{key, r, flag}, nil
+	return &shortNode{Key: key, Val: r}, nil
 }
 
-func decodeFull(hash, elems []byte, cachegen uint16) (*fullNode, error) {
-	n := &fullNode{flags: nodeFlag{hash: hash, gen: cachegen}}
+func decodeFull(hash, elems []byte) (*fullNode, error) {
+	n := &fullNode{}
 	for i := 0; i < 16; i++ {
-		cld, rest, err := decodeRef(elems, cachegen)
+		cld, rest, err := decodeRef(elems)
 		if err != nil {
 			return n, wrapError(err, fmt.Sprintf("[%d]", i))
 		}
@@ -189,7 +387,7 @@ func decodeFull(hash, elems []byte, cachegen uint16) (*fullNode, error) {
 
 const hashLen = len(common.Hash{})
 
-func decodeRef(buf []byte, cachegen uint16) (node, []byte, error) {
+func decodeRef(buf []byte) (node, []byte, error) {
 	kind, val, rest, err := rlp.Split(buf)
 	if err != nil {
 		return nil, buf, err
@@ -202,7 +400,7 @@ func decodeRef(buf []byte, cachegen uint16) (node, []byte, error) {
 			err := fmt.Errorf("oversized embedded node (size is %d bytes, want size < %d)", size, hashLen)
 			return nil, buf, err
 		}
-		n, err := decodeNode(nil, buf, cachegen)
+		n, err := decodeNode(nil, buf)
 		return n, rest, err
 	case kind == rlp.String && len(val) == 0:
 		// empty node
