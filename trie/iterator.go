@@ -22,6 +22,7 @@ import (
 	"errors"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/ethdb"
 )
 
 // Iterator is a key-value trie iterator that traverses a Trie.
@@ -93,10 +94,12 @@ type nodeIteratorState struct {
 }
 
 type nodeIterator struct {
+	db ethdb.Database
 	trie  *Trie                // Trie being iterated
 	stack []*nodeIteratorState // Hierarchy of trie nodes persisting the iteration state
 	path  []byte               // Path to the current node
 	err   error                // Failure set in case of an internal error in the iterator
+	blockNr uint64
 }
 
 // iteratorEnd is stored in nodeIterator.err when iteration is done.
@@ -112,11 +115,11 @@ func (e seekError) Error() string {
 	return "seek error: " + e.err.Error()
 }
 
-func newNodeIterator(trie *Trie, start []byte) NodeIterator {
+func newNodeIterator(db ethdb.Database, trie *Trie, start []byte, blockNr uint64) NodeIterator {
 	if trie.Hash() == emptyState {
 		return new(nodeIterator)
 	}
-	it := &nodeIterator{trie: trie}
+	it := &nodeIterator{db: db, trie: trie, blockNr: blockNr}
 	it.err = it.seek(start)
 	return it
 }
@@ -200,12 +203,17 @@ func (it *nodeIterator) seek(prefix []byte) error {
 	key = key[:len(key)-1]
 	// Move forward until we're just before the closest match to key.
 	for {
-		state, parentIndex, path, err := it.peek(bytes.HasPrefix(key, it.path))
+		descend := bytes.HasPrefix(key, it.path)
+		state, parentIndex, path, err := it.peek(descend)
 		if err == iteratorEnd {
 			return iteratorEnd
 		} else if err != nil {
 			return seekError{prefix, err}
-		} else if bytes.Compare(path, key) >= 0 {
+		}
+		if bytes.Compare(path, key) >= 0 {
+			if !descend {
+				it.push(state, parentIndex, path)
+			}
 			return nil
 		}
 		it.push(state, parentIndex, path)
@@ -221,7 +229,7 @@ func (it *nodeIterator) peek(descend bool) (*nodeIteratorState, *int, []byte, er
 		if root != emptyRoot {
 			state.hash = root
 		}
-		err := state.resolve(it.trie, nil)
+		err := state.resolve(it.db, it.trie, nil, it.blockNr)
 		return state, nil, nil, err
 	}
 	if !descend {
@@ -238,7 +246,7 @@ func (it *nodeIterator) peek(descend bool) (*nodeIteratorState, *int, []byte, er
 		}
 		state, path, ok := it.nextChild(parent, ancestor)
 		if ok {
-			if err := state.resolve(it.trie, path); err != nil {
+			if err := state.resolve(it.db, it.trie, path, it.blockNr); err != nil {
 				return parent, &parent.index, path, err
 			}
 			return state, &parent.index, path, nil
@@ -249,9 +257,9 @@ func (it *nodeIterator) peek(descend bool) (*nodeIteratorState, *int, []byte, er
 	return nil, nil, nil, iteratorEnd
 }
 
-func (st *nodeIteratorState) resolve(tr *Trie, path []byte) error {
+func (st *nodeIteratorState) resolve(db ethdb.Database, tr *Trie, path []byte, blockNr uint64) error {
 	if hash, ok := st.node.(hashNode); ok {
-		resolved, err := tr.resolveHash(hash, path)
+		resolved, err := tr.resolveHash(db, hash, path, len(path), blockNr)
 		if err != nil {
 			return err
 		}
@@ -262,13 +270,16 @@ func (st *nodeIteratorState) resolve(tr *Trie, path []byte) error {
 }
 
 func (it *nodeIterator) nextChild(parent *nodeIteratorState, ancestor common.Hash) (*nodeIteratorState, []byte, bool) {
-	switch node := parent.node.(type) {
+	switch n := parent.node.(type) {
 	case *fullNode:
 		// Full node, move to the first non-nil child.
-		for i := parent.index + 1; i < len(node.Children); i++ {
-			child := node.Children[i]
+		for i := parent.index + 1; i < len(n.Children); i++ {
+			child := n.Children[i]
 			if child != nil {
-				hash, _ := child.cache()
+				var hash []byte
+				if !child.dirty() {
+					hash = child.hash()
+				}
 				state := &nodeIteratorState{
 					hash:    common.BytesToHash(hash),
 					node:    child,
@@ -281,18 +292,49 @@ func (it *nodeIterator) nextChild(parent *nodeIteratorState, ancestor common.Has
 				return state, path, true
 			}
 		}
-	case *shortNode:
-		// Short node, return the pointer singleton child
+	case *duoNode:
+		// Duo node
+		i1, i2 := n.childrenIdx()
+		var child node
+		var i int
+		var hash hashNode
 		if parent.index < 0 {
-			hash, _ := node.Val.cache()
+			child = n.child1
+			i = int(i1)
+		} else if parent.index == int(i1) {
+			child = n.child2
+			i = int(i2)
+		}
+		if child != nil {
+			if !child.dirty() {
+				hash = child.hash()
+			}
 			state := &nodeIteratorState{
 				hash:    common.BytesToHash(hash),
-				node:    node.Val,
+				node:    child,
 				parent:  ancestor,
 				index:   -1,
 				pathlen: len(it.path),
 			}
-			path := append(it.path, node.Key...)
+			path := append(it.path, byte(i))
+			parent.index = i - 1
+			return state, path, true
+		}
+	case *shortNode:
+		// Short node, return the pointer singleton child
+		if parent.index < 0 {
+			var hash []byte
+			if !n.Val.dirty() {
+				hash = n.Val.hash()
+			}
+			state := &nodeIteratorState{
+				hash:    common.BytesToHash(hash),
+				node:    n.Val,
+				parent:  ancestor,
+				index:   -1,
+				pathlen: len(it.path),
+			}
+			path := append(it.path, compactToHex(n.Key)...)
 			return state, path, true
 		}
 	}

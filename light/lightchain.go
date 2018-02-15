@@ -147,7 +147,7 @@ func (self *LightChain) loadLastState() error {
 		self.Reset()
 	} else {
 		if header := self.GetHeaderByHash(head); header != nil {
-			self.hc.SetCurrentHeader(header)
+			self.hc.SetCurrentHeader(self.chainDb, header)
 		}
 	}
 
@@ -197,7 +197,7 @@ func (bc *LightChain) ResetWithGenesisBlock(genesis *types.Block) {
 	}
 	bc.genesisBlock = genesis
 	bc.hc.SetGenesis(bc.genesisBlock.Header())
-	bc.hc.SetCurrentHeader(bc.genesisBlock.Header())
+	bc.hc.SetCurrentHeader(bc.chainDb, bc.genesisBlock.Header())
 }
 
 // Accessors
@@ -211,8 +211,8 @@ func (bc *LightChain) Genesis() *types.Block {
 }
 
 // State returns a new mutable state based on the current HEAD block.
-func (bc *LightChain) State() (*state.StateDB, error) {
-	return nil, errors.New("not implemented, needs client/server interface split")
+func (bc *LightChain) State() (*state.StateDB, *state.TrieDbState, error) {
+	return nil, nil, errors.New("not implemented, needs client/server interface split")
 }
 
 // GetBody retrieves a block body (transactions and uncles) from the database
@@ -223,7 +223,7 @@ func (self *LightChain) GetBody(ctx context.Context, hash common.Hash) (*types.B
 		body := cached.(*types.Body)
 		return body, nil
 	}
-	body, err := GetBody(ctx, self.odr, hash, self.hc.GetBlockNumber(hash))
+	body, err := GetBody(ctx, self.odr, hash, self.hc.GetBlockNumber(self.chainDb, hash))
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +239,7 @@ func (self *LightChain) GetBodyRLP(ctx context.Context, hash common.Hash) (rlp.R
 	if cached, ok := self.bodyRLPCache.Get(hash); ok {
 		return cached.(rlp.RawValue), nil
 	}
-	body, err := GetBodyRLP(ctx, self.odr, hash, self.hc.GetBlockNumber(hash))
+	body, err := GetBodyRLP(ctx, self.odr, hash, self.hc.GetBlockNumber(self.chainDb, hash))
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +274,7 @@ func (self *LightChain) GetBlock(ctx context.Context, hash common.Hash, number u
 // GetBlockByHash retrieves a block from the database or ODR service by hash,
 // caching it if found.
 func (self *LightChain) GetBlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
-	return self.GetBlock(ctx, hash, self.hc.GetBlockNumber(hash))
+	return self.GetBlock(ctx, hash, self.hc.GetBlockNumber(self.chainDb, hash))
 }
 
 // GetBlockByNumber retrieves a block from the database or ODR service by
@@ -310,7 +310,7 @@ func (self *LightChain) Rollback(chain []common.Hash) {
 		hash := chain[i]
 
 		if head := self.hc.CurrentHeader(); head.Hash() == hash {
-			self.hc.SetCurrentHeader(self.GetHeader(head.ParentHash, head.Number.Uint64()-1))
+			self.hc.SetCurrentHeader(self.chainDb, self.GetHeader(head.ParentHash, head.Number.Uint64()-1))
 		}
 	}
 }
@@ -390,7 +390,7 @@ func (self *LightChain) CurrentHeader() *types.Header {
 // GetTd retrieves a block's total difficulty in the canonical chain from the
 // database by hash and number, caching it if found.
 func (self *LightChain) GetTd(hash common.Hash, number uint64) *big.Int {
-	return self.hc.GetTd(hash, number)
+	return self.hc.GetTd(self.chainDb, hash, number)
 }
 
 // GetTdByHash retrieves a block's total difficulty in the canonical chain from the
@@ -453,7 +453,7 @@ func (self *LightChain) SyncCht(ctx context.Context) bool {
 		if header != nil && err == nil {
 			self.mu.Lock()
 			if self.hc.CurrentHeader().Number.Uint64() < header.Number.Uint64() {
-				self.hc.SetCurrentHeader(header)
+				self.hc.SetCurrentHeader(self.chainDb, header)
 			}
 			self.mu.Unlock()
 			return true
