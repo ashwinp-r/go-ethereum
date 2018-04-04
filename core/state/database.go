@@ -82,7 +82,7 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 	addrHash := crypto.Keccak256Hash(addr[:])
 	var s [32]byte
 	copy(s[:], start)
-	ethdb.SuffixWalk(dbs.db, addrHash[:], s[:], 0, suffix, endSuffix, func(ks, ss, vs []byte) (bool, error) {
+	ethdb.SuffixWalk(dbs.db, addrHash[:], s[:], 0, suffix, endSuffix, func(ks, vs []byte) (bool, error) {
 		if vs == nil || len(vs) == 0 {
 			// Skip deleted entries
 			return true, nil

@@ -946,34 +946,71 @@ func (dt *table) PutHash(index uint32, hash []byte) {
 	dt.db.PutHash(index, hash)
 }
 
-func SuffixWalk(db Getter, bucket, key []byte, keybits uint, suffix, endSuffix []byte, walker func([]byte, []byte, []byte) (bool, error)) error {
+func SuffixWalk(db Getter, bucket, key []byte, keybits uint, suffix, endSuffix []byte, walker func([]byte, []byte) (bool, error)) error {
 	l := len(key)
 	keyBuffer := make([]byte, l+len(endSuffix))
-	newsection := true
+	suffixExt := make([]byte, len(endSuffix))
+	copy(suffixExt, suffix)
 	err := db.Walk(bucket, key, keybits, func(k, v []byte) ([]byte, WalkAction, error) {
+		if bytes.Compare(k[l:], suffix) == 1 {
+			// Current key inserted at the given block suffix or earlier
+			goOn, err := walker(k[:l], v)
+			if err != nil || !goOn {
+				return nil, WalkActionStop, err
+			}
+			// Seek to beyond the current key
+			copy(keyBuffer, k[:l])
+			copy(keyBuffer[l:], endSuffix)
+			return keyBuffer, WalkActionSeek, nil
+		} else {
+			// Current key inserted after the given block suffix, seek to it
+			copy(keyBuffer, k[:l])
+			copy(keyBuffer[l:], suffixExt)
+			return keyBuffer, WalkActionSeek, nil
+		}
+	})
+	return err
+}
+
+
+func bytesmask(keybits uint) (int, byte) {
+	keybytes := int((keybits + 7)/8)
+	shiftbits := keybits&7
+	mask := byte(0xff)
+	if shiftbits != 0 {
+		mask = 0xff << (8-shiftbits)
+	}
+	return keybytes, mask
+}
+
+// keys is sorted, prefixes strightly containing each other removed
+func MultiSuffixWalk(db Getter, bucket []byte, keys [][]byte, keybits []uint, suffix, endSuffix []byte, walker func([]byte, []byte) (bool, error)) error {
+	l := len(keys[0])
+	keyBuffer := make([]byte, l+len(endSuffix))
+	newsection := true
+	keyIdx := 0 // What is the current key we are extracting
+	keybytes, mask := bytesmask(keybits[keyIdx])
+	err := db.Walk(bucket, keys[0], 0, func (k, v []byte) ([]byte, WalkAction, error) {
 		if newsection || (!newsection && !bytes.Equal(k[:l], keyBuffer[:l])) {
-			if bytes.Compare(k[l:], suffix) == 1 || bytes.HasPrefix(k[l:], suffix) {
-				goOn, err := walker(k[:l], k[l:], v)
-				if err != nil || !goOn {
-					return nil, WalkActionStop, err
+			// Do we need to switch to the next key and keybits
+			if keybits[keyIdx] > 0 && (!bytes.Equal(k[:keybytes-1], keys[keyIdx][:keybytes-1]) || (k[keybytes-1]&mask)!=(keys[keyIdx][keybytes-1]&mask)) {
+				keyIdx++
+				if keyIdx == len(keys) {
+					return nil, WalkActionStop, nil
 				}
-				copy(keyBuffer[:], k[:l])
-				copy(keyBuffer[l:], endSuffix)
-				newsection = true
-				return keyBuffer[:], WalkActionSeek, nil
+				keybytes, mask = bytesmask(keybits[keyIdx])
+				copy(keyBuffer, keys[keyIdx])
+				copy(keyBuffer[l:], suffix)
+			}
+			// New "section", the first entry for a prefix
+			if bytes.Compare(k[l:], suffix) == 1 || bytes.HasPrefix(k[l:], suffix) {
+
 			} else {
 				newsection = false
 				return nil, WalkActionNext, nil
 			}
 		}
-		goOn, err := walker(k[:l], k[l:], v)
-		if err != nil || !goOn {
-			return nil, WalkActionStop, err
-		}
-		copy(keyBuffer[:], k[:l])
-		copy(keyBuffer[l:], endSuffix)
-		newsection = true
-		return keyBuffer[:], WalkActionSeek, nil
+		return nil, WalkActionStop, nil // TODO - REPLACE
 	})
 	return err
 }

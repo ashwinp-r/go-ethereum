@@ -407,7 +407,7 @@ func (tc *TrieContinuation) ResolveWithDb(db ethdb.Database, blockNr uint64) err
 	decodeNibbles(tc.resolveKey, resolving[:])
 	keys := [][]byte{}
 	values := [][]byte{}
-	err := ethdb.SuffixWalk(db, tc.t.prefix, start[:], uint(4*tc.resolvePos), suffix, endSuffix, func(k, s, v []byte) (bool, error) {
+	err := ethdb.SuffixWalk(db, tc.t.prefix, start[:], uint(4*tc.resolvePos), suffix, endSuffix, func(k, v []byte) (bool, error) {
 		if len(v) > 0 {
 			keys = append(keys, common.CopyBytes(k))
 			values = append(values, common.CopyBytes(v))
@@ -430,7 +430,7 @@ func (t *Trie) rebuildHashes(db ethdb.Database, key []byte, pos int, blockNr uin
 	r := rebuidData{dbw: db, pos:pos, resolvingKey: resolving[:], hashes: hashes}
 	h := newHasher(t.encodeToBytes)
 	defer returnHasherToPool(h)
-	err := ethdb.SuffixWalk(db, t.prefix, start[:], uint(4*pos), suffix, endSuffix, func(k, s, v []byte) (bool, error) {
+	err := ethdb.SuffixWalk(db, t.prefix, start[:], uint(4*pos), suffix, endSuffix, func(k, v []byte) (bool, error) {
 		if len(v) > 0 {
 			return true, r.rebuildInsert(k, v, h)
 		}
@@ -1341,7 +1341,7 @@ func (t *Trie) resolveHashOld(db ethdb.Database, n hashNode, key []byte, pos int
 	decodeNibbles(key[:pos], start[:])
 	var root node
 	var tc TrieContinuation
-	err := ethdb.SuffixWalk(db, t.prefix, start[:], uint(pos*4), suffix, endSuffix, func(k, s, v []byte) (bool, error) {
+	err := ethdb.SuffixWalk(db, t.prefix, start[:], uint(pos*4), suffix, endSuffix, func(k, v []byte) (bool, error) {
 		if len(v) > 0 {
 			tc.action = TrieActionInsert
 			tc.key = keybytesToHex(k)

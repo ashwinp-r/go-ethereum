@@ -50,7 +50,7 @@ func (self *TrieDbState) RawDump() Dump {
 	suffix := ethdb.CreateBlockSuffix(self.blockNr)
 	endSuffix := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 	var prefix [32]byte
-	err := ethdb.SuffixWalk(self.db.TrieDB(), AccountsBucket, prefix[:], 0, suffix, endSuffix, func(k, s, v []byte) (bool, error) {
+	err := ethdb.SuffixWalk(self.db.TrieDB(), AccountsBucket, prefix[:], 0, suffix, endSuffix, func(k, v []byte) (bool, error) {
 		addr := self.GetKey(k)
 		var data Account
 		var err error
@@ -72,7 +72,7 @@ func (self *TrieDbState) RawDump() Dump {
 			Storage:  make(map[string]string),
 		}
 		addrHash := crypto.Keccak256Hash(addr)
-		err = ethdb.SuffixWalk(self.db.TrieDB(), addrHash[:], []byte{}, 0, suffix, endSuffix, func(ks, ss, vs []byte) (bool, error) {
+		err = ethdb.SuffixWalk(self.db.TrieDB(), addrHash[:], []byte{}, 0, suffix, endSuffix, func(ks, vs []byte) (bool, error) {
 			account.Storage[common.Bytes2Hex(self.GetKey(ks))] = common.Bytes2Hex(vs)
 			return true, nil
 		})
