@@ -1064,7 +1064,10 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		readBlockNr := parent.NumberU64()
 		var root common.Hash
 		if bc.trieDbState != nil {
-			root = bc.trieDbState.TrieRoot()
+			root, err = bc.trieDbState.TrieRoot()
+			if err != nil {
+				return i, events, coalescedLogs, err
+			}
 		}
 		parentRoot := parent.Root()
 		bc.db.DeleteSuffix(ethdb.CreateBlockSuffix(block.NumberU64()))

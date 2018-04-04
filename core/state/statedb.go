@@ -417,7 +417,7 @@ func (tds *TrieDbState) ForEachStorage(s *StateDB, addr common.Address, cb func(
 	endSuffix := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 	addrHash := crypto.Keccak256Hash(addr[:])
 	ethdb.SuffixWalk(tds.db.TrieDB(), addrHash[:], []byte{}, 0, suffix, endSuffix, func(ks, ss, vs []byte) (bool, error) {
-		key := common.BytesToHash(tds.t.GetKey(tds.db.TrieDB(), ks))
+		key := common.BytesToHash(tds.GetKey(ks))
 		if _, ok := so.cachedStorage[key]; !ok {
 			cb(key, common.BytesToHash(vs))
 		}
@@ -528,7 +528,7 @@ func (tds *TrieDbState) IntermediateRoot(s *StateDB, deleteEmptyObjects bool) (c
 	if err := s.Finalise(deleteEmptyObjects, tds.TrieStateWriter()); err != nil {
 		return common.Hash{}, err
 	}
-	return tds.TrieRoot(), nil
+	return tds.TrieRoot()
 }
 
 // Prepare sets the current transaction hash and index and block hash which is

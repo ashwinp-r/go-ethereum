@@ -51,7 +51,7 @@ func (self *TrieDbState) RawDump() Dump {
 	endSuffix := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 	var prefix [32]byte
 	err := ethdb.SuffixWalk(self.db.TrieDB(), AccountsBucket, prefix[:], 0, suffix, endSuffix, func(k, s, v []byte) (bool, error) {
-		addr := self.t.GetKey(self.db.TrieDB(), k)
+		addr := self.GetKey(k)
 		var data Account
 		var err error
 		if err = rlp.DecodeBytes(v, &data); err != nil {
@@ -73,7 +73,7 @@ func (self *TrieDbState) RawDump() Dump {
 		}
 		addrHash := crypto.Keccak256Hash(addr)
 		err = ethdb.SuffixWalk(self.db.TrieDB(), addrHash[:], []byte{}, 0, suffix, endSuffix, func(ks, ss, vs []byte) (bool, error) {
-			account.Storage[common.Bytes2Hex(self.t.GetKey(self.db.TrieDB(), ks))] = common.Bytes2Hex(vs)
+			account.Storage[common.Bytes2Hex(self.GetKey(ks))] = common.Bytes2Hex(vs)
 			return true, nil
 		})
 		if err != nil {

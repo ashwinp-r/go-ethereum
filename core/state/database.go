@@ -164,57 +164,122 @@ func (dbs *DbState) WriteAccountStorage(address *common.Address, key, value *com
 
 // Implements StateReader by wrapping a trie and a database, where trie acts as a cache for the database
 type TrieDbState struct {
-	t Trie
-	db Database
-	nodeList *trie.List
-	blockNr uint64
-	storageTries map[string]Trie
-	continuations []*trie.TrieContinuation
+	t                *trie.Trie
+	hashKeyCache     *lru.Cache
+	db               Database
+	nodeList         *trie.List
+	blockNr          uint64
+	storageTries     map[string]*trie.Trie
+	continuations    []*trie.TrieContinuation
+	accountUpdates   map[common.Address]*Account
+	updatedStorage   map[common.Address]*trie.Trie
 }
 
 func NewTrieDbState(root common.Hash, db Database, blockNr uint64) (*TrieDbState, error) {
-	t, err := db.OpenTrie(root)
+	hashKeyCache, err := lru.New(1024*1024)
 	if err != nil {
 		return nil, err
 	}
+	t := trie.New(root, AccountsBucket, false)
 	tds := TrieDbState{
 		t: t,
+		hashKeyCache: hashKeyCache,
 		db: db,
 		nodeList: trie.NewList(),
 		blockNr: blockNr,
-		storageTries: make(map[string]Trie),
+		storageTries: make(map[string]*trie.Trie),
 		continuations: []*trie.TrieContinuation{},
+		accountUpdates: make(map[common.Address]*Account),
+		updatedStorage: make(map[common.Address]*trie.Trie),
 	}
 	t.MakeListed(tds.nodeList)
 	return &tds, nil
 }
 
-func (tds *TrieDbState) Copy() *TrieDbState {
+func (tds *TrieDbState) Copy() (*TrieDbState, error) {
+	hashKeyCache, err := lru.New(1024*1024)
+	if err != nil {
+		return nil, err
+	}
+	tcopy := *tds.t
 	cpy := TrieDbState{
-		t: tds.db.CopyTrie(tds.t),
+		t: &tcopy,
+		hashKeyCache: hashKeyCache,
 		db: tds.db,
 		nodeList: nil,
 		blockNr: tds.blockNr,
-		storageTries: make(map[string]Trie),
+		storageTries: make(map[string]*trie.Trie),
+		accountUpdates: make(map[common.Address]*Account),
+		updatedStorage: make(map[common.Address]*trie.Trie),
 	}
-	return &cpy
+	return &cpy, nil
 }
 
 func (tds *TrieDbState) Database() Database {
 	return tds.db
 }
 
-func (tds *TrieDbState) Trie() *trie.Trie {
-	sectrie, _ := tds.t.(*trie.SecureTrie)
-	return sectrie.GetTrie()
+func (tds *TrieDbState) AccountTrie() *trie.Trie {
+	return tds.t
 }
 
-func (tds *TrieDbState) TrieRoot() common.Hash {
-	return tds.t.Hash()
+func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
+	if len(tds.continuations) == 0 && len(tds.updatedStorage) == 0 && len(tds.accountUpdates) == 0 {
+		return tds.t.Hash(), nil
+	}
+	// First, execute storage updates and account deletions
+	oldContinuations := tds.continuations
+	newContinuations := []*trie.TrieContinuation{}
+	for len(oldContinuations) > 0 {
+		for _, c := range oldContinuations {
+			for !c.RunWithDb(tds.db.TrieDB()) {
+				if err := c.ResolveWithDb(tds.db.TrieDB(), tds.blockNr); err != nil {
+					return common.Hash{}, err
+				}
+			}
+		}
+		oldContinuations, newContinuations = newContinuations, []*trie.TrieContinuation{}
+	}
+	for _, storageTrie := range tds.updatedStorage {
+		storageTrie.Relist()
+	}
+	tds.updatedStorage = make(map[common.Address]*trie.Trie)
+	for address, account := range tds.accountUpdates {
+		storageTrie, err := tds.getStorageTrie(&address)
+		if err != nil {
+			return common.Hash{}, err
+		}
+		account.Root = storageTrie.Hash()
+		data, err := rlp.EncodeToBytes(account)
+		if err != nil {
+			return common.Hash{}, err
+		}
+		addrHash, err := tds.HashKey(address[:])
+		if err != nil {
+			return common.Hash{}, err
+		}
+		c := tds.t.UpdateAction(addrHash[:], data)
+		oldContinuations = append(oldContinuations, c)
+	}
+	tds.accountUpdates = make(map[common.Address]*Account)
+	for len(oldContinuations) > 0 {
+		for _, c := range oldContinuations {
+			for !c.RunWithDb(tds.db.TrieDB()) {
+				if err := c.ResolveWithDb(tds.db.TrieDB(), tds.blockNr); err != nil {
+					return common.Hash{}, err
+				}
+			}
+		}
+		oldContinuations, newContinuations = newContinuations, []*trie.TrieContinuation{}
+	}
+	tds.t.SaveHashes(tds.db.TrieDB())
+	tds.t.Relist()
+	tds.continuations = newContinuations
+	return tds.t.Hash(), nil
 }
 
 func (tds *TrieDbState) Rebuild() error {
-	tr := tds.t.(*trie.SecureTrie).GetTrie()
+	tr := tds.AccountTrie()
 	tr.Rebuild(tds.db.TrieDB(), tds.blockNr)
 	return nil
 }
@@ -224,7 +289,11 @@ func (tds *TrieDbState) SetBlockNr(blockNr uint64) {
 }
 
 func (tds *TrieDbState) ReadAccountData(address *common.Address) (*Account, error) {
-	enc, err := tds.t.TryGet(tds.db.TrieDB(), address[:], tds.blockNr)
+	addrHash, err := tds.HashKey(address[:])
+	if err != nil {
+		return nil, err
+	}
+	enc, err := tds.t.TryGet(tds.db.TrieDB(), addrHash, tds.blockNr)
 	if err != nil {
 		return nil, err
 	}
@@ -238,21 +307,39 @@ func (tds *TrieDbState) ReadAccountData(address *common.Address) (*Account, erro
 	return &data, nil
 }
 
-func (tds *TrieDbState) getStorageTrie(address *common.Address) (Trie, error) {
+func (tds *TrieDbState) HashKey(key []byte) ([]byte, error) {
+	keyStr := string(key)
+	if cached, ok := tds.hashKeyCache.Get(keyStr); ok {
+		return cached.([]byte), nil
+	}
+	hash := crypto.Keccak256Hash(key)
+	tds.hashKeyCache.Add(string(common.CopyBytes(key)), hash[:])
+	if err := tds.db.TrieDB().Put(trie.SecureKeyPrefix, hash[:], key); err != nil {
+		return nil, err
+	}
+	return hash[:], nil
+}
+
+func (tds *TrieDbState) GetKey(shaKey []byte) []byte {
+	key, _ := tds.db.TrieDB().Get(trie.SecureKeyPrefix, shaKey)
+	return key
+}
+
+func (tds *TrieDbState) getStorageTrie(address *common.Address) (*trie.Trie, error) {
 	t, ok := tds.storageTries[string(address[:])]
 	if !ok {
 		account, err := tds.ReadAccountData(address)
 		if err != nil {
 			return nil, err
 		}
-		addrHash := crypto.Keccak256Hash(address[:])
-		if account == nil {
-			t, err = tds.db.OpenStorageTrie(addrHash, common.Hash{})
-		} else {
-			t, err = tds.db.OpenStorageTrie(addrHash, account.Root)
-		}
+		addrHash, err := tds.HashKey(address[:])
 		if err != nil {
 			return nil, err
+		}
+		if account == nil {
+			t = trie.New(common.Hash{}, addrHash[:], true)
+		} else {
+			t = trie.New(account.Root, addrHash[:], true)
 		}
 		t.MakeListed(tds.nodeList)
 		tds.storageTries[string(common.CopyBytes(address[:]))] = t
@@ -265,7 +352,11 @@ func (tds *TrieDbState) ReadAccountStorage(address *common.Address, key *common.
 	if err != nil {
 		return nil, err
 	}
-	enc, err := t.TryGet(tds.db.TrieDB(), key[:], tds.blockNr)
+	seckey, err := tds.HashKey(key[:])
+	if err != nil {
+		return nil, err
+	}
+	enc, err := t.TryGet(tds.db.TrieDB(), seckey, tds.blockNr)
 	if err != nil {
 		return nil, err
 	}
@@ -331,6 +422,8 @@ func (tds *TrieDbState) DbStateWriter() *DbStateWriter {
 var emptyRoot = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
 
 func (tsw *TrieStateWriter) UpdateAccountData(address *common.Address, account *Account) error {
+	tsw.tds.accountUpdates[*address] = account
+	/*
 	storageTrie, err := tsw.tds.getStorageTrie(address)
 	if err != nil {
 		return err
@@ -340,7 +433,14 @@ func (tsw *TrieStateWriter) UpdateAccountData(address *common.Address, account *
 	if err != nil {
 		return err
 	}
-	return tsw.tds.t.TryUpdate(tsw.tds.db.TrieDB(), address[:], data, tsw.tds.blockNr)
+	addrHash, err := tsw.tds.HashKey(address[:])
+	if err != nil {
+		return err
+	}
+	c := tsw.tds.t.TryUpdate(addrHash[:], data)
+	tsw.tds.continuations = append(tsw.tds.continuations, c)
+	*/
+	return nil
 }
 
 func (dsw *DbStateWriter) UpdateAccountData(address *common.Address, account *Account) error {
@@ -353,7 +453,10 @@ func (dsw *DbStateWriter) UpdateAccountData(address *common.Address, account *Ac
 	if err != nil {
 		return err
 	}
-	seckey := dsw.tds.t.HashKey(address[:])
+	seckey, err := dsw.tds.HashKey(address[:])
+	if err != nil {
+		return err
+	}
 	suffix := ethdb.CreateBlockSuffix(dsw.tds.blockNr)
 	return dsw.tds.db.TrieDB().PutS(AccountsBucket, seckey, suffix, data)
 }
@@ -365,11 +468,20 @@ func (tsw *TrieStateWriter) DeleteAccount(address *common.Address) error {
 	}
 	storageTrie.Unlink()
 	delete(tsw.tds.storageTries, string(address[:]))
-	return tsw.tds.t.TryDelete(tsw.tds.db.TrieDB(), address[:], tsw.tds.blockNr)
+	addrHash, err := tsw.tds.HashKey(address[:])
+	if err != nil {
+		return err
+	}
+	c := tsw.tds.t.DeleteAction(addrHash[:])
+	tsw.tds.continuations = append(tsw.tds.continuations, c)
+	return nil
 }
 
 func (dsw *DbStateWriter) DeleteAccount(address *common.Address) error {
-	seckey := dsw.tds.t.HashKey(address[:])
+	seckey, err := dsw.tds.HashKey(address[:])
+	if err != nil {
+		return err
+	}
 	suffix := ethdb.CreateBlockSuffix(dsw.tds.blockNr)
 	return dsw.tds.db.TrieDB().PutS(AccountsBucket, seckey, suffix, []byte{})
 }
@@ -387,20 +499,34 @@ func (tsw *TrieStateWriter) WriteAccountStorage(address *common.Address, key, va
 	if err != nil {
 		return err
 	}
-	v := bytes.TrimLeft(value[:], "\x00")
-	if len(v) > 0 {
-		return storageTrie.TryUpdate(tsw.tds.db.TrieDB(), key[:], common.CopyBytes(v), tsw.tds.blockNr)
-	} else {
-		return storageTrie.TryDelete(tsw.tds.db.TrieDB(), key[:], tsw.tds.blockNr)
+	seckey, err := tsw.tds.HashKey(key[:])
+	if err != nil {
+		return err
 	}
+	v := bytes.TrimLeft(value[:], "\x00")
+	var c *trie.TrieContinuation
+	if len(v) > 0 {
+		c = storageTrie.UpdateAction(seckey, common.CopyBytes(v))
+	} else {
+		c = storageTrie.DeleteAction(seckey)
+	}
+	tsw.tds.updatedStorage[*address] = storageTrie
+	tsw.tds.continuations = append(tsw.tds.continuations, c)
+	return nil
 }
 
 func (dsw *DbStateWriter) WriteAccountStorage(address *common.Address, key, value *common.Hash) error {
-	addrHash := crypto.Keccak256Hash(address[:])
-	seckey := dsw.tds.t.HashKey(key[:])
+	addrHash, err := dsw.tds.HashKey(address[:])
+	if err != nil {
+		return err
+	}
+	seckey, err := dsw.tds.HashKey(key[:])
+	if err != nil {
+		return err
+	}
 	suffix := ethdb.CreateBlockSuffix(dsw.tds.blockNr)
 	v := bytes.TrimLeft(value[:], "\x00") // PutS below will make a copy of v
-	return dsw.tds.db.TrieDB().PutS(addrHash[:], seckey, suffix, v)
+	return dsw.tds.db.TrieDB().PutS(addrHash, seckey, suffix, v)
 }
 
 // Database wraps access to tries and contract code.

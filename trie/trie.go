@@ -214,7 +214,7 @@ func (t *Trie) Rebuild(db ethdb.Database, blockNr uint64) hashNode {
 		t.root = root
 		log.Info("Successfuly loaded from hashfile", "nodes", t.nodeList.Len())
 	} else {
-		_, hn, err := t.rebuildHashes(db, nil, 0, n, blockNr, true)
+		_, hn, err := t.rebuildHashes(db, nil, 0, blockNr, true)
 		if err != nil {
 			panic(err)
 		}
@@ -247,7 +247,7 @@ type rebuidData struct {
 	fillCount [Levels+1]int
 }
 
-func (r *rebuidData) rebuildInsert(k, s, v []byte, h *hasher) error {
+func (r *rebuidData) rebuildInsert(k, v []byte, h *hasher) error {
 	if k == nil || len(v) > 0 {
 		// First, finish off the previous key
 		if r.key_set {
@@ -365,7 +365,62 @@ func (r *rebuidData) rebuildInsert(k, s, v []byte, h *hasher) error {
 	return nil
 }
 
-func (t *Trie) rebuildHashes(db ethdb.Database, key []byte, pos int, n hashNode, blockNr uint64, hashes bool) (node, hashNode, error) {
+func (t *Trie) Resolve(keys [][]byte, values [][]byte, c *TrieContinuation) error {
+	r := rebuidData{dbw: nil, pos: c.resolvePos, resolvingKey: c.resolveKey, hashes: false}
+	h := newHasher(t.encodeToBytes)
+	for i, key := range keys {
+		value := values[i]
+		if err := r.rebuildInsert(key, value, h); err != nil {
+			return err
+		}
+	}
+	if err := r.rebuildInsert(nil, nil, h); err != nil {
+		return err
+	}
+	var root node
+	if r.fillCount[c.resolvePos] == 1 {
+		root = r.nodeStack[c.resolvePos]
+	} else if r.fillCount[c.resolvePos] > 1 {
+		root = &r.vertical[c.resolvePos]
+	}
+	if root == nil {
+		return fmt.Errorf("Resolve returned nil root")
+	}
+	hash, err := h.hash(root, c.resolvePos == 0)
+	if err != nil {
+		return err
+	}
+	gotHash := hash.(hashNode)
+	if !bytes.Equal(c.resolveHash, gotHash) {
+		return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %xn", c.resolveKey[:c.resolvePos], t.prefix)
+	}
+	c.resolved = root
+	return nil
+}
+
+func (tc *TrieContinuation) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
+	suffix := ethdb.CreateBlockSuffix(blockNr)
+	endSuffix := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
+	var start [32]byte
+	decodeNibbles(tc.resolveKey[:tc.resolvePos], start[:])
+	var resolving [32]byte
+	decodeNibbles(tc.resolveKey, resolving[:])
+	keys := [][]byte{}
+	values := [][]byte{}
+	err := ethdb.SuffixWalk(db, tc.t.prefix, start[:], uint(4*tc.resolvePos), suffix, endSuffix, func(k, s, v []byte) (bool, error) {
+		if len(v) > 0 {
+			keys = append(keys, common.CopyBytes(k))
+			values = append(values, common.CopyBytes(v))
+		}
+		return true, nil
+	})
+	if err != nil {
+		return err
+	}
+	return tc.t.Resolve(keys, values, tc)
+}
+
+func (t *Trie) rebuildHashes(db ethdb.Database, key []byte, pos int, blockNr uint64, hashes bool) (node, hashNode, error) {
 	suffix := ethdb.CreateBlockSuffix(blockNr)
 	endSuffix := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 	var start [32]byte
@@ -377,14 +432,14 @@ func (t *Trie) rebuildHashes(db ethdb.Database, key []byte, pos int, n hashNode,
 	defer returnHasherToPool(h)
 	err := ethdb.SuffixWalk(db, t.prefix, start[:], uint(4*pos), suffix, endSuffix, func(k, s, v []byte) (bool, error) {
 		if len(v) > 0 {
-			return true, r.rebuildInsert(k, s, v, h)
+			return true, r.rebuildInsert(k, v, h)
 		}
 		return true, nil
 	})
 	if err != nil {
 		return nil, nil, err
 	}
-	if err :=r.rebuildInsert(nil, nil, nil, h); err != nil {
+	if err :=r.rebuildInsert(nil, nil, h); err != nil {
 		return nil, nil, err
 	}
 	var root node
@@ -393,7 +448,7 @@ func (t *Trie) rebuildHashes(db ethdb.Database, key []byte, pos int, n hashNode,
 	} else if r.fillCount[pos] > 1 {
 		root = &r.vertical[pos]
 	}
-	if err == nil && n != nil {
+	if err == nil {
 		var gotHash hashNode
 		if root != nil {
 			hash, _ := h.hash(root, pos == 0)
@@ -705,42 +760,88 @@ func (t *Trie) Update(db ethdb.Database, key, value []byte, blockNr uint64) {
 //
 // If a node was not found in the database, a MissingNodeError is returned.
 func (t *Trie) TryUpdate(db ethdb.Database, key, value []byte, blockNr uint64) error {
-	root := t.root
-	k := keybytesToHex(key)
+	tc := t.UpdateAction(key, value)
+	for !tc.RunWithDb(db) {
+		if err := tc.ResolveWithDb(db, blockNr); err != nil {
+			return err
+		}
+	}
+	t.SaveHashes(db)
+	t.Relist()
+	return nil
+}
+
+func (t *Trie) UpdateAction(key, value []byte) *TrieContinuation {
 	var tc TrieContinuation
+	tc.t = t
+	tc.key = keybytesToHex(key)
 	if len(value) != 0 {
 		tc.action = TrieActionInsert
-		tc.key = k
+		tc.value = valueNode(value)
+	} else {
+		tc.action = TrieActionDelete
+	}
+	return &tc
+}
+
+func (t *Trie) SaveHashes(db ethdb.Database) {
+	if bytes.Equal(t.prefix, []byte("AT")) {
+		t.saveHashes(db, t.root, 0, 0)
+	}
+}
+
+func (t *Trie) Relist() {
+	if t.nodeList != nil {
+		t.relistNodes(t.root)
+	}
+}
+
+func (tc *TrieContinuation) RunWithDb(db ethdb.Database) bool {
+	var done bool
+	switch tc.action {
+	case TrieActionInsert:
+		done = tc.t.insert(tc.t.root, tc.key, 0, tc.value, tc)
+	case TrieActionDelete:
+		done = tc.t.delete(tc.t.root, tc.key, 0, tc)
+	}
+	if tc.updated {
+		tc.t.root = tc.n
+	}
+	if !done {
+		return done
+	}
+	for _, touch := range tc.touched {
+		tc.t.touch(db, touch.np, touch.key, touch.pos)
+	}
+	return done
+	/*
+	k := keybytesToHex(key)
+	var tc TrieContinuation
+	tc.key = k
+	if len(value) != 0 {
+		tc.action = TrieActionInsert
 		tc.value = valueNode(value)
 		for !t.insert(root, tc.key, 0, tc.value, &tc) {
 			if tc.updated {
 				root = tc.n
 			}
-			rn, err := t.resolveHash(db, tc.resolveHash, tc.resolveKey, tc.resolvePos, blockNr)
-			if err != nil {
+			if err := t.ResolveWithDb(db, &tc, blockNr); err != nil {
 				return err
 			}
-			tc.resolved = rn
-		}
-		if tc.updated {
-			root = tc.n
 		}
 	} else {
 		tc.action = TrieActionDelete
-		tc.key = k
 		for !t.delete(root, tc.key, 0, &tc) {
 			if tc.updated {
 				root = tc.n
 			}
-			rn, err := t.resolveHash(db, tc.resolveHash, tc.resolveKey, tc.resolvePos, blockNr)
-			if err != nil {
+			if err := t.ResolveWithDb(db, &tc, blockNr); err != nil {
 				return err
 			}
-			tc.resolved = rn
 		}
-		if tc.updated {
-			root = tc.n
-		}
+	}
+	if tc.updated {
+		root = tc.n
 	}
 	for _, touch := range tc.touched {
 		t.touch(db, touch.np, touch.key, touch.pos)
@@ -753,6 +854,7 @@ func (t *Trie) TryUpdate(db ethdb.Database, key, value []byte, blockNr uint64) e
 	}
 	t.root = root
 	return nil
+	*/
 }
 
 type TrieAction int
@@ -769,6 +871,7 @@ type Touch struct {
 }
 
 type TrieContinuation struct {
+	t *Trie              // trie to act upon
 	action TrieAction    // insert of delete
 	key []byte           // original key being inserted or deleted
 	value node           // original value being inserted or deleted
@@ -781,10 +884,8 @@ type TrieContinuation struct {
 	touched []Touch      // Nodes touched during the operation, by level
 }
 
-func NewTrieContinuation() *TrieContinuation {
-	return &TrieContinuation{
-		touched: []Touch{},
-	}
+func (tc *TrieContinuation) Print() {
+	fmt.Printf("tc{t:%x,action:%d,key:%x}\n", tc.t.prefix, tc.action, tc.key)
 }
 
 func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieContinuation) bool {
@@ -951,35 +1052,22 @@ func (t *Trie) Delete(db ethdb.Database, key []byte, blockNr uint64) {
 // TryDelete removes any existing value for key from the trie.
 // If a node was not found in the database, a MissingNodeError is returned.
 func (t *Trie) TryDelete(db ethdb.Database, key []byte, blockNr uint64) error {
-	root := t.root
-	k := keybytesToHex(key)
-	var tc TrieContinuation
-	tc.action = TrieActionDelete
-	tc.key = k
-	for !t.delete(root, tc.key, 0, &tc) {
-		if tc.updated {
-			root = tc.n
-		}
-		rn, err := t.resolveHash(db, tc.resolveHash, tc.resolveKey, tc.resolvePos, blockNr)
-		if err != nil {
+	tc := t.DeleteAction(key)
+	for !tc.RunWithDb(db) {
+		if err := tc.ResolveWithDb(db, blockNr); err != nil {
 			return err
 		}
-		tc.resolved = rn
 	}
-	if tc.updated {
-		root = tc.n
-	}
-	for _, touch := range tc.touched {
-		t.touch(db, touch.np, touch.key, touch.pos)
-	}
-	if bytes.Equal(t.prefix, []byte("AT")) {
-		t.saveHashes(db, root, 0, 0)
-	}
-	if t.nodeList != nil {
-		t.relistNodes(root)
-	}
-	t.root = root
+	t.Relist()
 	return nil
+}
+
+func (t *Trie) DeleteAction(key []byte) *TrieContinuation {
+	var tc TrieContinuation
+	tc.t = t
+	tc.key = keybytesToHex(key)
+	tc.action = TrieActionDelete
+	return &tc
 }
 
 func (t *Trie) convertToShortNode(key []byte, keyStart int, child node, pos uint, c *TrieContinuation, done bool) bool {
@@ -1232,7 +1320,7 @@ func concat(s1 []byte, s2 ...byte) []byte {
 }
 
 func (t *Trie) resolveHash(db ethdb.Database, n hashNode, key []byte, pos int, blockNr uint64) (node, error) {
-	root, gotHash, err := t.rebuildHashes(db, key, pos, n, blockNr, false)
+	root, gotHash, err := t.rebuildHashes(db, key, pos, blockNr, false)
 	if err != nil {
 		return nil, err
 	}
