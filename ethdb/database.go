@@ -949,25 +949,31 @@ func (dt *table) PutHash(index uint32, hash []byte) {
 func SuffixWalk(db Getter, bucket, key []byte, keybits uint, suffix, endSuffix []byte, walker func([]byte, []byte) (bool, error)) error {
 	l := len(key)
 	keyBuffer := make([]byte, l+len(endSuffix))
-	suffixExt := make([]byte, len(endSuffix))
-	copy(suffixExt, suffix)
+	newsection := true
 	err := db.Walk(bucket, key, keybits, func(k, v []byte) ([]byte, WalkAction, error) {
-		if bytes.Compare(k[l:], suffix) == 1 {
-			// Current key inserted at the given block suffix or earlier
-			goOn, err := walker(k[:l], v)
-			if err != nil || !goOn {
-				return nil, WalkActionStop, err
+		if newsection || (!newsection && !bytes.Equal(k[:l], keyBuffer[:l])) {
+			if bytes.Compare(k[l:], suffix) == 1 || bytes.HasPrefix(k[l:], suffix) {
+				goOn, err := walker(k[:l], v)
+				if err != nil || !goOn {
+					return nil, WalkActionStop, err
+				}
+				copy(keyBuffer, k[:l])
+				copy(keyBuffer[l:], endSuffix)
+				newsection = true
+				return keyBuffer[:], WalkActionSeek, nil
+			} else {
+				newsection = false
+				return nil, WalkActionNext, nil
 			}
-			// Seek to beyond the current key
-			copy(keyBuffer, k[:l])
-			copy(keyBuffer[l:], endSuffix)
-			return keyBuffer, WalkActionSeek, nil
-		} else {
-			// Current key inserted after the given block suffix, seek to it
-			copy(keyBuffer, k[:l])
-			copy(keyBuffer[l:], suffixExt)
-			return keyBuffer, WalkActionSeek, nil
 		}
+		goOn, err := walker(k[:l], v)
+		if err != nil || !goOn {
+			return nil, WalkActionStop, err
+		}
+		copy(keyBuffer, k[:l])
+		copy(keyBuffer[l:], endSuffix)
+		newsection = true
+		return keyBuffer[:], WalkActionSeek, nil
 	})
 	return err
 }
