@@ -392,7 +392,7 @@ func (t *Trie) Resolve(keys [][]byte, values [][]byte, c *TrieContinuation) erro
 	}
 	gotHash := hash.(hashNode)
 	if !bytes.Equal(c.resolveHash, gotHash) {
-		return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %xn", c.resolveKey[:c.resolvePos], t.prefix)
+		return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\n", c.resolveKey[:c.resolvePos], t.prefix)
 	}
 	c.resolved = root
 	return nil
@@ -814,47 +814,6 @@ func (tc *TrieContinuation) RunWithDb(db ethdb.Database) bool {
 		tc.t.touch(db, touch.np, touch.key, touch.pos)
 	}
 	return done
-	/*
-	k := keybytesToHex(key)
-	var tc TrieContinuation
-	tc.key = k
-	if len(value) != 0 {
-		tc.action = TrieActionInsert
-		tc.value = valueNode(value)
-		for !t.insert(root, tc.key, 0, tc.value, &tc) {
-			if tc.updated {
-				root = tc.n
-			}
-			if err := t.ResolveWithDb(db, &tc, blockNr); err != nil {
-				return err
-			}
-		}
-	} else {
-		tc.action = TrieActionDelete
-		for !t.delete(root, tc.key, 0, &tc) {
-			if tc.updated {
-				root = tc.n
-			}
-			if err := t.ResolveWithDb(db, &tc, blockNr); err != nil {
-				return err
-			}
-		}
-	}
-	if tc.updated {
-		root = tc.n
-	}
-	for _, touch := range tc.touched {
-		t.touch(db, touch.np, touch.key, touch.pos)
-	}
-	if bytes.Equal(t.prefix, []byte("AT")) {
-		t.saveHashes(db, root, 0, 0)
-	}
-	if t.nodeList != nil {
-		t.relistNodes(root)
-	}
-	t.root = root
-	return nil
-	*/
 }
 
 type TrieAction int

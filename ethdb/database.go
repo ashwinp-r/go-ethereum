@@ -260,16 +260,18 @@ func (db *LDBDatabase) First(bucket, key, suffix []byte) ([]byte, error) {
 	return dat, err
 }
 
-func (db *LDBDatabase) Walk(bucket, key []byte, keybits uint, walker WalkerFunc) error {
+func bytesmask(keybits uint) (int, byte) {
 	keybytes := int((keybits + 7)/8)
-	//start := make([]byte, keybytes)
-	//copy(start, key[:keybytes])
 	shiftbits := keybits&7
 	mask := byte(0xff)
 	if shiftbits != 0 {
 		mask = 0xff << (8-shiftbits)
-		//start[keybytes-1] &= mask
 	}
+	return keybytes, mask
+}
+
+func (db *LDBDatabase) Walk(bucket, key []byte, keybits uint, walker WalkerFunc) error {
+	keybytes, mask := bytesmask(keybits)
 	err := db.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucket)
 		if b == nil {
@@ -592,15 +594,7 @@ func (m *mutation) First(bucket, key, suffix []byte) ([]byte, error) {
 }
 
 func (m *mutation) walkMem(bucket, key []byte, keybits uint, walker WalkerFunc) error {
-	keybytes := int((keybits + 7)/8)
-	//start := make([]byte, keybytes)
-	//copy(start, key[:keybytes])
-	shiftbits := keybits&7
-	mask := byte(0xff)
-	if shiftbits != 0 {
-		mask = 0xff << (8-shiftbits)
-		//start[keybytes-1] &= mask
-	}
+	keybytes, mask := bytesmask(keybits)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for nextkey := key; nextkey != nil; {
@@ -646,15 +640,7 @@ func (m *mutation) Walk(bucket, key []byte, keybits uint, walker WalkerFunc) err
 	if m.db == nil {
 		return m.walkMem(bucket, key, keybits, walker)
 	} else {
-		keybytes := int((keybits + 7)/8)
-		//start := make([]byte, keybytes)
-		//copy(start, key[:keybytes])
-		shiftbits := keybits&7
-		mask := byte(0xff)
-		if shiftbits != 0 {
-			mask = 0xff << (8-shiftbits)
-			//start[keybytes-1] &= mask
-		}
+		keybytes, mask := bytesmask(keybits)
 		m.mu.RLock()
 		defer m.mu.RUnlock()
 		start := key
@@ -949,44 +935,26 @@ func (dt *table) PutHash(index uint32, hash []byte) {
 func SuffixWalk(db Getter, bucket, key []byte, keybits uint, suffix, endSuffix []byte, walker func([]byte, []byte) (bool, error)) error {
 	l := len(key)
 	keyBuffer := make([]byte, l+len(endSuffix))
-	newsection := true
+	suffixExt := make([]byte, len(endSuffix))
+	copy(suffixExt, suffix)
 	err := db.Walk(bucket, key, keybits, func(k, v []byte) ([]byte, WalkAction, error) {
-		if newsection || (!newsection && !bytes.Equal(k[:l], keyBuffer[:l])) {
-			if bytes.Compare(k[l:], suffix) == 1 || bytes.HasPrefix(k[l:], suffix) {
-				goOn, err := walker(k[:l], v)
-				if err != nil || !goOn {
-					return nil, WalkActionStop, err
-				}
-				copy(keyBuffer, k[:l])
-				copy(keyBuffer[l:], endSuffix)
-				newsection = true
-				return keyBuffer[:], WalkActionSeek, nil
-			} else {
-				newsection = false
-				return nil, WalkActionNext, nil
+		if bytes.Compare(k[l:], suffix) >=0 {
+			// Current key inserted at the given block suffix or earlier
+			goOn, err := walker(k[:l], v)
+			if err != nil || !goOn {
+				return nil, WalkActionStop, err
 			}
+			copy(keyBuffer, k[:l])
+			copy(keyBuffer[l:], endSuffix)
+			return keyBuffer[:], WalkActionSeek, nil
+		} else {
+			// Current key inserted after the given block suffix, seek to it
+			copy(keyBuffer, k[:l])
+			copy(keyBuffer[l:], suffixExt)
+			return keyBuffer, WalkActionSeek, nil
 		}
-		goOn, err := walker(k[:l], v)
-		if err != nil || !goOn {
-			return nil, WalkActionStop, err
-		}
-		copy(keyBuffer, k[:l])
-		copy(keyBuffer[l:], endSuffix)
-		newsection = true
-		return keyBuffer[:], WalkActionSeek, nil
 	})
 	return err
-}
-
-
-func bytesmask(keybits uint) (int, byte) {
-	keybytes := int((keybits + 7)/8)
-	shiftbits := keybits&7
-	mask := byte(0xff)
-	if shiftbits != 0 {
-		mask = 0xff << (8-shiftbits)
-	}
-	return keybytes, mask
 }
 
 // keys is sorted, prefixes strightly containing each other removed
