@@ -82,7 +82,7 @@ func (n *duoNode) EncodeRLP(w io.Writer) error {
 func (n *duoNode) childrenIdx() (i1 byte, i2 byte) {
 	child := 1
 	var m uint16 = 1
-	for i := 0; i<16; i++ {
+	for i := 0; i < 17; i++ {
 		if (n.mask & m) > 0 {
 			if child == 1 {
 				i1 = byte(i)

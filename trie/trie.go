@@ -318,7 +318,7 @@ func (r *rebuidData) rebuildInsert(k, v []byte, h *hasher) error {
 					if level >= r.pos {
 						r.nodeStack[level+1] = nil
 						r.fillCount[level+1] = 0
-						for i := 0; i < 16; i++ {
+						for i := 0; i < 17; i++ {
 							r.vertical[level+1].Children[i] = nil
 						}
 					}
@@ -349,7 +349,7 @@ func (r *rebuidData) rebuildInsert(k, v []byte, h *hasher) error {
 				if level >= r.pos {
 					r.nodeStack[level+1] = nil
 					r.fillCount[level+1] = 0
-					for i := 0; i < 16; i++ {
+					for i := 0; i < 17; i++ {
 						r.vertical[level+1].Children[i] = nil
 					}
 				}
@@ -485,19 +485,42 @@ func (tc *TrieContinuation) ResolveWithDb(db ethdb.Database, blockNr uint64) err
 	decodeNibbles(tc.resolveKey[:tc.resolvePos], start[:])
 	var resolving [32]byte
 	decodeNibbles(tc.resolveKey, resolving[:])
-	keys := [][]byte{}
-	values := [][]byte{}
+	r := rebuidData{dbw: nil, pos: tc.resolvePos, resolvingKey: tc.resolveKey, hashes: false}
+	h := newHasher(tc.t.encodeToBytes)
 	err := ethdb.SuffixWalk(db, tc.t.prefix, start[:], uint(4*tc.resolvePos), suffix, endSuffix, func(k, v []byte) (bool, error) {
 		if len(v) > 0 {
-			keys = append(keys, common.CopyBytes(k))
-			values = append(values, common.CopyBytes(v))
+			if err := r.rebuildInsert(k, v, h); err != nil {
+				return false, err
+			}
 		}
 		return true, nil
 	})
 	if err != nil {
 		return err
 	}
-	return tc.t.Resolve(keys, values, tc)
+	if err := r.rebuildInsert(nil, nil, h); err != nil {
+		return err
+	}
+	var root node
+	if r.fillCount[tc.resolvePos] == 1 {
+		root = r.nodeStack[tc.resolvePos]
+	} else if r.fillCount[tc.resolvePos] > 1 {
+		root = &r.vertical[tc.resolvePos]
+	}
+	if root == nil {
+		return fmt.Errorf("Resolve returned nil root")
+	}
+	hash, err := h.hash(root, tc.resolvePos == 0)
+	if err != nil {
+		return err
+	}
+	gotHash := hash.(hashNode)
+	if !bytes.Equal(tc.resolveHash, gotHash) {
+		return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got %s\n",
+			tc.resolveKey[:tc.resolvePos], tc.t.prefix, tc.resolveHash, gotHash)
+	}
+	tc.resolved = root
+	return nil
 }
 
 func (t *Trie) rebuildHashes(db ethdb.Database, key []byte, pos int, blockNr uint64, hashes bool) (node, hashNode, error) {

@@ -29,12 +29,12 @@ import (
 func TestIterator(t *testing.T) {
 	diskdb, trie := newEmpty()
 	vals := []struct{ k, v string }{
-		{"do", "verb"},
+		//{"do", "verb"},
 		{"ether", "wookiedoo"},
 		{"horse", "stallion"},
 		{"shaman", "horse"},
 		{"doge", "coin"},
-		{"dog", "puppy"},
+		//{"dog", "puppy"},
 		{"somethingveryoddindeedthis is", "myothernodedata"},
 	}
 	all := make(map[string]string)
