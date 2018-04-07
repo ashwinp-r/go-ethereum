@@ -935,8 +935,7 @@ func (dt *table) PutHash(index uint32, hash []byte) {
 func SuffixWalk(db Getter, bucket, key []byte, keybits uint, suffix, endSuffix []byte, walker func([]byte, []byte) (bool, error)) error {
 	l := len(key)
 	keyBuffer := make([]byte, l+len(endSuffix))
-	suffixExt := make([]byte, len(endSuffix))
-	copy(suffixExt, suffix)
+	sl := l + len(suffix)
 	err := db.Walk(bucket, key, keybits, func(k, v []byte) ([]byte, WalkAction, error) {
 		if bytes.Compare(k[l:], suffix) >=0 {
 			// Current key inserted at the given block suffix or earlier
@@ -950,12 +949,13 @@ func SuffixWalk(db Getter, bucket, key []byte, keybits uint, suffix, endSuffix [
 		} else {
 			// Current key inserted after the given block suffix, seek to it
 			copy(keyBuffer, k[:l])
-			copy(keyBuffer[l:], suffixExt)
-			return keyBuffer, WalkActionSeek, nil
+			copy(keyBuffer[l:], suffix)
+			return keyBuffer[:sl], WalkActionSeek, nil
 		}
 	})
 	return err
 }
+
 
 // keys is sorted, prefixes strightly containing each other removed
 func MultiSuffixWalk(db Getter, bucket []byte, keys [][]byte, keybits []uint, suffix, endSuffix []byte, walker func(int, []byte, []byte) (bool, error)) error {
