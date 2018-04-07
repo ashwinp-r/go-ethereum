@@ -64,8 +64,7 @@ func makeTestState() (Database, common.Hash, []*testAccount) {
 	}
 	root, _ := tds.IntermediateRoot(state, false)
 	tds.SetBlockNr(1)
-	state.Commit(false, tds.DbStateWriter())
-	state.CleanForNextBlock()
+	state.Finalise(false, tds.DbStateWriter())
 	
 
 	// Return the generated state

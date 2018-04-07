@@ -50,8 +50,9 @@ func (s *StateSuite) TestDump(c *checker.C) {
 	s.tds.TrieStateWriter().UpdateAccountData(&obj1.address, &obj1.data)
 	s.tds.TrieStateWriter().UpdateAccountData(&obj2.address, &obj2.data)
 	s.state.Finalise(false, s.tds.TrieStateWriter())
+	s.tds.TrieRoot()
 	s.tds.SetBlockNr(1)
-	s.state.Commit(false, s.tds.DbStateWriter())
+	s.state.Finalise(false, s.tds.DbStateWriter())
 
 	// check that dump contains the state objects that are in trie
 	got := string(s.tds.Dump())
@@ -103,7 +104,7 @@ func (s *StateSuite) TestNull(c *checker.C) {
 	s.state.SetState(address, common.Hash{}, value)
 	s.state.Finalise(false, s.tds.TrieStateWriter())
 	s.tds.SetBlockNr(1)
-	s.state.Commit(false, s.tds.DbStateWriter())
+	s.state.Finalise(false, s.tds.DbStateWriter())
 	value = s.state.GetState(address, common.Hash{})
 	if !common.EmptyHash(value) {
 		c.Errorf("expected empty hash. got %x", value)
@@ -164,7 +165,7 @@ func TestSnapshot2(t *testing.T) {
 
 	tds.IntermediateRoot(state, false)
 	tds.SetBlockNr(1)
-	state.Commit(false, tds.DbStateWriter())
+	state.Finalise(false, tds.DbStateWriter())
 	state.Reset()
 
 	// and one with deleted == true

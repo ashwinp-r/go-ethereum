@@ -150,7 +150,7 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config) (*state.StateD
 	}
 	root, _ := tds.IntermediateRoot(statedb, config.IsEIP158(block.Number()))
 	tds.SetBlockNr(readBlockNr + 1)
-	statedb.Commit(config.IsEIP158(block.Number()), tds.DbStateWriter())
+	statedb.Finalise(config.IsEIP158(block.Number()), tds.DbStateWriter())
 	if root != common.Hash(post.Root) {
 		return statedb, tds, fmt.Errorf("post state root mismatch: got %x, want %x", root, post.Root)
 	}
@@ -176,7 +176,7 @@ func MakePreState(db ethdb.Database, accounts core.GenesisAlloc, blockNr uint64)
 	// Commit and re-open to start with a clean state.
 	root, _ := tds.IntermediateRoot(statedb, false)
 	tds.SetBlockNr(blockNr+1)
-	statedb.Commit(false, tds.DbStateWriter())
+	statedb.Finalise(false, tds.DbStateWriter())
 
 	tds, _ = state.NewTrieDbState(root, sdb, blockNr)
 	statedb = state.New(tds)

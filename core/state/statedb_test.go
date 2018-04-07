@@ -106,12 +106,12 @@ func TestIntermediateLeaks(t *testing.T) {
 	// Commit and cross check the databases.
 	transTds.IntermediateRoot(transState, false)
 	transTds.SetBlockNr(1)
-	if err := transState.Commit(false, transTds.DbStateWriter()); err != nil {
+	if err := transState.Finalise(false, transTds.DbStateWriter()); err != nil {
 		t.Fatalf("failed to commit transition state: %v", err)
 	}
 	finalState.Finalise(false, finalTds.TrieStateWriter())
 	finalTds.SetBlockNr(1)
-	if err := finalState.Commit(false, finalTds.DbStateWriter()); err != nil {
+	if err := finalState.Finalise(false, finalTds.DbStateWriter()); err != nil {
 		t.Fatalf("failed to commit final state: %v", err)
 	}
 	for finalKeys, i := finalDb.Keys(), 0; i < len(finalKeys); i += 2 {
@@ -150,11 +150,10 @@ func TestCopy(t *testing.T) {
 	}
 	orig.Finalise(false, origTds.TrieStateWriter())
 	origTds.SetBlockNr(1)
-	orig.CleanForNextBlock()
 
 	// Copy the state, modify both in-memory
 	copy := orig.Copy()
-	copyTds := origTds.Copy()
+	copyTds, _ := origTds.Copy()
 
 	for i := byte(0); i < 255; i++ {
 		origObj := orig.GetOrNewStateObject(common.BytesToAddress([]byte{i}))
@@ -171,12 +170,10 @@ func TestCopy(t *testing.T) {
 	go func() {
 		orig.Finalise(true, origTds.TrieStateWriter())
 		origTds.SetBlockNr(2)
-		orig.CleanForNextBlock()
 		close(done)
 	}()
 	copy.Finalise(true, copyTds.TrieStateWriter())
 	copyTds.SetBlockNr(2)
-	copy.CleanForNextBlock()
 	<-done
 
 	// Verify that the two states have been updated independently
@@ -437,7 +434,7 @@ func (s *StateSuite) TestTouchDelete(c *check.C) {
 	s.state.GetOrNewStateObject(common.Address{})
 	s.tds.IntermediateRoot(s.state, false)
 	s.tds.SetBlockNr(1)
-	s.state.Commit(false, s.tds.DbStateWriter())
+	s.state.Finalise(false, s.tds.DbStateWriter())
 
 	s.state.Reset()
 

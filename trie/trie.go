@@ -23,6 +23,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"runtime/debug"
+	"sort"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -365,6 +366,84 @@ func (r *rebuidData) rebuildInsert(k, v []byte, h *hasher) error {
 	return nil
 }
 
+/* One resolver per trie (prefix) */
+type TrieResolver struct {
+	t *Trie
+	continuations []*TrieContinuation
+	walkstarts []int  // For each walk key, it contains the index in the continuations array where it starts
+	walkends []int    // For each walk key, it contains the index in the continuations array where it ends
+}
+
+func (t *Trie) NewResolver() *TrieResolver {
+	tr := TrieResolver{
+		t: t,
+		continuations: []*TrieContinuation{},
+		walkstarts: []int{},
+		walkends: []int{},
+	}
+	return &tr
+}
+
+// TrieResolver implements sort.Interface
+func (tr *TrieResolver) Len() int {
+	return len(tr.continuations)
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+    }
+    return b
+}
+
+func (tr *TrieResolver) Less(i, j int) bool {
+	m := min(tr.continuations[i].resolvePos, tr.continuations[j].resolvePos)
+	c := bytes.Compare(tr.continuations[i].resolveKey[:m], tr.continuations[j].resolveKey[:m])
+	if c != 0 {
+		return c < 0
+	}
+	return tr.continuations[i].resolvePos < tr.continuations[j].resolvePos
+}
+
+func (tr *TrieResolver) Swap(i, j int) {
+	tr.continuations[i], tr.continuations[j] = tr.continuations[j], tr.continuations[i]
+}
+
+func (tr *TrieResolver) AddContinuation(c *TrieContinuation) {
+	tr.continuations = append(tr.continuations, c)
+}
+
+// Prepares information for the MultiSuffixWalk
+func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
+	// Remove continuations strictly contained in the preceeding ones
+	keys := [][]byte{}
+	keybits := []uint{}
+	if len(tr.continuations) == 0 {
+		return keys, keybits
+	}
+	sort.Sort(tr)
+	var prevC *TrieContinuation
+	for i, c := range tr.continuations {
+		if prevC == nil || c.resolvePos < prevC.resolvePos || !bytes.HasPrefix(c.resolveKey[:c.resolvePos], prevC.resolveKey[:prevC.resolvePos]) {
+			if len(tr.walkstarts) > 0 {
+				tr.walkends = append(tr.walkends, tr.walkstarts[len(tr.walkstarts)-1])
+			}
+			tr.walkstarts = append(tr.walkstarts, i)
+			key := make([]byte, 32)
+			decodeNibbles(c.resolveKey[:c.resolvePos], key)
+			keys = append(keys, key)
+			keybits = append(keybits, uint(4*c.resolvePos))
+			prevC = c
+		}
+	}
+	tr.walkends = append(tr.walkends, tr.walkstarts[len(tr.walkstarts)-1])
+	return keys, keybits
+}
+
+func (tr *TrieResolver) Walker(keyIdx int, key []byte, value []byte) (bool, error) {
+	return false, nil
+}
+
 func (t *Trie) Resolve(keys [][]byte, values [][]byte, c *TrieContinuation) error {
 	r := rebuidData{dbw: nil, pos: c.resolvePos, resolvingKey: c.resolveKey, hashes: false}
 	h := newHasher(t.encodeToBytes)
@@ -392,7 +471,8 @@ func (t *Trie) Resolve(keys [][]byte, values [][]byte, c *TrieContinuation) erro
 	}
 	gotHash := hash.(hashNode)
 	if !bytes.Equal(c.resolveHash, gotHash) {
-		return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\n", c.resolveKey[:c.resolvePos], t.prefix)
+		return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got %s\n",
+			c.resolveKey[:c.resolvePos], t.prefix, c.resolveHash, gotHash)
 	}
 	c.resolved = root
 	return nil

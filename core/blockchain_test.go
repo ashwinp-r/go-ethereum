@@ -137,7 +137,7 @@ func testBlockChainImport(chain types.Blocks, blockchain *BlockChain) error {
 		WriteBlock(blockchain.db, block)
 		tds.IntermediateRoot(statedb, false)
 		tds.SetBlockNr(block.NumberU64())
-		statedb.Commit(false, tds.DbStateWriter())
+		statedb.Finalise(false, tds.DbStateWriter())
 		blockchain.mu.Unlock()
 	}
 	return nil

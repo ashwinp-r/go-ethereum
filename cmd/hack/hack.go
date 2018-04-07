@@ -465,7 +465,7 @@ func trieStats() {
 	if err != nil {
 		panic(err)
 	}
-	t := tds.Trie()
+	t := tds.AccountTrie()
 	printOccupancies(t, db, lastNumber)
 	/*
 	statedb := state.New(triedbst)
