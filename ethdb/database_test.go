@@ -34,7 +34,7 @@ func newTestLDB() (*ethdb.LDBDatabase, func()) {
 	if err != nil {
 		panic("failed to create test file: " + err.Error())
 	}
-	db, err := ethdb.NewLDBDatabase(path.Join(dirname, "db"), 0, 0)
+	db, err := ethdb.NewLDBDatabase(path.Join(dirname, "db"), 0, false)
 	if err != nil {
 		panic("failed to create test database: " + err.Error())
 	}

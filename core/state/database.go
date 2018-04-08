@@ -72,17 +72,15 @@ func NewDbState(db ethdb.Database, blockNr uint64) *DbState {
 }
 
 func (dbs *DbState) SetBlockNr(blockNr uint64) {
-	dbs.db.DeleteSuffix(ethdb.CreateBlockSuffix(blockNr))
+	dbs.db.DeleteTimestamp(blockNr)
 	dbs.blockNr = blockNr
 }
 
 func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(key, seckey, value common.Hash) bool) {
-	suffix := ethdb.CreateBlockSuffix(dbs.blockNr)
-	endSuffix := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 	addrHash := crypto.Keccak256Hash(addr[:])
 	var s [32]byte
 	copy(s[:], start)
-	ethdb.SuffixWalk(dbs.db, addrHash[:], s[:], 0, suffix, endSuffix, func(ks, vs []byte) (bool, error) {
+	ethdb.WalkAsOf(dbs.db, addrHash[:], s[:], 0, dbs.blockNr, func(ks, vs []byte) (bool, error) {
 		if vs == nil || len(vs) == 0 {
 			// Skip deleted entries
 			return true, nil
@@ -96,9 +94,8 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 }
 
 func (dbs *DbState) ReadAccountData(address *common.Address) (*Account, error) {
-	suffix := ethdb.CreateBlockSuffix(dbs.blockNr)
 	seckey := crypto.Keccak256Hash(address[:])
-	enc, err := dbs.db.First(AccountsBucket, seckey[:], suffix)
+	enc, err := dbs.db.GetAsOf(AccountsBucket, seckey[:], dbs.blockNr)
 	if err != nil || enc == nil || len(enc) == 0 {
 		return nil, nil
 	}
@@ -112,8 +109,7 @@ func (dbs *DbState) ReadAccountData(address *common.Address) (*Account, error) {
 func (dbs *DbState) ReadAccountStorage(address *common.Address, key *common.Hash) ([]byte, error) {
 	addrHash := crypto.Keccak256Hash(address[:])
 	seckey := crypto.Keccak256Hash(key[:])
-	suffix := ethdb.CreateBlockSuffix(dbs.blockNr)
-	enc, err := dbs.db.First(addrHash[:], seckey[:], suffix)
+	enc, err := dbs.db.GetAsOf(addrHash[:], seckey[:], dbs.blockNr)
 	if err != nil || enc == nil {
 		return nil, nil
 	}
@@ -140,14 +136,12 @@ func (dbs *DbState) UpdateAccountData(address *common.Address, account *Account)
 		return err
 	}
 	seckey := crypto.Keccak256Hash(address[:])
-	suffix := ethdb.CreateBlockSuffix(dbs.blockNr)
-	return dbs.db.PutS(AccountsBucket, seckey[:], suffix, data)
+	return dbs.db.PutS(AccountsBucket, seckey[:], data, dbs.blockNr)
 }
 
 func (dbs *DbState) DeleteAccount(address *common.Address) error {
 	seckey := crypto.Keccak256Hash(address[:])
-	suffix := ethdb.CreateBlockSuffix(dbs.blockNr)
-	return dbs.db.PutS(AccountsBucket, seckey[:], suffix, []byte{})
+	return dbs.db.PutS(AccountsBucket, seckey[:], []byte{}, dbs.blockNr)
 }
 
 func (dbs *DbState) UpdateAccountCode(codeHash common.Hash, code []byte) error {
@@ -157,9 +151,8 @@ func (dbs *DbState) UpdateAccountCode(codeHash common.Hash, code []byte) error {
 func (dbs *DbState) WriteAccountStorage(address *common.Address, key, value *common.Hash) error {
 	addrHash := crypto.Keccak256Hash(address[:])
 	seckey := crypto.Keccak256Hash(key[:])
-	suffix := ethdb.CreateBlockSuffix(dbs.blockNr)
 	v := bytes.TrimLeft(value[:], "\x00") // PutS below will make a copy of v
-	return dbs.db.PutS(addrHash[:], seckey[:], suffix, v)
+	return dbs.db.PutS(addrHash[:], seckey[:], v, dbs.blockNr)
 }
 
 // Implements StateReader by wrapping a trie and a database, where trie acts as a cache for the database
@@ -457,8 +450,7 @@ func (dsw *DbStateWriter) UpdateAccountData(address *common.Address, account *Ac
 	if err != nil {
 		return err
 	}
-	suffix := ethdb.CreateBlockSuffix(dsw.tds.blockNr)
-	return dsw.tds.db.TrieDB().PutS(AccountsBucket, seckey, suffix, data)
+	return dsw.tds.db.TrieDB().PutS(AccountsBucket, seckey, data, dsw.tds.blockNr)
 }
 
 func (tsw *TrieStateWriter) DeleteAccount(address *common.Address) error {
@@ -482,8 +474,7 @@ func (dsw *DbStateWriter) DeleteAccount(address *common.Address) error {
 	if err != nil {
 		return err
 	}
-	suffix := ethdb.CreateBlockSuffix(dsw.tds.blockNr)
-	return dsw.tds.db.TrieDB().PutS(AccountsBucket, seckey, suffix, []byte{})
+	return dsw.tds.db.TrieDB().PutS(AccountsBucket, seckey, []byte{}, dsw.tds.blockNr)
 }
 
 func (tsw *TrieStateWriter) UpdateAccountCode(codeHash common.Hash, code []byte) error {
@@ -524,9 +515,8 @@ func (dsw *DbStateWriter) WriteAccountStorage(address *common.Address, key, valu
 	if err != nil {
 		return err
 	}
-	suffix := ethdb.CreateBlockSuffix(dsw.tds.blockNr)
 	v := bytes.TrimLeft(value[:], "\x00") // PutS below will make a copy of v
-	return dsw.tds.db.TrieDB().PutS(addrHash, seckey, suffix, v)
+	return dsw.tds.db.TrieDB().PutS(addrHash, seckey, v, dsw.tds.blockNr)
 }
 
 // Database wraps access to tries and contract code.

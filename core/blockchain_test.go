@@ -119,7 +119,7 @@ func testBlockChainImport(chain types.Blocks, blockchain *BlockChain) error {
 			return err
 		}
 		statedb := state.New(tds)
-		if err = blockchain.db.DeleteSuffix(ethdb.CreateBlockSuffix(block.NumberU64())); err != nil {
+		if err = blockchain.db.DeleteTimestamp(block.NumberU64()); err != nil {
 			return err
 		}
 		receipts, _, usedGas, err := blockchain.Processor().Process(block, statedb, tds, vm.Config{})

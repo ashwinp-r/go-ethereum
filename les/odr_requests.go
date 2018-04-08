@@ -559,8 +559,8 @@ func (db *readTraceDB) Get(bucket, k []byte) ([]byte, error) {
 	return db.db.Get(bucket, k)
 }
 
-func (db *readTraceDB) First(bucket, key, suffix []byte) ([]byte, error) {
-	return db.db.First(bucket, key, suffix)
+func (db *readTraceDB) GetAsOf(bucket, key []byte, timestamp uint64) ([]byte, error) {
+	return db.db.GetAsOf(bucket, key, timestamp)
 }
 
 // Has returns true if the node set contains the given key

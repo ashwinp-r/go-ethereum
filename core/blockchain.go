@@ -1070,7 +1070,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 			}
 		}
 		parentRoot := parent.Root()
-		bc.db.DeleteSuffix(ethdb.CreateBlockSuffix(block.NumberU64()))
+		bc.db.DeleteTimestamp(block.NumberU64())
 		if bc.trieDbState == nil || readBlockNr == 0 || !bytes.Equal(root[:], parentRoot[:]) {
 			//fmt.Printf("New StateDB created for %d block\n", readBlockNr)
 			log.Info("New StateDB created", "block", readBlockNr)

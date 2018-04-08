@@ -17,9 +17,7 @@
 package light
 
 import (
-	"bytes"
 	"errors"
-	"sort"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -64,14 +62,11 @@ func (db *NodeSet) Put(bucket, key []byte, value []byte) error {
 	return nil
 }
 
-func (db *NodeSet) PutS(bucket, key, suffix, value []byte) error {
-	composite := make([]byte, len(key) + len(suffix))
-	copy(composite, key)
-	copy(composite[len(key):], suffix)
-	return db.Put(bucket, composite, value)
+func (db *NodeSet) PutS(bucket, key, value []byte, timestamp uint64) error {
+	return nil
 }
 
-func (db *NodeSet) DeleteSuffix(suffix []byte) error {
+func (db *NodeSet) DeleteTimestamp(timestamp uint64) error {
 	return nil
 }
 
@@ -86,27 +81,8 @@ func (db *NodeSet) Get(bucket, key []byte) ([]byte, error) {
 	return nil, errors.New("not found")
 }
 
-func (db *NodeSet) First(bucket, key, suffix []byte) ([]byte, error) {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
-	keys := make([]string, len(db.nodes))
-	i := 0
-	for k, _ := range db.nodes {
-		keys[i] = k
-		i++
-	}
-	sort.Strings(keys)
-	start := make([]byte, len(key) + len(suffix))
-	copy(start, key)
-	copy(start[len(key):], suffix)
-	startStr := string(start)
-	index := sort.Search(len(keys), func(i int) bool {
-		return keys[i] >= startStr
-	})
-	if index < len(keys) && bytes.HasPrefix([]byte(keys[index]), key) {
-		return db.nodes[keys[index]], nil
-	}
-	return nil, errors.New("key not found in range")
+func (db *NodeSet) GetAsOf(bucket, key []byte, timestamp uint64) ([]byte, error) {
+	return nil, nil
 }
 
 func (db *NodeSet) Walk(bucket, key []byte, keybits uint, walker ethdb.WalkerFunc) error {
@@ -188,12 +164,12 @@ func (n *NodeList) Put(bucket, key []byte, value []byte) error {
 }
 
 // Put stores a new node at the end of the list
-func (n *NodeList) PutS(bucket, key, suffix, value []byte) error {
+func (n *NodeList) PutS(bucket, key, value []byte, timestamp uint64) error {
 	*n = append(*n, value)
 	return nil
 }
 
-func (n *NodeList) DeleteSuffix(suffix []byte) error {
+func (n *NodeList) DeleteTimestamp(timestamp uint64) error {
 	return nil
 }
 

@@ -413,10 +413,8 @@ func (tds *TrieDbState) ForEachStorage(s *StateDB, addr common.Address, cb func(
 		cb(h, value)
 	}
 
-	suffix := ethdb.CreateBlockSuffix(tds.blockNr)
-	endSuffix := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 	addrHash := crypto.Keccak256Hash(addr[:])
-	ethdb.SuffixWalk(tds.db.TrieDB(), addrHash[:], []byte{}, 0, suffix, endSuffix, func(ks, vs []byte) (bool, error) {
+	ethdb.WalkAsOf(tds.db.TrieDB(), addrHash[:], []byte{}, 0, tds.blockNr, func(ks, vs []byte) (bool, error) {
 		key := common.BytesToHash(tds.GetKey(ks))
 		if _, ok := so.cachedStorage[key]; !ok {
 			cb(key, common.BytesToHash(vs))

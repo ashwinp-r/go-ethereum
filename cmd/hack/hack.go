@@ -11,7 +11,6 @@ import (
 	"log"
 	"sort"
 	"io/ioutil"
-	"encoding/binary"
 
 	//"github.com/petar/GoLLRB/llrb"
 	"github.com/boltdb/bolt"
@@ -453,7 +452,7 @@ func printOccupancies(t *trie.Trie, db ethdb.Database, blockNr uint64) {
 
 func trieStats() {
 	//db, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata", 4096, 16)
-	db, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 4096, 16)
+	db, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 4096, false)
 	if err != nil {
 		panic(err)
 	}
@@ -731,8 +730,6 @@ func testRebuild() {
 	defer db.Close()
 	bucket := []byte("AT")
 	writeBlockNr := uint64(0)
-	suffix := make([]byte, 8)
-	binary.BigEndian.PutUint64(suffix, writeBlockNr^0xffffffffffffffff - 1)	// Commit objects to the trie.
 	t := trie.New(common.Hash{}, bucket, false)
 
 	keys := []string{
@@ -761,7 +758,7 @@ func testRebuild() {
 		fmt.Printf("Root1: %x\n", t.Root())
 		v1, err = trie.EncodeAsValue(v1)
 		check(err)
-		db.PutS(bucket, key, suffix, v1)
+		db.PutS(bucket, key, v1, writeBlockNr)
 		db.Commit()
 		t1 := trie.New(common.BytesToHash(root1), bucket, false)
 		t1.Rebuild(db, 0)

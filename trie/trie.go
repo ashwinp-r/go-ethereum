@@ -479,15 +479,13 @@ func (t *Trie) Resolve(keys [][]byte, values [][]byte, c *TrieContinuation) erro
 }
 
 func (tc *TrieContinuation) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
-	suffix := ethdb.CreateBlockSuffix(blockNr)
-	endSuffix := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 	var start [32]byte
 	decodeNibbles(tc.resolveKey[:tc.resolvePos], start[:])
 	var resolving [32]byte
 	decodeNibbles(tc.resolveKey, resolving[:])
 	r := rebuidData{dbw: nil, pos: tc.resolvePos, resolvingKey: tc.resolveKey, hashes: false}
 	h := newHasher(tc.t.encodeToBytes)
-	err := ethdb.SuffixWalk(db, tc.t.prefix, start[:], uint(4*tc.resolvePos), suffix, endSuffix, func(k, v []byte) (bool, error) {
+	err := ethdb.WalkAsOf(db, tc.t.prefix, start[:], uint(4*tc.resolvePos), blockNr, func(k, v []byte) (bool, error) {
 		if len(v) > 0 {
 			if err := r.rebuildInsert(k, v, h); err != nil {
 				return false, err
@@ -524,8 +522,6 @@ func (tc *TrieContinuation) ResolveWithDb(db ethdb.Database, blockNr uint64) err
 }
 
 func (t *Trie) rebuildHashes(db ethdb.Database, key []byte, pos int, blockNr uint64, hashes bool) (node, hashNode, error) {
-	suffix := ethdb.CreateBlockSuffix(blockNr)
-	endSuffix := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 	var start [32]byte
 	decodeNibbles(key[:pos], start[:])
 	var resolving [32]byte
@@ -533,7 +529,7 @@ func (t *Trie) rebuildHashes(db ethdb.Database, key []byte, pos int, blockNr uin
 	r := rebuidData{dbw: db, pos:pos, resolvingKey: resolving[:], hashes: hashes}
 	h := newHasher(t.encodeToBytes)
 	defer returnHasherToPool(h)
-	err := ethdb.SuffixWalk(db, t.prefix, start[:], uint(4*pos), suffix, endSuffix, func(k, v []byte) (bool, error) {
+	err := ethdb.WalkAsOf(db, t.prefix, start[:], uint(4*pos), blockNr, func(k, v []byte) (bool, error) {
 		if len(v) > 0 {
 			return true, r.rebuildInsert(k, v, h)
 		}
@@ -800,8 +796,7 @@ func (t *Trie) relistNodes(n node) {
 }
 
 func (t *Trie) tryGet(dbr DatabaseReader, origNode node, key []byte, pos int, blockNr uint64) (value []byte, err error) {
-	suffix := ethdb.CreateBlockSuffix(blockNr)
-	val, err := dbr.First(t.prefix, hexToKeybytes(key), suffix)
+	val, err := dbr.GetAsOf(t.prefix, hexToKeybytes(key), blockNr)
 	if err != nil || val == nil {
 		return nil, nil
 	}
@@ -1397,13 +1392,11 @@ func (t *Trie) resolveHash(db ethdb.Database, n hashNode, key []byte, pos int, b
 }
 
 func (t *Trie) resolveHashOld(db ethdb.Database, n hashNode, key []byte, pos int, blockNr uint64) (node, error) {
-	suffix := ethdb.CreateBlockSuffix(blockNr)
-	endSuffix := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 	var start [32]byte
 	decodeNibbles(key[:pos], start[:])
 	var root node
 	var tc TrieContinuation
-	err := ethdb.SuffixWalk(db, t.prefix, start[:], uint(pos*4), suffix, endSuffix, func(k, v []byte) (bool, error) {
+	err := ethdb.WalkAsOf(db, t.prefix, start[:], uint(pos*4), blockNr, func(k, v []byte) (bool, error) {
 		if len(v) > 0 {
 			tc.action = TrieActionInsert
 			tc.key = keybytesToHex(k)

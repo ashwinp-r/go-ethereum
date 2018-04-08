@@ -25,7 +25,17 @@ func NewMemDatabase() Mutation {
 		db: nil,
 		puts: llrb.New(),
 		hashes: make(map[uint32]Hash),
+		varKeys: false,
 	}
 	return m
 }
 
+func NewMemDatabase1() Mutation {
+	m := &mutation{
+		db: nil,
+		puts: llrb.New(),
+		hashes: make(map[uint32]Hash),
+		varKeys: true,
+	}
+	return m
+}

@@ -36,7 +36,7 @@ type DatabaseReader interface {
 	// Get retrieves the value associated with key form the database.
 	Get(bucket, key []byte) (value []byte, err error)
 
-	First(bucket, key, suffix []byte) ([]byte, error)
+	GetAsOf(bucket, key []byte, timestamp uint64) ([]byte, error)
 
 	// Has retrieves whether a key is present in the database.
 	Has(bucket, key []byte) (bool, error)

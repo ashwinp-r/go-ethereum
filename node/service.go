@@ -43,7 +43,7 @@ func (ctx *ServiceContext) OpenDatabase(name string, cache int, handles int) (et
 	if ctx.config.DataDir == "" {
 		return ethdb.NewMemDatabase(), nil
 	}
-	db, err := ethdb.NewLDBDatabase(ctx.config.resolvePath(name), cache, handles)
+	db, err := ethdb.NewLDBDatabase(ctx.config.resolvePath(name), cache, false)
 	if err != nil {
 		return nil, err
 	}

@@ -220,7 +220,7 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 			panic(err)
 		}
 		statedb := state.New(tds)
-		err = db.DeleteSuffix(ethdb.CreateBlockSuffix(parent.NumberU64()+1))
+		err = db.DeleteTimestamp(parent.NumberU64()+1)
 		if err != nil {
 			panic(err)
 		}

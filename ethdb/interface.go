@@ -23,8 +23,8 @@ const IdealBatchSize = 100 * 1024
 // Putter wraps the database write operation supported by both batches and regular databases.
 type Putter interface {
 	Put(bucket, key, value []byte) error
-	PutS(bucket, key, suffix, value []byte) error
-	DeleteSuffix(suffix []byte) error
+	PutS(bucket, key, value []byte, timestamp uint64) error
+	DeleteTimestamp(timestamp uint64) error
 	PutHash(index uint32, hash []byte)
 }
 
@@ -40,9 +40,9 @@ type WalkerFunc = func(key, value []byte) ([]byte, WalkAction, error)
 
 type Getter interface {
 	Get(bucket, key []byte) ([]byte, error)
-	First(bucket, key, suffix []byte) ([]byte, error)
+	GetAsOf(bucket, key []byte, timestamp uint64) ([]byte, error)
 	Has(bucket, key []byte) (bool, error)
-	Walk(bucket, key []byte, keybits uint, walker WalkerFunc) error
+	Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFunc) error
 	GetHash(index uint32) []byte
 }
 
