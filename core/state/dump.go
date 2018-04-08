@@ -23,7 +23,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
@@ -47,7 +46,7 @@ func (self *TrieDbState) RawDump() Dump {
 		Accounts: make(map[string]DumpAccount),
 	}
 	var prefix [32]byte
-	err := ethdb.WalkAsOf(self.db.TrieDB(), AccountsBucket, prefix[:], 0, self.blockNr, func(k, v []byte) (bool, error) {
+	err := self.db.TrieDB().WalkAsOf(AccountsBucket, prefix[:], 0, self.blockNr, func(k, v []byte) (bool, error) {
 		addr := self.GetKey(k)
 		var data Account
 		var err error
@@ -69,7 +68,7 @@ func (self *TrieDbState) RawDump() Dump {
 			Storage:  make(map[string]string),
 		}
 		addrHash := crypto.Keccak256Hash(addr)
-		err = ethdb.WalkAsOf(self.db.TrieDB(), addrHash[:], []byte{}, 0, self.blockNr, func(ks, vs []byte) (bool, error) {
+		err = self.db.TrieDB().WalkAsOf(addrHash[:], []byte{}, 0, self.blockNr, func(ks, vs []byte) (bool, error) {
 			account.Storage[common.Bytes2Hex(self.GetKey(ks))] = common.Bytes2Hex(vs)
 			return true, nil
 		})

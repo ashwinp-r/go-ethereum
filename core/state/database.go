@@ -80,7 +80,7 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 	addrHash := crypto.Keccak256Hash(addr[:])
 	var s [32]byte
 	copy(s[:], start)
-	ethdb.WalkAsOf(dbs.db, addrHash[:], s[:], 0, dbs.blockNr, func(ks, vs []byte) (bool, error) {
+	dbs.db.WalkAsOf(addrHash[:], s[:], 0, dbs.blockNr, func(ks, vs []byte) (bool, error) {
 		if vs == nil || len(vs) == 0 {
 			// Skip deleted entries
 			return true, nil

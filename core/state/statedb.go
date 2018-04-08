@@ -27,7 +27,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethdb"
 
 	"github.com/petar/GoLLRB/llrb"
 )
@@ -414,7 +413,7 @@ func (tds *TrieDbState) ForEachStorage(s *StateDB, addr common.Address, cb func(
 	}
 
 	addrHash := crypto.Keccak256Hash(addr[:])
-	ethdb.WalkAsOf(tds.db.TrieDB(), addrHash[:], []byte{}, 0, tds.blockNr, func(ks, vs []byte) (bool, error) {
+	tds.db.TrieDB().WalkAsOf(addrHash[:], []byte{}, 0, tds.blockNr, func(ks, vs []byte) (bool, error) {
 		key := common.BytesToHash(tds.GetKey(ks))
 		if _, ok := so.cachedStorage[key]; !ok {
 			cb(key, common.BytesToHash(vs))
