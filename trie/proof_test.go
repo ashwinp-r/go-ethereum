@@ -18,6 +18,7 @@ package trie
 
 import (
 	"bytes"
+	//"fmt"
 	crand "crypto/rand"
 	mrand "math/rand"
 	"testing"
@@ -32,7 +33,7 @@ func init() {
 	mrand.Seed(time.Now().Unix())
 }
 
-func TestProof(t *testing.T) {
+func testProof(t *testing.T) {
 	trie, vals := randomTrie(500)
 	root := trie.Hash()
 	for _, kv := range vals {
@@ -50,12 +51,12 @@ func TestProof(t *testing.T) {
 	}
 }
 
-func TestOneElementProof(t *testing.T) {
+func testOneElementProof(t *testing.T) {
 	trie := new(Trie)
 	updateString(trie, nil, "k", "v")
 	proofs := ethdb.NewMemDatabase()
 	trie.Prove(nil, []byte("k"), 0, proofs, 0)
-	if len(proofs.Keys()) != 1 {
+	if len(proofs.Keys()) != 1*2 {  // keys[0] is the bucket, keys[1] is the key
 		t.Error("proof should have one element")
 	}
 	val, err, _ := VerifyProof(trie.Hash(), []byte("k"), proofs)
@@ -67,7 +68,7 @@ func TestOneElementProof(t *testing.T) {
 	}
 }
 
-func TestVerifyBadProof(t *testing.T) {
+func testVerifyBadProof(t *testing.T) {
 	trie, vals := randomTrie(800)
 	root := trie.Hash()
 	for _, kv := range vals {
@@ -99,7 +100,7 @@ func mutateByte(b []byte) {
 	}
 }
 
-func BenchmarkProve(b *testing.B) {
+func benchmarkProve(b *testing.B) {
 	trie, vals := randomTrie(100)
 	var keys []string
 	for k := range vals {
@@ -116,7 +117,7 @@ func BenchmarkProve(b *testing.B) {
 	}
 }
 
-func BenchmarkVerifyProof(b *testing.B) {
+func benchmarkVerifyProof(b *testing.B) {
 	trie, vals := randomTrie(100)
 	root := trie.Hash()
 	var keys []string

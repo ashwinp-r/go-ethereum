@@ -66,8 +66,8 @@ func TestNull(t *testing.T) {
 	}
 }
 
-func TestMissingNodeDisk(t *testing.T)    { testMissingNode(t, false) }
-func TestMissingNodeMemonly(t *testing.T) { testMissingNode(t, true) }
+func testMissingNodeDisk(t *testing.T)    { testMissingNode(t, false) }
+func testMissingNodeMemonly(t *testing.T) { testMissingNode(t, true) }
 
 func testMissingNode(t *testing.T, memonly bool) {
 	diskdb := ethdb.NewMemDatabase()
@@ -232,7 +232,7 @@ func TestEmptyValues(t *testing.T) {
 	}
 }
 
-func TestReplication(t *testing.T) {
+func testReplication(t *testing.T) {
 	diskdb, trie := newEmpty()
 	vals := []struct{ k, v string }{
 		{"do", "verb"},
@@ -396,7 +396,7 @@ func runRandTest(rt randTest) bool {
 	return true
 }
 
-func TestRandom(t *testing.T) {
+func testRandom(t *testing.T) {
 	if err := quick.Check(runRandTest, nil); err != nil {
 		if cerr, ok := err.(*quick.CheckError); ok {
 			t.Fatalf("random test iteration %d failed: %s", cerr.Count, spew.Sdump(cerr.In))

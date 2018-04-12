@@ -444,46 +444,12 @@ func (tr *TrieResolver) Walker(keyIdx int, key []byte, value []byte) (bool, erro
 	return false, nil
 }
 
-func (t *Trie) Resolve(keys [][]byte, values [][]byte, c *TrieContinuation) error {
-	r := rebuidData{dbw: nil, pos: c.resolvePos, resolvingKey: c.resolveKey, hashes: false}
-	h := newHasher(t.encodeToBytes)
-	for i, key := range keys {
-		value := values[i]
-		if err := r.rebuildInsert(key, value, h); err != nil {
-			return err
-		}
-	}
-	if err := r.rebuildInsert(nil, nil, h); err != nil {
-		return err
-	}
-	var root node
-	if r.fillCount[c.resolvePos] == 1 {
-		root = r.nodeStack[c.resolvePos]
-	} else if r.fillCount[c.resolvePos] > 1 {
-		root = &r.vertical[c.resolvePos]
-	}
-	if root == nil {
-		return fmt.Errorf("Resolve returned nil root")
-	}
-	hash, err := h.hash(root, c.resolvePos == 0)
-	if err != nil {
-		return err
-	}
-	gotHash := hash.(hashNode)
-	if !bytes.Equal(c.resolveHash, gotHash) {
-		return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got %s\n",
-			c.resolveKey[:c.resolvePos], t.prefix, c.resolveHash, gotHash)
-	}
-	c.resolved = root
-	return nil
-}
-
 func (tc *TrieContinuation) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
 	var start [32]byte
 	decodeNibbles(tc.resolveKey[:tc.resolvePos], start[:])
 	var resolving [32]byte
 	decodeNibbles(tc.resolveKey, resolving[:])
-	r := rebuidData{dbw: nil, pos: tc.resolvePos, resolvingKey: tc.resolveKey, hashes: false}
+	r := rebuidData{dbw: nil, pos: tc.resolvePos, resolvingKey: resolving[:], hashes: false}
 	h := newHasher(tc.t.encodeToBytes)
 	err := db.WalkAsOf(tc.t.prefix, start[:], uint(4*tc.resolvePos), blockNr, func(k, v []byte) (bool, error) {
 		if len(v) > 0 {
@@ -512,10 +478,17 @@ func (tc *TrieContinuation) ResolveWithDb(db ethdb.Database, blockNr uint64) err
 	if err != nil {
 		return err
 	}
-	gotHash := hash.(hashNode)
-	if !bytes.Equal(tc.resolveHash, gotHash) {
-		return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got %s\n",
-			tc.resolveKey[:tc.resolvePos], tc.t.prefix, tc.resolveHash, gotHash)
+	gotHash, ok := hash.(hashNode)
+	if ok {
+		if !bytes.Equal(tc.resolveHash, gotHash) {
+			return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got %s\n",
+				tc.resolveKey[:tc.resolvePos], tc.t.prefix, tc.resolveHash, gotHash)
+		}
+	} else {
+		if tc.resolveHash != nil {
+			return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got embedded node\n",
+				tc.resolveKey[:tc.resolvePos], tc.t.prefix, tc.resolveHash)			
+		}
 	}
 	tc.resolved = root
 	return nil

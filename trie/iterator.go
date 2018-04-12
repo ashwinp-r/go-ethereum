@@ -203,12 +203,17 @@ func (it *nodeIterator) seek(prefix []byte) error {
 	key = key[:len(key)-1]
 	// Move forward until we're just before the closest match to key.
 	for {
-		state, parentIndex, path, err := it.peek(bytes.HasPrefix(key, it.path))
+		descend := bytes.HasPrefix(key, it.path)
+		state, parentIndex, path, err := it.peek(descend)
 		if err == iteratorEnd {
 			return iteratorEnd
 		} else if err != nil {
 			return seekError{prefix, err}
-		} else if bytes.Compare(path, key) >= 0 {
+		}
+		if bytes.Compare(path, key) >= 0 {
+			if !descend {
+				it.push(state, parentIndex, path)
+			}
 			return nil
 		}
 		it.push(state, parentIndex, path)

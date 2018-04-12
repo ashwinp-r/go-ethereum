@@ -47,7 +47,7 @@ type (
 		flags    nodeFlag
 	}
 	duoNode struct {
-		mask	uint16 // Bitmask. The set bits indicate the child is not nil
+		mask	uint32 // Bitmask. The set bits indicate the child is not nil
 		child1  node
 		child2  node
 		flags   nodeFlag
@@ -81,7 +81,7 @@ func (n *duoNode) EncodeRLP(w io.Writer) error {
 
 func (n *duoNode) childrenIdx() (i1 byte, i2 byte) {
 	child := 1
-	var m uint16 = 1
+	var m uint32 = 1
 	for i := 0; i < 17; i++ {
 		if (n.mask & m) > 0 {
 			if child == 1 {

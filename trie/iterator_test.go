@@ -29,12 +29,12 @@ import (
 func TestIterator(t *testing.T) {
 	diskdb, trie := newEmpty()
 	vals := []struct{ k, v string }{
-		//{"do", "verb"},
+		{"do", "verb"},
 		{"ether", "wookiedoo"},
 		{"horse", "stallion"},
 		{"shaman", "horse"},
 		{"doge", "coin"},
-		//{"dog", "puppy"},
+		{"dog", "puppy"},
 		{"somethingveryoddindeedthis is", "myothernodedata"},
 	}
 	all := make(map[string]string)
@@ -267,8 +267,8 @@ func TestIteratorNoDups(t *testing.T) {
 }
 
 // This test checks that nodeIterator.Next can be retried after inserting missing trie nodes.
-func TestIteratorContinueAfterErrorDisk(t *testing.T)    { testIteratorContinueAfterError(t, false) }
-func TestIteratorContinueAfterErrorMemonly(t *testing.T) { testIteratorContinueAfterError(t, true) }
+func testIteratorContinueAfterErrorDisk(t *testing.T)    { testIteratorContinueAfterError(t, false) }
+func testIteratorContinueAfterErrorMemonly(t *testing.T) { testIteratorContinueAfterError(t, true) }
 
 func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 	diskdb := ethdb.NewMemDatabase()
@@ -284,9 +284,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 		diskKeys [][]byte
 		memKeys  []common.Hash
 	)
-	if memonly {
-		diskKeys = diskdb.Keys()
-	}
+	diskKeys = diskdb.Keys()
 	for i := 0; i < 20; i++ {
 		// Create trie that will load all nodes from DB.
 		tr := New(tr.Hash(), bucket, false)
@@ -337,10 +335,10 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 // Similar to the test above, this one checks that failure to create nodeIterator at a
 // certain key prefix behaves correctly when Next is called. The expectation is that Next
 // should retry seeking before returning true for the first time.
-func TestIteratorContinueAfterSeekErrorDisk(t *testing.T) {
+func testIteratorContinueAfterSeekErrorDisk(t *testing.T) {
 	testIteratorContinueAfterSeekError(t, false)
 }
-func TestIteratorContinueAfterSeekErrorMemonly(t *testing.T) {
+func testIteratorContinueAfterSeekErrorMemonly(t *testing.T) {
 	testIteratorContinueAfterSeekError(t, true)
 }
 

@@ -3,14 +3,14 @@ package ethdb
 import (
 )
 
-func EncodingLen8to7(b []byte) int {
+func encodingLen8to7(b []byte) int {
 	return (len(b)*8 + 6)/7
 }
 
 // Transforms b into encoding where only
 // 7 bits of each byte are used to encode the bits of b
 // The most significant bit is left empty, for other purposes
-func Encode8to7(b []byte) []byte {
+func encode8to7(b []byte) []byte {
 	// Calculate number of bytes in the output
 	inbytes := len(b)
 	outbytes := (inbytes*8 + 6)/7
@@ -49,7 +49,7 @@ func Encode8to7(b []byte) []byte {
 	return out
 }
 
-func Decode7to8(b []byte) []byte {
+func decode7to8(b []byte) []byte {
 	inbytes := len(b)
 	outbytes := inbytes*7/8
 	out := make([]byte, outbytes)
