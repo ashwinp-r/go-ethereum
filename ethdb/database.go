@@ -19,7 +19,7 @@ package ethdb
 import (
 	"bytes"
 	"errors"
-	"fmt"
+	//"fmt"
 	"os"
 	"path"
 	"sync"
@@ -990,9 +990,6 @@ func walkAsOf(db Getter, varKeys bool, bucket, startkey []byte, fixedbits uint, 
 	keyBuffer := make([]byte, l+len(endSuffix))
 	sl := l + len(suffix)
 	err := db.Walk(bucket, startkey, fixedbits, func(k, v []byte) ([]byte, WalkAction, error) {
-		if l > len(k) {
-			fmt.Printf("k: %x, l: %d\n", k, l)
-		}
 		if bytes.Compare(k[l:], suffix) >=0 {
 			// Current key inserted at the given block suffix or earlier
 			goOn, err := walker(k[:l], v)
@@ -1013,24 +1010,33 @@ func walkAsOf(db Getter, varKeys bool, bucket, startkey []byte, fixedbits uint, 
 }
 
 // keys is sorted, prefixes strightly containing each other removed
-func MultiSuffixWalk(db Getter, varKeys bool, bucket []byte, keys [][]byte, keybits []uint, suffix, endSuffix []byte, walker func(int, []byte, []byte) (bool, error)) error {
-	l := len(keys[0])
+func multiWalkAsOf(db Getter, varKeys bool, bucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
+	if len(startkeys) == 0 {
+		return nil
+	}
+	suffix := encodeTimestamp(timestamp, varKeys)
+	l := len(startkeys[0])
+	var endSuffix []byte
+	if varKeys {
+		endSuffix = EndSuffixHZ
+	} else {
+		endSuffix = EndSuffix
+	}
 	keyBuffer := make([]byte, l+len(endSuffix))
-	suffixExt := make([]byte, len(endSuffix))
-	copy(suffixExt, suffix)
+	sl := l + len(suffix)
 	keyIdx := 0 // What is the current key we are extracting
-	keybytes, mask := bytesmask(keybits[keyIdx], varKeys)
-	err := db.Walk(bucket, keys[0], 0, func (k, v []byte) ([]byte, WalkAction, error) {
+	fixedbytes, mask := bytesmask(fixedbits[keyIdx], varKeys)
+	err := db.Walk(bucket, startkeys[0], 0, func (k, v []byte) ([]byte, WalkAction, error) {
 		// Do we need to switch to the next key and keybits
-		if keybits[keyIdx] > 0 && (!bytes.Equal(k[:keybytes-1], keys[keyIdx][:keybytes-1]) || (k[keybytes-1]&mask)!=(keys[keyIdx][keybytes-1]&mask)) {
+		if fixedbits[keyIdx] > 0 && (!bytes.Equal(k[:fixedbytes-1], startkeys[keyIdx][:fixedbytes-1]) || (k[fixedbytes-1]&mask)!=(startkeys[keyIdx][fixedbytes-1]&mask)) {
 			keyIdx++
-			if keyIdx == len(keys) {
+			if keyIdx == len(startkeys) {
 				return nil, WalkActionStop, nil
 			}
-			keybytes, mask = bytesmask(keybits[keyIdx], varKeys)
-			copy(keyBuffer, keys[keyIdx])
-			copy(keyBuffer[l:], suffixExt)
-			return keyBuffer, WalkActionSeek, nil
+			fixedbytes, mask = bytesmask(fixedbits[keyIdx], varKeys)
+			copy(keyBuffer, startkeys[keyIdx])
+			copy(keyBuffer[l:], suffix)
+			return keyBuffer[:sl], WalkActionSeek, nil
 		}
 		if bytes.Compare(k[l:], suffix) >= 0 {
 			// Current key inserted at the given block suffix or earlier
@@ -1044,8 +1050,8 @@ func MultiSuffixWalk(db Getter, varKeys bool, bucket []byte, keys [][]byte, keyb
 		} else {
 			// Current key inserted after the given block suffix, seek to it
 			copy(keyBuffer, k[:l])
-			copy(keyBuffer[l:], suffixExt)
-			return keyBuffer, WalkActionSeek, nil
+			copy(keyBuffer[l:], suffix)
+			return keyBuffer[:sl], WalkActionSeek, nil
 		}
 		//return nil, WalkActionStop, nil // TODO - REPLACE
 	})
