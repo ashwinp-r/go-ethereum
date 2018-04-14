@@ -182,5 +182,5 @@ func TestTrieResolver(t *testing.T) {
 			fmt.Printf("    %s\n", hexToKeybytes(resolver.continuations[j].resolveKey))
 		}
 	}
-	t.Errorf("Got here")
+	//t.Errorf("Got here")
 }

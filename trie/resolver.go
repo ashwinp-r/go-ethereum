@@ -170,19 +170,10 @@ func (r *rebuidData) rebuildInsert(k, v []byte, h *hasher) error {
 			if startLevel < stopLevel {
 				startLevel = stopLevel
 			}
-			//if r.newway {
-				hex := keybytesToHex(r.key[:])
-				r.nodeStack[startLevel+1] = &shortNode{Key: hexToCompact(hex[startLevel+1:]), Val: valueNode(r.value)}
-				r.fillCount[startLevel+1]++
-				r.vertical[startLevel+1].Children[hex[startLevel]] = &shortNode{Key: hexToCompact(hex[startLevel+1:]), Val: valueNode(r.value)}
-			//} else {
-			//	startLevel = Levels-1
-			//	r.nodeStack[Levels] = valueNode(r.value)
-			//	r.fillCount[Levels] = 1				
-			//}
-			//if r.newway {
-				//fmt.Printf("startLevel: %d, stopLevel: %d, pos: %d\n", startLevel, stopLevel, r.pos)
-			//}
+			hex := keybytesToHex(r.key[:])
+			r.nodeStack[startLevel+1] = &shortNode{Key: hexToCompact(hex[startLevel+1:]), Val: valueNode(r.value)}
+			r.fillCount[startLevel+1] = 1
+			//r.vertical[startLevel+1].Children[hex[startLevel]] = &shortNode{Key: hexToCompact(hex[startLevel+1:]), Val: valueNode(r.value)}
 			for level := startLevel; level >= stopLevel; level-- {
 				idx := level >> 1
 				var keynibble byte
@@ -207,25 +198,16 @@ func (r *rebuidData) rebuildInsert(k, v []byte, h *hasher) error {
 				if r.hashes && level <= 4 {
 					hashIdx = binary.BigEndian.Uint32(r.key[:4]) >> 12
 				}
-				//if r.newway {
-					//fmt.Printf("level %d, keynibble %d, r.fillCount[level+1] %d\n", level, keynibble, r.fillCount[level+1])
-				//}
 				if r.fillCount[level+1] == 1 {
 					// Short node, needs to be promoted to the level above
 					short, ok := r.nodeStack[level+1].(*shortNode)
 					var newShort *shortNode
 					if ok {
-						//if r.newway {
-							//fmt.Printf("shortnode: %s\n", short.fstring(""))
-						//}
 						newShort = &shortNode{Key: hexToCompact(append([]byte{keynibble}, compactToHex(short.Key)...)), Val: short.Val}
 					} else {
 						// r.nodeStack[level+1] is a value node
 						newShort = &shortNode{Key: hexToCompact([]byte{keynibble, 16}), Val: r.nodeStack[level+1]}
 					}
-					//if r.newway {
-						//fmt.Printf("newShortNode: %s\n", newShort.fstring(""))
-					//}
 					var hn node
 					var err error
 					if short != nil && (!onResolvingPath || r.hashes && level <= 4 && compactLen(short.Key) + level >= 4) {
@@ -297,9 +279,7 @@ func (r *rebuidData) rebuildInsert(k, v []byte, h *hasher) error {
 			}
 		}
 		if k != nil {
-			// Insert the current key
-			//r.nodeStack[Levels] = valueNode(common.CopyBytes(v))
-			//r.fillCount[Levels] = 1
+			// Remember the current key and value
 			copy(r.key[:], k[:32])
 			r.value = common.CopyBytes(v)
 			r.key_set = true
@@ -524,16 +504,12 @@ func (tc *TrieContinuation) ResolveWithDb(db ethdb.Database, blockNr uint64) err
 	var resolving [32]byte
 	decodeNibbles(tc.resolveKey, resolving[:])
 	r := rebuidData{dbw: nil, pos: tc.resolvePos, resolvingKey: resolving[:], hashes: false, startLevel: tc.resolvePos}
-	//rold := rebuidData{dbw: nil, pos: tc.resolvePos, resolvingKey: resolving[:], hashes: false, startLevel: tc.resolvePos, newway: false}
 	h := newHasher(tc.t.encodeToBytes)
 	err := db.WalkAsOf(tc.t.prefix, start[:], uint(4*tc.resolvePos), blockNr, func(k, v []byte) (bool, error) {
 		if len(v) > 0 {
 			if err := r.rebuildInsert(k, v, h); err != nil {
 				return false, err
 			}
-			//if err := rold.rebuildInsert(k, v, h); err != nil {
-			//	return false, err
-			//}
 		}
 		return true, nil
 	})
@@ -543,50 +519,20 @@ func (tc *TrieContinuation) ResolveWithDb(db ethdb.Database, blockNr uint64) err
 	if err := r.rebuildInsert(nil, nil, h); err != nil {
 		return err
 	}
-	//if err := rold.rebuildInsert(nil, nil, h); err != nil {
-	//	return err
-	//}
 	var root node
-	//var rootold node
 	if r.fillCount[tc.resolvePos] == 1 {
 		root = r.nodeStack[tc.resolvePos]
 	} else if r.fillCount[tc.resolvePos] > 1 {
 		root = &r.vertical[tc.resolvePos]
 	}
-	//if rold.fillCount[tc.resolvePos] == 1 {
-	//	rootold = rold.nodeStack[tc.resolvePos]
-	//} else if rold.fillCount[tc.resolvePos] > 1 {
-	//	rootold = &rold.vertical[tc.resolvePos]
-	//}
 	if root == nil {
 		return fmt.Errorf("Resolve returned nil root")
 	}
-	//if rootold == nil {
-	//	return fmt.Errorf("Resolve returned nil rootold")
-	//}
 	hash, err := h.hash(root, tc.resolvePos == 0)
 	if err != nil {
 		return err
 	}
-	//hashold, err := h.hash(rootold, tc.resolvePos == 0)
-	//if err != nil {
-	//	return err
-	//}
 	gotHash, ok := hash.(hashNode)
-	//gotHashOld, okold := hashold.(hashNode)
-	//fmt.Printf("Old way node: %s\n", rootold.fstring(""))
-	//fmt.Printf("New way node: %s\n", root.fstring(""))
-	//if okold {
-	//	if !bytes.Equal(tc.resolveHash, gotHashOld) {
-	//		return fmt.Errorf("(old)Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got %s\n",
-	//			tc.resolveKey[:tc.resolvePos], tc.t.prefix, tc.resolveHash, gotHashOld)
-	//	}
-	//} else {
-	//	if tc.resolveHash != nil {
-	//		return fmt.Errorf("(old)Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got embedded node\n",
-	//			tc.resolveKey[:tc.resolvePos], tc.t.prefix, tc.resolveHash)			
-	//	}
-	//}
 	if ok {
 		if !bytes.Equal(tc.resolveHash, gotHash) {
 			return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got %s\n",
