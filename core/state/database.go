@@ -184,6 +184,7 @@ func NewTrieDbState(root common.Hash, db Database, blockNr uint64) (*TrieDbState
 		storageTries: make(map[string]*trie.Trie),
 		continuations: []*trie.TrieContinuation{},
 		accountUpdates: make(map[common.Address]*Account),
+		accountDeletes: make(map[common.Address]struct{}),
 		updatedStorage: make(map[common.Address]*trie.Trie),
 	}
 	t.MakeListed(tds.nodeList)
