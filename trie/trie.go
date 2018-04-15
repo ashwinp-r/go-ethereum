@@ -752,6 +752,7 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 			// other nodes.
 			childKey := compactToHex(child.Key)
 			newnode := &shortNode{hexToCompact(concat(nKey, childKey...)), child.Val, t.newFlag()}
+			c.touched = append(c.touched, Touch{np: child, key: key, pos: keyStart+len(nKey)})
 			c.updated = true
 			c.n = newnode
 			return done

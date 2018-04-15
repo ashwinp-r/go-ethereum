@@ -54,7 +54,6 @@ func TestResolve1(t *testing.T) {
 }
 
 func TestResolve2(t *testing.T) {
-	fmt.Printf("TestResolve2\n")
 	db := ethdb.NewMemDatabase()
 	tr := New(common.Hash{}, testbucket, false)
 	db.PutS(testbucket, []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), 0)
@@ -177,10 +176,7 @@ func TestTrieResolver(t *testing.T) {
 	resolver.AddContinuation(tc1)
 	startkeys, fixedbits := resolver.PrepareResolveParams()
 	for i, startkey := range startkeys {
-		fmt.Printf("TTR %s %d %d %d\n", startkey, fixedbits[i], resolver.walkstarts[i], resolver.walkends[i])
-		for j := resolver.walkstarts[i]; j < resolver.walkends[i]; j++ {
-			fmt.Printf("    %s\n", hexToKeybytes(resolver.continuations[j].resolveKey))
-		}
+		fmt.Printf("TTR %s %d %d\n", startkey, fixedbits[i], resolver.contIndices[i])
 	}
-	//t.Errorf("Got here")
+	t.Errorf("Got here")
 }
