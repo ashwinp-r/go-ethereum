@@ -165,6 +165,7 @@ type TrieDbState struct {
 	storageTries     map[string]*trie.Trie
 	continuations    []*trie.TrieContinuation
 	accountUpdates   map[common.Address]*Account
+	accountDeletes   map[common.Address]struct{}
 	updatedStorage   map[common.Address]*trie.Trie
 }
 
@@ -203,6 +204,7 @@ func (tds *TrieDbState) Copy() (*TrieDbState, error) {
 		blockNr: tds.blockNr,
 		storageTries: make(map[string]*trie.Trie),
 		accountUpdates: make(map[common.Address]*Account),
+		accountDeletes: make(map[common.Address]struct{}),
 		updatedStorage: make(map[common.Address]*trie.Trie),
 	}
 	return &cpy, nil
@@ -214,6 +216,83 @@ func (tds *TrieDbState) Database() Database {
 
 func (tds *TrieDbState) AccountTrie() *trie.Trie {
 	return tds.t
+}
+
+func (tds *TrieDbState) TrieRootNew() (common.Hash, error) {
+	if len(tds.continuations) == 0 && len(tds.updatedStorage) == 0 && len(tds.accountUpdates) == 0 {
+		return tds.t.Hash(), nil
+	}
+	resolvers := make(map[common.Address]*trie.TrieResolver)
+	// First, execute storage updates and account deletions
+	oldContinuations := tds.continuations
+	newContinuations := []*trie.TrieContinuation{}
+	for len(oldContinuations) > 0 {
+		for _, c := range oldContinuations {
+			if !c.RunWithDb(tds.db.TrieDB()) {
+				newContinuations = append(newContinuations, c)
+				resolver, ok := resolvers[*c.Address()]
+				if !ok {
+					resolver = c.Trie().NewResolver(tds.db.TrieDB())
+					resolvers[*c.Address()] = resolver
+				}
+				resolver.AddContinuation(c)
+			}
+		}
+		for _, resolver := range resolvers {
+			if err := resolver.ResolveWithDb(tds.db.TrieDB(), tds.blockNr); err != nil {
+				return common.Hash{}, err
+			}
+		}
+		oldContinuations, newContinuations = newContinuations, []*trie.TrieContinuation{}
+	}
+	for _, storageTrie := range tds.updatedStorage {
+		storageTrie.Relist()
+	}
+	tds.updatedStorage = make(map[common.Address]*trie.Trie)
+	for address, account := range tds.accountUpdates {
+		storageTrie, err := tds.getStorageTrie(&address)
+		if err != nil {
+			return common.Hash{}, err
+		}
+		account.Root = storageTrie.Hash()
+		data, err := rlp.EncodeToBytes(account)
+		if err != nil {
+			return common.Hash{}, err
+		}
+		addrHash, err := tds.HashKey(address[:])
+		if err != nil {
+			return common.Hash{}, err
+		}
+		c := tds.t.UpdateAction(nil, addrHash[:], data)
+		oldContinuations = append(oldContinuations, c)
+	}
+	for address, _ := range tds.accountDeletes {
+		addrHash, err := tds.HashKey(address[:])
+		if err != nil {
+			return common.Hash{}, err
+		}
+		c := tds.t.DeleteAction(nil, addrHash[:])
+		oldContinuations = append(oldContinuations, c)
+	}
+	tds.accountUpdates = make(map[common.Address]*Account)
+	tds.accountDeletes = make(map[common.Address]struct{})
+	resolver := tds.t.NewResolver(tds.db.TrieDB())
+	for len(oldContinuations) > 0 {
+		for _, c := range oldContinuations {
+			if !c.RunWithDb(tds.db.TrieDB()) {
+				newContinuations = append(newContinuations, c)
+				resolver.AddContinuation(c)
+			}
+		}
+		if err := resolver.ResolveWithDb(tds.db.TrieDB(), tds.blockNr); err != nil {
+			return common.Hash{}, err
+		}
+		oldContinuations, newContinuations = newContinuations, []*trie.TrieContinuation{}
+	}
+	tds.t.SaveHashes(tds.db.TrieDB())
+	tds.t.Relist()
+	tds.continuations = newContinuations
+	return tds.t.Hash(), nil
 }
 
 func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
@@ -251,10 +330,19 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 		if err != nil {
 			return common.Hash{}, err
 		}
-		c := tds.t.UpdateAction(addrHash[:], data)
+		c := tds.t.UpdateAction(nil, addrHash[:], data)
+		oldContinuations = append(oldContinuations, c)
+	}
+	for address, _ := range tds.accountDeletes {
+		addrHash, err := tds.HashKey(address[:])
+		if err != nil {
+			return common.Hash{}, err
+		}
+		c := tds.t.DeleteAction(nil, addrHash[:])
 		oldContinuations = append(oldContinuations, c)
 	}
 	tds.accountUpdates = make(map[common.Address]*Account)
+	tds.accountDeletes = make(map[common.Address]struct{})
 	for len(oldContinuations) > 0 {
 		for _, c := range oldContinuations {
 			for !c.RunWithDb(tds.db.TrieDB()) {
@@ -373,7 +461,8 @@ func (tds *TrieDbState) ReadAccountCode(address *common.Address) ([]byte, error)
 var prevMemStats runtime.MemStats
 
 func (tds *TrieDbState) PruneTries() {
-	if tds.nodeList.Len() > int(MaxTrieCacheGen) {
+	listLen := tds.nodeList.Len()
+	if listLen > int(MaxTrieCacheGen) {
 		tds.nodeList.ShrinkTo(int(MaxTrieCacheGen))
 		nodeCount := 0
 		for addr, storageTrie := range tds.storageTries {
@@ -385,7 +474,7 @@ func (tds *TrieDbState) PruneTries() {
 		}
 		count, _, _ := tds.t.TryPrune()
 		nodeCount += count
-		log.Info("Nodes", "trie", nodeCount, "list", tds.nodeList.Len())
+		log.Info("Nodes", "trie", nodeCount, "list", tds.nodeList.Len(), "list before pruning", listLen)
 	} else {
 		log.Info("Nodes", "list", tds.nodeList.Len())
 	}
@@ -416,23 +505,6 @@ var emptyRoot = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cad
 
 func (tsw *TrieStateWriter) UpdateAccountData(address *common.Address, account *Account) error {
 	tsw.tds.accountUpdates[*address] = account
-	/*
-	storageTrie, err := tsw.tds.getStorageTrie(address)
-	if err != nil {
-		return err
-	}
-	account.Root = storageTrie.Hash()
-	data, err := rlp.EncodeToBytes(account)
-	if err != nil {
-		return err
-	}
-	addrHash, err := tsw.tds.HashKey(address[:])
-	if err != nil {
-		return err
-	}
-	c := tsw.tds.t.TryUpdate(addrHash[:], data)
-	tsw.tds.continuations = append(tsw.tds.continuations, c)
-	*/
 	return nil
 }
 
@@ -460,12 +532,7 @@ func (tsw *TrieStateWriter) DeleteAccount(address *common.Address) error {
 	}
 	storageTrie.Unlink()
 	delete(tsw.tds.storageTries, string(address[:]))
-	addrHash, err := tsw.tds.HashKey(address[:])
-	if err != nil {
-		return err
-	}
-	c := tsw.tds.t.DeleteAction(addrHash[:])
-	tsw.tds.continuations = append(tsw.tds.continuations, c)
+	tsw.tds.accountDeletes[*address] = struct{}{}
 	return nil
 }
 
@@ -497,9 +564,9 @@ func (tsw *TrieStateWriter) WriteAccountStorage(address *common.Address, key, va
 	v := bytes.TrimLeft(value[:], "\x00")
 	var c *trie.TrieContinuation
 	if len(v) > 0 {
-		c = storageTrie.UpdateAction(seckey, common.CopyBytes(v))
+		c = storageTrie.UpdateAction(address, seckey, common.CopyBytes(v))
 	} else {
-		c = storageTrie.DeleteAction(seckey)
+		c = storageTrie.DeleteAction(address, seckey)
 	}
 	tsw.tds.updatedStorage[*address] = storageTrie
 	tsw.tds.continuations = append(tsw.tds.continuations, c)

@@ -350,10 +350,10 @@ func (tr *TrieResolver) AddContinuation(c *TrieContinuation) {
 // Prepares information for the MultiSuffixWalk
 func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
 	// Remove continuations strictly contained in the preceeding ones
-	keys := [][]byte{}
-	keybits := []uint{}
+	startkeys := [][]byte{}
+	fixedbits := []uint{}
 	if len(tr.continuations) == 0 {
-		return keys, keybits
+		return startkeys, fixedbits
 	}
 	sort.Sort(tr)
 	sort.Sort(tr.resolveHexes)
@@ -363,13 +363,13 @@ func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
 			tr.contIndices = append(tr.contIndices, i)
 			key := make([]byte, 32)
 			decodeNibbles(c.resolveKey[:c.resolvePos], key)
-			keys = append(keys, key)
-			keybits = append(keybits, uint(4*c.resolvePos))
+			startkeys = append(startkeys, key)
+			fixedbits = append(fixedbits, uint(4*c.resolvePos))
 			prevC = c
 		}
 	}
 	tr.startLevel = tr.continuations[0].resolvePos
-	return keys, keybits
+	return startkeys, fixedbits
 }
 
 func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
@@ -505,7 +505,46 @@ func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
 	return true, nil
 }
 
-func (tr *TrieResolver) FinaliseWalk() error {
+func (tr *TrieResolver) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
+	startkeys, fixedbits := tr.PrepareResolveParams()
+	for i, startkey := range startkeys {
+		err := db.WalkAsOf(tr.t.prefix, startkey, fixedbits[i], blockNr, func(k, v []byte) (bool, error) {
+			return tr.Walker(i, k, v)
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := tr.Walker(-1, nil, nil); err != nil {
+			return err
+		}
+		tc := tr.continuations[tr.contIndices[i]]
+		var root node
+		if tr.fillCount[tc.resolvePos] == 1 {
+			root = tr.nodeStack[tc.resolvePos]
+		} else if tr.fillCount[tc.resolvePos] > 1 {
+			root = &tr.vertical[tc.resolvePos]
+		}
+		if root == nil {
+			return fmt.Errorf("Resolve returned nil root")
+		}
+		hash, err := tr.h.hash(root, tc.resolvePos == 0)
+		if err != nil {
+			return err
+		}
+		gotHash, ok := hash.(hashNode)
+		if ok {
+			if !bytes.Equal(tc.resolveHash, gotHash) {
+				return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got %s\n",
+					tc.resolveKey[:tc.resolvePos], tc.t.prefix, tc.resolveHash, gotHash)
+			}
+		} else {
+			if tc.resolveHash != nil {
+				return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got embedded node\n",
+					tc.resolveKey[:tc.resolvePos], tc.t.prefix, tc.resolveHash)
+			}
+		}
+		tc.resolved = root
+	}
 	return nil
 }
 
@@ -550,7 +589,7 @@ func (tc *TrieContinuation) ResolveWithDb(db ethdb.Database, blockNr uint64) err
 	} else {
 		if tc.resolveHash != nil {
 			return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got embedded node\n",
-				tc.resolveKey[:tc.resolvePos], tc.t.prefix, tc.resolveHash)			
+				tc.resolveKey[:tc.resolvePos], tc.t.prefix, tc.resolveHash)
 		}
 	}
 	tc.resolved = root
