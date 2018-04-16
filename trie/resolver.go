@@ -394,6 +394,9 @@ func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
 				for tr.rhIndexGt < tr.resolveHexes.Len() && resComp == 1 {
 					tr.rhIndexGt++
 					tr.rhIndexLte++
+					if tr.rhIndexGt < tr.resolveHexes.Len() {
+						resComp = bytes.Compare(hex, tr.resolveHexes[tr.rhIndexGt])
+					}
 				}
 			}
 			var rhPrefixLenLte, rhPrefixLenGt int
@@ -414,6 +417,7 @@ func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
 			for level := startLevel; level >= stopLevel; level-- {
 				keynibble := hex[level]
 				onResolvingPath := level < rhPrefixLen
+				//onResolvingPath := true
 				var hashIdx uint32
 				if tr.hashes && level <= 4 {
 					hashIdx = binary.BigEndian.Uint32(tr.key[:4]) >> 12
@@ -431,7 +435,7 @@ func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
 					var hn node
 					var err error
 					if short != nil && (!onResolvingPath || tr.hashes && level <= 4 && compactLen(short.Key) + level >= 4) {
-						short.setcache(nil)
+						//short.setcache(nil)
 						hn, err = tr.h.hash(short, false)
 						if err != nil {
 							return false, err
@@ -475,6 +479,7 @@ func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
 				}
 				if onResolvingPath {
 					c := tr.vertical[level+1].copy()
+					c.setcache(nil)
 					tr.vertical[level].Children[keynibble] = c
 					tr.nodeStack[level] = &shortNode{Key: hexToCompact([]byte{keynibble}), Val: c}
 				} else {
@@ -485,6 +490,7 @@ func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
 				if tc != nil && level >= tc.resolvePos {
 					tr.nodeStack[level+1] = nil
 					tr.fillCount[level+1] = 0
+					tr.vertical[level+1].setcache(nil)
 					for i := 0; i < 17; i++ {
 						tr.vertical[level+1].Children[i] = nil
 					}
@@ -506,10 +512,34 @@ func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
 }
 
 func (tr *TrieResolver) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
+
 	startkeys, fixedbits := tr.PrepareResolveParams()
-	for i, startkey := range startkeys {
-		err := db.WalkAsOf(tr.t.prefix, startkey, fixedbits[i], blockNr, func(k, v []byte) (bool, error) {
-			return tr.Walker(i, k, v)
+	//if len(tr.continuations) != len(startkeys) {
+		//fmt.Printf("ResolveWithDb, len(continuations)=%d\n", len(tr.continuations))
+		//fmt.Printf("ResolveWithDb, groups=%d\n", len(startkeys))
+	//}
+	//for i := 0; i < tr.resolveHexes.Len(); i++ {
+	//	fmt.Printf("resolveHexes[%d]=%x\n", i, tr.resolveHexes[i])
+	//}
+	for idx, startkey := range startkeys {
+		//if len(tr.continuations) != len(startkeys) {
+		//	fmt.Printf("%d: startkey %x, fixedbits %d, contIndex %d, rhIndexLte %d, tr.rhIndexGt %d\n",
+		//		idx, startkey, fixedbits[idx], tr.contIndices[idx], tr.rhIndexLte, tr.rhIndexGt)
+		//}
+		tc := tr.continuations[tr.contIndices[idx]]
+		tr.key_set = false
+		tr.value = nil
+		tr.startLevel = tc.resolvePos
+		for i := 0; i <= Levels; i++ {
+			tr.nodeStack[i] = nil
+			tr.vertical[i].setcache(nil)
+			for j := 0; j<17; j++ {
+				tr.vertical[i].Children[j] = nil
+			}
+			tr.fillCount[i] = 0
+		}
+		err := db.WalkAsOf(tr.t.prefix, startkey, fixedbits[idx], blockNr, func(k, v []byte) (bool, error) {
+			return tr.Walker(idx, k, v)
 		})
 		if err != nil {
 			return err
@@ -517,12 +547,11 @@ func (tr *TrieResolver) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
 		if _, err := tr.Walker(-1, nil, nil); err != nil {
 			return err
 		}
-		tc := tr.continuations[tr.contIndices[i]]
 		var root node
 		if tr.fillCount[tc.resolvePos] == 1 {
 			root = tr.nodeStack[tc.resolvePos]
 		} else if tr.fillCount[tc.resolvePos] > 1 {
-			root = &tr.vertical[tc.resolvePos]
+			root = tr.vertical[tc.resolvePos].copy()
 		}
 		if root == nil {
 			return fmt.Errorf("Resolve returned nil root")

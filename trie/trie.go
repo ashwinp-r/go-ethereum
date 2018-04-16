@@ -634,6 +634,20 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 			return false // Need resolution
 		}
 		rn := c.resolved
+		//h := newHasher(t.encodeToBytes)
+		//hash, err := h.hash(rn, pos == 0)
+		//if err != nil {
+		//	panic(err)
+		//}
+		//gotHash, ok := hash.(hashNode)
+		//if ok {
+		//	if !bytes.Equal(n, gotHash) {
+		//		panic(fmt.Errorf("(insert) Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got %s\n",
+		//			key[:pos], t.prefix, n, gotHash))
+		//	}
+		//} else {
+		//	panic("")
+		//}
 		c.resolved = nil
 		done := t.insert(rn, key, pos, value, c)
 		if !c.updated {
