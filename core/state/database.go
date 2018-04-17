@@ -240,12 +240,11 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 	if len(tds.continuations) == 0 && len(tds.updatedStorage) == 0 && len(tds.accountUpdates) == 0 && len(tds.accountDeletes) == 0 {
 		return tds.t.Hash(), nil
 	}
-	//fmt.Printf("TrieRoot. Continuatons: %d, updatedStorage: %d, accountUpdates: %d, accountDeletes: %d, Stack:\n%s\n",
+	//fmt.Printf("TrieRoot. Continuatons: %d, updatedStorage: %d, accountUpdates: %d, accountDeletes: %d\n",
 	//	len(tds.continuations),
 	//	len(tds.updatedStorage),
 	//	len(tds.accountUpdates),
 	//	len(tds.accountDeletes),
-	//	debug.Stack(),
 	//)
 	//for addr, _ := range tds.accountUpdates {
 	//	fmt.Printf("Udate account %x\n", addr)

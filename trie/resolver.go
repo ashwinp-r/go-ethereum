@@ -416,8 +416,8 @@ func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
 			}
 			for level := startLevel; level >= stopLevel; level-- {
 				keynibble := hex[level]
-				onResolvingPath := level < rhPrefixLen
-				//onResolvingPath := true
+				//onResolvingPath := level < rhPrefixLen
+				onResolvingPath := true
 				var hashIdx uint32
 				if tr.hashes && level <= 4 {
 					hashIdx = binary.BigEndian.Uint32(tr.key[:4]) >> 12
