@@ -391,7 +391,7 @@ func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
 			// Adjust rhIndices if needed
 			if tr.rhIndexGt < tr.resolveHexes.Len() {
 				resComp := bytes.Compare(hex, tr.resolveHexes[tr.rhIndexGt])
-				for tr.rhIndexGt < tr.resolveHexes.Len() && resComp == 1 {
+				for tr.rhIndexGt < tr.resolveHexes.Len() && resComp != -1 {
 					tr.rhIndexGt++
 					tr.rhIndexLte++
 					if tr.rhIndexGt < tr.resolveHexes.Len() {
