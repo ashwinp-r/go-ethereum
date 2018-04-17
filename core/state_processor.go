@@ -103,7 +103,7 @@ func ApplyTransaction(config *params.ChainConfig, bc *BlockChain, author *common
 	// Update the state with pending changes
 	var root []byte
 	if config.IsByzantium(header.Number) {
-		//statedb.Finalise(true, tds.TrieStateWriter())
+		statedb.ClearJournalAndRefund()
 	} else {
 		rootHash, err := tds.IntermediateRoot(statedb, config.IsEIP158(header.Number))
 		if err != nil {

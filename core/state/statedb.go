@@ -115,7 +115,7 @@ func (self *StateDB) Reset() error {
 	self.logs = make(map[common.Hash][]*types.Log)
 	self.logSize = 0
 	self.preimages = make(map[common.Hash][]byte)
-	self.clearJournalAndRefund()
+	self.ClearJournalAndRefund()
 	return nil
 }
 
@@ -514,7 +514,7 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool, stateWriter StateWriter) err
 		}
 	}
 	// Invalidate journal because reverting across transactions is not allowed.
-	s.clearJournalAndRefund()
+	s.ClearJournalAndRefund()
 	return nil
 }
 
@@ -543,7 +543,7 @@ func (self *StateDB) Prepare(thash, bhash common.Hash, ti int) {
 // under any circumstances.
 func (s *StateDB) DeleteSuicides() {
 	// Reset refund so that any used-gas calculations can use this method.
-	s.clearJournalAndRefund()
+	s.ClearJournalAndRefund()
 
 	for addr, _ := range s.stateObjectsDirty {
 		stateObject := s.stateObjects[addr]
@@ -557,7 +557,7 @@ func (s *StateDB) DeleteSuicides() {
 	}
 }
 
-func (s *StateDB) clearJournalAndRefund() {
+func (s *StateDB) ClearJournalAndRefund() {
 	s.journal = nil
 	s.validRevisions = s.validRevisions[:0]
 	s.refund = 0
