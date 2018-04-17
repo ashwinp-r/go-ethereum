@@ -300,6 +300,7 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 		c := tds.t.UpdateAction(nil, addrHash[:], data)
 		oldContinuations = append(oldContinuations, c)
 	}
+	dels := len(tds.accountDeletes)
 	for address, _ := range tds.accountDeletes {
 		addrHash, err := tds.HashKey(address[:])
 		if err != nil {
@@ -327,7 +328,9 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 		oldContinuations, newContinuations = newContinuations, []*trie.TrieContinuation{}
 		it++
 	}
-	//fmt.Printf("Resolved in %d iterations\n", it)
+	if dels == 0 && it > 2 {
+		fmt.Printf("Resolved in %d iterations\n", it)
+	}
 	tds.t.SaveHashes(tds.db.TrieDB())
 	tds.t.Relist()
 	tds.continuations = newContinuations
