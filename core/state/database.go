@@ -20,7 +20,7 @@ import (
 	"bytes"
 	"fmt"
 	"runtime"
-	"runtime/debug"
+	//"runtime/debug"
 	//"sort"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -240,6 +240,7 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 	if len(tds.continuations) == 0 && len(tds.updatedStorage) == 0 && len(tds.accountUpdates) == 0 && len(tds.accountDeletes) == 0 {
 		return tds.t.Hash(), nil
 	}
+	//fmt.Printf("tds.blockNr %d\n", tds.blockNr)
 	//fmt.Printf("TrieRoot. Continuatons: %d, updatedStorage: %d, accountUpdates: %d, accountDeletes: %d\n",
 	//	len(tds.continuations),
 	//	len(tds.updatedStorage),
@@ -280,6 +281,9 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 	}
 	for _, storageTrie := range tds.updatedStorage {
 		storageTrie.Relist()
+		if storageTrie.IsMalformed() {
+			fmt.Printf("Storage trie is malformed\n")
+		}
 	}
 	tds.updatedStorage = make(map[common.Address]*trie.Trie)
 	for address, account := range tds.accountUpdates {
@@ -323,6 +327,10 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 			if err := resolver.ResolveWithDb(tds.db.TrieDB(), tds.blockNr); err != nil {
 				return common.Hash{}, err
 			}
+		} else {
+			if tds.t.IsMalformed() {
+				fmt.Printf("Account trie is malformed\n")
+			}
 		}
 		oldContinuations, newContinuations = newContinuations, []*trie.TrieContinuation{}
 		it++
@@ -342,16 +350,16 @@ func (tds *TrieDbState) TrieRootOld() (common.Hash, error) {
 	if len(tds.continuations) == 0 && len(tds.updatedStorage) == 0 && len(tds.accountUpdates) == 0 && len(tds.accountDeletes) == 0 {
 		return tds.t.Hash(), nil
 	}
-	fmt.Printf("TrieRoot. Continuatons: %d, updatedStorage: %d, accountUpdates: %d, accountDeletes: %d, Stack:\n%s\n",
-		len(tds.continuations),
-		len(tds.updatedStorage),
-		len(tds.accountUpdates),
-		len(tds.accountDeletes),
-		debug.Stack(),
-	)
-	for addr, _ := range tds.accountUpdates {
-		fmt.Printf("Udate account %x\n", addr)
-	}
+	//fmt.Printf("TrieRoot. Continuatons: %d, updatedStorage: %d, accountUpdates: %d, accountDeletes: %d, Stack:\n%s\n",
+	//	len(tds.continuations),
+	//	len(tds.updatedStorage),
+	//	len(tds.accountUpdates),
+	//	len(tds.accountDeletes),
+	//	debug.Stack(),
+	//)
+	//for addr, _ := range tds.accountUpdates {
+	//	fmt.Printf("Udate account %x\n", addr)
+	//}
 	// First, execute storage updates and account deletions
 	oldContinuations := tds.continuations
 	newContinuations := []*trie.TrieContinuation{}
@@ -410,8 +418,8 @@ func (tds *TrieDbState) TrieRootOld() (common.Hash, error) {
 	tds.t.Relist()
 	tds.continuations = newContinuations
 	hash := tds.t.Hash()
-	fmt.Printf("Root hash: %x\n", hash)
-	panic("")
+	//fmt.Printf("Root hash: %x\n", hash)
+	//ic("")
 	return hash, nil
 }
 

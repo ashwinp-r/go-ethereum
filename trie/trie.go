@@ -445,11 +445,12 @@ func (tc *TrieContinuation) RunWithDb(db ethdb.Database) bool {
 	case TrieActionDelete:
 		done = tc.t.delete(tc.t.root, tc.key, 0, tc)
 	}
-	for _, touch := range tc.touched {
-		tc.t.touch(db, touch.np, touch.key, touch.pos)
-	}
-	tc.touched = []Touch{}
+	//fmt.Printf("done: %s, updated %s\n", done, tc.updated)
 	if tc.updated {
+		for _, touch := range tc.touched {
+			tc.t.touch(db, touch.np, touch.key, touch.pos)
+		}
+		tc.touched = []Touch{}
 		tc.t.root = tc.n
 	}
 	return done
@@ -626,29 +627,28 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 		// We've hit a part of the trie that isn't loaded yet. Load
 		// the node and insert into it. This leaves all child nodes on
 		// the path to the value in the trie.
-		if c.resolved == nil {
+		if c.resolved == nil || !bytes.Equal(key, c.resolveKey) || pos != c.resolvePos {
+			// It is either unresolved, or resolved by another request
+			//if c.resolved != nil {
+			//	fmt.Printf("key %x, pos %d, c.resolveKey %x, c.resolvePos %d\n", key, pos, c.resolveKey, c.resolvePos)
+			//} else {
+			//	fmt.Printf("(insert) Requested key %x, pos %d\n", key, pos)
+			//}
+			c.resolved = nil
 			c.resolveKey = key
 			c.resolvePos = pos
 			c.resolveHash = n
 			c.updated = false
 			return false // Need resolution
 		}
+		//fmt.Printf("(insert) Resolved key %x, pos %d\n", key, pos)
 		rn := c.resolved
-		//h := newHasher(t.encodeToBytes)
-		//hash, err := h.hash(rn, pos == 0)
-		//if err != nil {
-		//	panic(err)
-		//}
-		//gotHash, ok := hash.(hashNode)
-		//if ok {
-		//	if !bytes.Equal(n, gotHash) {
-		//		panic(fmt.Errorf("(insert) Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got %s\n",
-		//			key[:pos], t.prefix, n, gotHash))
-		//	}
-		//} else {
-		//	panic("")
+		//if !bytes.Equal(key, c.resolveKey) || pos != c.resolvePos {
+		//	panic(fmt.Sprintf("key %x, pos %d, c.resolveKey %x, c.resolvePos %d\n", key, pos, c.resolveKey, c.resolvePos))
 		//}
 		c.resolved = nil
+		c.resolveKey = nil
+		c.resolvePos = 0
 		done := t.insert(rn, key, pos, value, c)
 		if !c.updated {
 			c.updated = true // Substitution of the hashNode with resolved node is an update
@@ -701,22 +701,40 @@ func (t *Trie) convertToShortNode(key []byte, keyStart int, child node, pos uint
 		// shortNode{..., shortNode{...}}.  Since the entry
 		// might not be loaded yet, resolve it just for this
 		// check.
-		rkey := make([]byte, len(key))
-		copy(rkey, key)
+		//rkey := make([]byte, len(key))
+		rkey := make([]byte, keyStart+1)
+		copy(rkey, key[:keyStart])
 		rkey[keyStart] = byte(pos)
+		/*
 		for i := keyStart + 1; i < len(key); i++ {
 			if rkey[i] != 16 {
 				rkey[i] = 0
 			}
 		}
+		*/
 		if childHash, ok := child.(hashNode); ok {
-			if c.resolved == nil {
+			if c.resolved == nil || !bytes.Equal(rkey, c.resolveKey) || keyStart+1 != c.resolvePos {
+				// It is either unresolved or resolved by other request
+				//if c.resolved != nil {
+				//	fmt.Printf("rkey %x, keyStart+1 %d, c.resolveKey %x, c.resolvePos %d\n", rkey, keyStart+1, c.resolveKey, c.resolvePos)
+				//} else {
+				//	fmt.Printf("(convertToShortNode) Requested rkey %x, keyStart+1 %d\n", rkey, keyStart+1)
+				//}
+				c.resolved = nil
 				c.resolveKey = rkey
 				c.resolvePos = keyStart+1
 				c.resolveHash = childHash
+				//c.updated = false
 				return false // Need resolution
 			}
-			cnode, c.resolved = c.resolved, nil
+			//fmt.Printf("(convertToShortNode) Resolved rkey %x, keyStart+1 %d\n", rkey, keyStart+1)
+			//if !bytes.Equal(rkey, c.resolveKey) || keyStart+1 != c.resolvePos {
+			//	panic(fmt.Sprintf("rkey %x, keyStart+1 %d, c.resolveKey %x, c.resolvePos %d\n", rkey, keyStart+1, c.resolveKey, c.resolvePos))
+			//}
+			cnode = c.resolved
+			c.resolved = nil
+			c.resolveKey = nil
+			c.resolvePos = 0
 		}
 		if cnode, ok := cnode.(*shortNode); ok {
 			c.touched = append(c.touched, Touch{np: cnode, key: rkey, pos: keyStart+1})
@@ -726,6 +744,7 @@ func (t *Trie) convertToShortNode(key []byte, keyStart int, child node, pos uint
 			c.n = newshort
 			return done
 		}
+		//fmt.Printf("Wasn't a short node\n")
 	}
 	// Otherwise, n is replaced by a one-nibble short node
 	// containing the child.
@@ -762,45 +781,58 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 		// longer than n.Key.
 		done := t.delete(n.Val, key, keyStart+len(nKey), c)
 		if !c.updated {
+			c.n = n
 			return done
 		}
 		child := c.n
-		switch child := child.(type) {
-		case *shortNode:
+		if child == nil {
+			c.updated = true
+			c.n = nil
+			return true
+		}
+		if shortChild, ok := child.(*shortNode); ok {
 			// Deleting from the subtrie reduced it to another
 			// short node. Merge the nodes to avoid creating a
 			// shortNode{..., shortNode{...}}. Use concat (which
 			// always creates a new slice) instead of append to
 			// avoid modifying n.Key since it might be shared with
 			// other nodes.
-			childKey := compactToHex(child.Key)
-			newnode := &shortNode{hexToCompact(concat(nKey, childKey...)), child.Val, t.newFlag()}
-			c.touched = append(c.touched, Touch{np: child, key: key, pos: keyStart+len(nKey)})
-			c.updated = true
-			c.n = newnode
-			return done
-		default:
-			newnode := &shortNode{n.Key, child, t.newFlag()}
+			childKey := compactToHex(shortChild.Key)
+			newnode := &shortNode{hexToCompact(concat(nKey, childKey...)), shortChild.Val, t.newFlag()}
+			c.touched = append(c.touched, Touch{np: shortChild, key: key, pos: keyStart+len(nKey)})
 			c.updated = true
 			c.n = newnode
 			return done
 		}
+		newnode := &shortNode{n.Key, child, t.newFlag()}
+		c.updated = true
+		c.n = newnode
+		return done
 
 	case *duoNode:
 		i1, i2 := n.childrenIdx()
 		switch key[keyStart] {
 		case i1:
 			done := t.delete(n.child1, key, keyStart+1, c)
-			nn := c.n
-			if !c.updated && c.resolved == nil {
+			if !c.updated && !done {
 				c.n = n
-				return done
+				return false
 			}
+			nn := c.n
 			if nn == nil {
+				if n.child2 == nil {
+					c.n = nil
+					c.updated = true
+					return true
+				}
 				done = t.convertToShortNode(key, keyStart, n.child2, uint(i2), c, done)
 				if done {
 					return true
 				}
+			}
+			if !c.updated {
+				c.n = n
+				return done
 			}
 			newnode := n.copy()
 			newnode.flags = t.newFlag()
@@ -810,16 +842,25 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 			return done
 		case i2:
 			done := t.delete(n.child2, key, keyStart+1, c)
-			nn := c.n
-			if !c.updated && c.resolved == nil {
+			if !c.updated && !done {
 				c.n = n
-				return done
+				return false
 			}
+			nn := c.n
 			if nn == nil {
+				if n.child1 == nil {
+					c.n = nil
+					c.updated = true
+					return true
+				}
 				done = t.convertToShortNode(key, keyStart, n.child1, uint(i1), c, done)
 				if done {
 					return true
 				}
+			}
+			if !c.updated {
+				c.n = n
+				return done
 			}
 			newnode := n.copy()
 			newnode.flags = t.newFlag()
@@ -835,11 +876,11 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 
 	case *fullNode:
 		done := t.delete(n.Children[key[keyStart]], key, keyStart+1, c)
-		nn := c.n
-		if !c.updated && c.resolved == nil {
+		if !c.updated && !done {
 			c.n = n
-			return done
+			return false
 		}
+		nn := c.n
 		// Check how many non-nil entries are left after deleting and
 		// reduce the full node to a short node if only one entry is
 		// left. Since n must've contained at least two children
@@ -869,6 +910,11 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 				}
 			}
 		}
+		if count == 0 {
+			c.n = nil
+			c.updated = true
+			return true
+		}
 		if count == 1 {
 			done = t.convertToShortNode(key, keyStart, n.Children[pos1], uint(pos1), c, done)
 			if done {
@@ -890,6 +936,10 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 			duo.mask = (1 << uint(pos1)) | (1 << uint(pos2))
 			c.updated = true
 			c.n = duo
+			return done
+		}
+		if !c.updated {
+			c.n = n
 			return done
 		}
 		// n still contains at least three values and cannot be reduced.
@@ -914,7 +964,14 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 		// We've hit a part of the trie that isn't loaded yet. Load
 		// the node and delete from it. This leaves all child nodes on
 		// the path to the value in the trie.
-		if c.resolved == nil {
+		if c.resolved == nil || !bytes.Equal(key, c.resolveKey) || keyStart != c.resolvePos {
+			// It is either unresolved, or resolved by other request
+			//if c.resolved != nil {
+			//	fmt.Printf("key %x, keyStart %d, c.resolveKey %x, c.resolvePos %d\n", key, keyStart, c.resolveKey, c.resolvePos)
+			//} else {
+			//	fmt.Printf("(delete) Requested key %x, keyStart %d\n", key, keyStart)
+			//}
+			c.resolved = nil
 			c.resolveKey = key
 			c.resolvePos = keyStart
 			c.resolveHash = n
@@ -922,7 +979,10 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 			return false // Need resolution
 		}
 		rn := c.resolved
+		//fmt.Printf("(delete) Resolved key %x, keyStart %d\n", key, keyStart)
 		c.resolved = nil
+		c.resolveKey = nil
+		c.resolvePos = 0
 		done := t.delete(rn, key, keyStart, c)
 		if !c.updated {
 			c.updated = true // Substitution is an update
@@ -933,6 +993,51 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 	default:
 		panic(fmt.Sprintf("%T: invalid node: %v (%v)", n, n, key[:keyStart]))
 	}
+}
+
+func (t *Trie) IsMalformed() bool {
+	return isMalformed(t.root)
+}
+
+func isMalformed(n node) bool {
+	switch n := n.(type) {
+	case *shortNode:
+		if n.Val == nil {
+			fmt.Printf("Malformed short nil\n")
+			return true
+		}
+		_, ok := n.Val.(*shortNode)
+		if ok {
+			fmt.Printf("Malformed short short\n")
+			return true
+		}
+		return isMalformed(n.Val)
+	case *duoNode:
+		if n.child1 == nil || n.child2 == nil {
+			fmt.Printf("Malformed duoChild\n")
+			return true
+		}
+		return isMalformed(n.child1) || isMalformed(n.child2)
+	case *fullNode:
+		count := 0
+		for _, child := range n.Children {
+			if child != nil {
+				count++
+			}
+		}
+		if count < 2 {
+			fmt.Printf("Malformed fullChild %d\n", count)
+			return true
+		}
+		for _, child := range n.Children {
+			if child != nil {
+				if isMalformed(child) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func concat(s1 []byte, s2 ...byte) []byte {
