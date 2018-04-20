@@ -279,12 +279,12 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 		}
 		oldContinuations, newContinuations = newContinuations, []*trie.TrieContinuation{}
 	}
-	for _, storageTrie := range tds.updatedStorage {
-		storageTrie.Relist()
-		if storageTrie.IsMalformed() {
-			fmt.Printf("Storage trie is malformed\n")
-		}
-	}
+	//for _, storageTrie := range tds.updatedStorage {
+	//	storageTrie.Relist()
+	//	if storageTrie.IsMalformed() {
+	//		fmt.Printf("Storage trie is malformed\n")
+	//	}
+	//}
 	tds.updatedStorage = make(map[common.Address]*trie.Trie)
 	for address, account := range tds.accountUpdates {
 		storageTrie, err := tds.getStorageTrie(&address)
@@ -327,10 +327,10 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 			if err := resolver.ResolveWithDb(tds.db.TrieDB(), tds.blockNr); err != nil {
 				return common.Hash{}, err
 			}
-		} else {
-			if tds.t.IsMalformed() {
-				fmt.Printf("Account trie is malformed\n")
-			}
+//		} else {
+//			if tds.t.IsMalformed() {
+//				fmt.Printf("Account trie is malformed\n")
+//			}
 		}
 		oldContinuations, newContinuations = newContinuations, []*trie.TrieContinuation{}
 		it++
