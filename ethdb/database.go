@@ -744,7 +744,7 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 			from := nextkey
 			nextkey = nil
 			var extErr error
-			m.puts.AscendGreaterOrEqual(&PutItem{bucket: bucket, key: from}, func (i llrb.Item) bool {
+			m.puts.AscendGreaterOrEqual1(&PutItem{bucket: bucket, key: from}, func (i llrb.Item) bool {
 				item := i.(*PutItem)
 				if !bytes.Equal(item.bucket, bucket) {
 					return false

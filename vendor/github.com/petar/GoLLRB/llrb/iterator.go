@@ -36,6 +36,41 @@ func (t *LLRB) AscendGreaterOrEqual(pivot Item, iterator ItemIterator) {
 	t.ascendGreaterOrEqual(t.root, pivot, iterator)
 }
 
+// AscendGreaterOrEqual will call iterator once for each element greater or equal to
+// pivot in ascending order. It will stop whenever the iterator returns false.
+func (t *LLRB) AscendGreaterOrEqual1(pivot Item, iterator ItemIterator) {
+	// Estimate the depth of the tree to allocate the stack
+	var stack [32]*Node
+	var leftPushed [32]bool
+	var top int
+	stack[0] = t.root
+	for top >= 0 {
+		h := stack[top]
+		if h == nil {
+			top--
+			continue
+		}
+		if less(h.Item, pivot) {
+			// Left branch will not be explored, so we replace the top of the stack with the right branch
+			leftPushed[top] = false
+			stack[top] = h.Right
+			continue
+		}
+		if leftPushed[top] {
+			if !iterator(h.Item) {
+				return
+			}
+			leftPushed[top] = false
+			stack[top] = h.Right
+			continue
+		}
+		leftPushed[top] = true
+		top++
+		stack[top] = h.Left
+		leftPushed[top] = false
+	}
+}
+
 func (t *LLRB) ascendGreaterOrEqual(h *Node, pivot Item, iterator ItemIterator) bool {
 	if h == nil {
 		return true
