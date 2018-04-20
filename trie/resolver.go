@@ -356,7 +356,7 @@ func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
 		return startkeys, fixedbits
 	}
 	sort.Sort(tr)
-	//sort.Sort(tr.resolveHexes)
+	sort.Sort(tr.resolveHexes)
 	var prevC *TrieContinuation
 	for i, c := range tr.continuations {
 		if prevC == nil || c.resolvePos < prevC.resolvePos || !bytes.HasPrefix(c.resolveKey[:c.resolvePos], prevC.resolveKey[:prevC.resolvePos]) {
@@ -389,7 +389,6 @@ func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
 			tr.nodeStack[startLevel+1] = &shortNode{Key: hexToCompact(hex[startLevel+1:]), Val: valueNode(tr.value)}
 			tr.fillCount[startLevel+1] = 1
 			// Adjust rhIndices if needed
-			/*
 			if tr.rhIndexGt < tr.resolveHexes.Len() {
 				resComp := bytes.Compare(hex, tr.resolveHexes[tr.rhIndexGt])
 				for tr.rhIndexGt < tr.resolveHexes.Len() && resComp != -1 {
@@ -411,14 +410,16 @@ func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
 			if rhPrefixLenGt > rhPrefixLen {
 				rhPrefixLen = rhPrefixLenGt
 			}
-			*/
-			var rhPrefixLen int
-			for i := 0; i < len(tr.resolveHexes); i++ {
-				pl := prefixLen(hex, tr.resolveHexes[i])
-				if pl > rhPrefixLen {
-					rhPrefixLen = pl
-				}
-			}
+			//var rhPrefixLen1 int
+			//for i := 0; i < len(tr.resolveHexes); i++ {
+			//	pl := prefixLen(hex, tr.resolveHexes[i])
+			//	if pl > rhPrefixLen1 {
+			//		rhPrefixLen1 = pl
+			//	}
+			//}
+			//if rhPrefixLen != rhPrefixLen1 {
+			//	panic("prefixLen not equal")
+			//}
 			var tc *TrieContinuation
 			if k != nil {
 				tc = tr.continuations[tr.contIndices[keyIdx]]
