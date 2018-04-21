@@ -740,6 +740,37 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 		if err != nil {
 			return err
 		}
+		putsIt := m.puts.NewSeekIterator()
+		var nextkey []byte
+		for i := putsIt.SeekTo(&PutItem{bucket: bucket, key: start}); i != nil; i = putsIt.SeekTo(&PutItem{bucket: bucket, key: nextkey}) {
+			item := i.(*PutItem)
+			if !bytes.Equal(item.bucket, bucket) {
+				break
+			}
+			if item.value == nil {
+				continue
+			}
+			if fixedbits > 0 && (!bytes.Equal(item.key[:fixedbytes-1], estartkey[:fixedbytes-1]) || (item.key[fixedbytes-1]&mask)!=(estartkey[fixedbytes-1]&mask)) {
+				continue
+			}
+			wr, action, err := walker(item.key, item.value)
+			if err != nil {
+				return err
+			}
+			switch action {
+			case WalkActionStop:
+				break
+			case WalkActionNext:
+				// When nextkey does not change, it will automatically go to the next item
+				continue
+			case WalkActionSeek:
+				nextkey = wr
+				continue
+			default:
+				panic("Wrong action")
+			}
+		}
+		/*
 		for nextkey := start; nextkey != nil; {
 			from := nextkey
 			nextkey = nil
@@ -776,6 +807,7 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 				return extErr
 			}
 		}
+		*/
 		return nil
 	}
 }

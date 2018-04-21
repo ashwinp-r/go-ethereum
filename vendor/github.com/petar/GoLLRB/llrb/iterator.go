@@ -41,33 +41,33 @@ func (t *LLRB) AscendGreaterOrEqual(pivot Item, iterator ItemIterator) {
 func (t *LLRB) AscendGreaterOrEqual1(pivot Item, iterator ItemIterator) {
 	// Estimate the depth of the tree to allocate the stack
 	var stack [32]*Node
-	var leftPushed [32]bool
+	var noLeft bool
 	var top int
 	stack[0] = t.root
 	for top >= 0 {
 		h := stack[top]
 		if h == nil {
 			top--
+			noLeft = true
 			continue
 		}
 		if less(h.Item, pivot) {
 			// Left branch will not be explored, so we replace the top of the stack with the right branch
-			leftPushed[top] = false
+			noLeft = false
 			stack[top] = h.Right
 			continue
 		}
-		if leftPushed[top] {
+		if noLeft {
 			if !iterator(h.Item) {
 				return
 			}
-			leftPushed[top] = false
+			noLeft = false
 			stack[top] = h.Right
 			continue
 		}
-		leftPushed[top] = true
 		top++
+		noLeft = false
 		stack[top] = h.Left
-		leftPushed[top] = false
 	}
 }
 
@@ -125,4 +125,59 @@ func (t *LLRB) descendLessOrEqual(h *Node, pivot Item, iterator ItemIterator) bo
 		}
 	}
 	return t.descendLessOrEqual(h.Left, pivot, iterator)
+}
+
+type SeekIterator struct {
+	stack [32]*Node
+	noLeft bool
+	top int
+}
+
+func (t *LLRB) NewSeekIterator() *SeekIterator {
+	si := &SeekIterator{}
+	si.stack[0] = t.root
+	return si
+}
+
+// Moves the iterator to the specified goal (forward only)
+// Returns the found item or the one that is next in the order, or nil
+// if there are no more items
+func (si *SeekIterator) SeekTo(goal Item) Item {
+	// First, go down the stack to the item that is not bigger
+	for si.top > 0 && less(si.stack[si.top-1].Item, goal) {
+		si.top--
+		si.noLeft = true
+	}
+	for si.top >= 0 {
+		h := si.stack[si.top]
+		if h == nil {
+			si.top--
+			si.noLeft = true
+			break
+		}
+		if less(h.Item, goal) {
+			// Left branch will not be explored, so we replace the top of the stack with the right branch
+			si.stack[si.top] = h.Right
+			si.noLeft = false
+		} else if less(goal, h.Item) && !si.noLeft {
+			si.top++
+			si.stack[si.top] = h.Left
+			si.noLeft = false
+		} else {
+			break
+		}
+	}
+	if si.top < 0 {
+		return nil
+	}
+	result := si.stack[si.top].Item
+	// Make extra step
+	if si.stack[si.top].Right != nil {
+		si.stack[si.top] = si.stack[si.top].Right
+		si.noLeft = false
+	} else {
+		si.top--
+		si.noLeft = true
+	}
+	return result
 }
