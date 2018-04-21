@@ -1,7 +1,6 @@
 package ethdb
 
 import (
-	"fmt"
 	"testing"
 )
 
@@ -11,7 +10,7 @@ var testbucket = []byte("B")
 func TestEmptyWalk(t *testing.T) {
 	db := NewMemDatabase()
 	count := 0
-	err := multiWalkAsOf(db, false, testbucket, [][]byte{}, []uint{}, 0, func(i int, k []byte, v []byte) (bool, error) {
+	err := multiWalkAsOf(db, testbucket, [][]byte{}, []uint{}, 0, func(i int, k []byte, v []byte) (bool, error) {
 		count++
 		return true, nil
 	})
@@ -30,7 +29,6 @@ func TestWalk2(t *testing.T) {
 	count := 0
 	err := multiWalkAsOf(
 		db,
-		false,
 		testbucket,
 		[][]byte{[]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")},
 		[]uint{10},
@@ -63,7 +61,6 @@ func TestWalkN(t *testing.T) {
 	count := make(map[int]int)
 	err := multiWalkAsOf(
 		db,
-		false,
 		testbucket,
 		[][]byte{[]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), []byte("bbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")},
 		[]uint{40, 16},

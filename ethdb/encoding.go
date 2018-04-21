@@ -77,62 +77,31 @@ func decode7to8(b []byte) []byte {
 }
 
 // If highZero is true, the most significant bits of every byte is left zero
-func encodeTimestamp(timestamp uint64, highZero bool) []byte {
+func encodeTimestamp(timestamp uint64) []byte {
 	var suffix []byte
 	var limit uint64
-	if highZero {
-		limit = 16
-	} else {
-		limit = 32
-	}
+	limit = 32
 	for bytecount := 1; bytecount <=8; bytecount++ {
 		if timestamp < limit {
 			suffix = make([]byte, bytecount)
 			b := timestamp
 			for i := bytecount - 1; i > 0; i-- {
-				if highZero {
-					suffix[i] = byte(b&0x7f)^0x7f
-					b >>= 7
-				} else {
-					suffix[i] = byte(b&0xff)^0xff
-					b >>= 8
-				}
+				suffix[i] = byte(b&0xff)^0xff
+				b >>= 8
 			}
-			if highZero {
-				suffix[0] = (byte(b) | (byte(bytecount)<<4))^0x7f // 3 most significant bits of the first byte are bytecount
-			} else {
-				suffix[0] = (byte(b) | (byte(bytecount)<<5))^0xff // 3 most significant bits of the first byte are bytecount
-			}
+			suffix[0] = (byte(b) | (byte(bytecount)<<5))^0xff // 3 most significant bits of the first byte are bytecount
 			break
 		}
-		if highZero {
-			limit <<= 7
-		} else {
-			limit <<= 8
-		}
+		limit <<= 8
 	}
 	return suffix
 }
 
-func decodeTimestamp(suffix []byte, highZero bool) uint64 {
-	var bytecount int
-	if highZero {
-	 	bytecount = int(((suffix[0]&0x70)^0x70)>>4)
-	} else {
-	 	bytecount = int((suffix[0]^0xff)>>5)
-	}
-	var timestamp uint64
-	if highZero {
-		timestamp = uint64((suffix[0]&0xf)^0xf)
-	} else {
-		timestamp = uint64((suffix[0]^0xff)&0x1f)
-	}
+func decodeTimestamp(suffix []byte) uint64 {
+	bytecount := int((suffix[0]^0xff)>>5)
+	timestamp := uint64((suffix[0]^0xff)&0x1f)
 	for i := 1; i < bytecount; i++ {
-		if highZero {
-			timestamp = (timestamp<<7) | uint64(suffix[i]^0x7f)
-		} else {
-			timestamp = (timestamp<<8) | uint64(suffix[i]^0xff)
-		}
+		timestamp = (timestamp<<8) | uint64(suffix[i]^0xff)
 	}
 	return timestamp
 }

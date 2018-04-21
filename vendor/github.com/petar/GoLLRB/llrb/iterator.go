@@ -143,41 +143,46 @@ func (t *LLRB) NewSeekIterator() *SeekIterator {
 // Returns the found item or the one that is next in the order, or nil
 // if there are no more items
 func (si *SeekIterator) SeekTo(goal Item) Item {
+	top := si.top
+	stack := si.stack[:]
+	noLeft := si.noLeft
 	// First, go down the stack to the item that is not bigger
-	for si.top > 0 && less(si.stack[si.top-1].Item, goal) {
-		si.top--
-		si.noLeft = true
+	for top > 0 && less(stack[top-1].Item, goal) {
+		top--
+		noLeft = true
 	}
-	for si.top >= 0 {
-		h := si.stack[si.top]
+	for top >= 0 {
+		h := stack[top]
 		if h == nil {
-			si.top--
-			si.noLeft = true
+			top--
+			noLeft = true
 			break
 		}
 		if less(h.Item, goal) {
 			// Left branch will not be explored, so we replace the top of the stack with the right branch
-			si.stack[si.top] = h.Right
-			si.noLeft = false
-		} else if less(goal, h.Item) && !si.noLeft {
-			si.top++
-			si.stack[si.top] = h.Left
-			si.noLeft = false
+			stack[top] = h.Right
+			noLeft = false
+		} else if less(goal, h.Item) && !noLeft {
+			top++
+			stack[top] = h.Left
+			noLeft = false
 		} else {
 			break
 		}
 	}
-	if si.top < 0 {
-		return nil
+	var result Item
+	if top >= 0 {
+		result = stack[top].Item
+		// Make extra step
+		if stack[top].Right != nil {
+			stack[top] = stack[top].Right
+			noLeft = false
+		} else {
+			top--
+			noLeft = true
+		}
 	}
-	result := si.stack[si.top].Item
-	// Make extra step
-	if si.stack[si.top].Right != nil {
-		si.stack[si.top] = si.stack[si.top].Right
-		si.noLeft = false
-	} else {
-		si.top--
-		si.noLeft = true
-	}
+	si.top = top
+	si.noLeft = noLeft
 	return result
 }
