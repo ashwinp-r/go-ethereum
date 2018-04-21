@@ -44,6 +44,7 @@ type Getter interface {
 	Has(bucket, key []byte) (bool, error)
 	Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFunc) error
 	WalkAsOf(bucket, startkey []byte, fixedbits uint, timestamp uint64, walker func([]byte, []byte) (bool, error)) error
+	MultiWalkAsOf(bucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error
 	GetHash(index uint32) []byte
 }
 

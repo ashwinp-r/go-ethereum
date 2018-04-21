@@ -560,6 +560,14 @@ func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
 
 func (tr *TrieResolver) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
 	startkeys, fixedbits := tr.PrepareResolveParams()
+	if err := db.MultiWalkAsOf(tr.t.prefix, startkeys, fixedbits, blockNr, tr.Walker); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (tr *TrieResolver) ResolveWithDbOld(db ethdb.Database, blockNr uint64) error {
+	startkeys, fixedbits := tr.PrepareResolveParams()
 	for idx, startkey := range startkeys {
 		if err := db.WalkAsOf(tr.t.prefix, startkey, fixedbits[idx], blockNr, func(k, v []byte) (bool, error) {
 			return tr.Walker(idx, k, v)

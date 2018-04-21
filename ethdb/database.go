@@ -19,7 +19,6 @@ package ethdb
 import (
 	"bytes"
 	"errors"
-	//"fmt"
 	"os"
 	"path"
 	"sync"
@@ -291,12 +290,11 @@ func (db *LDBDatabase) Walk(bucket, startkey []byte, fixedbits uint, walker Walk
 			if err != nil {
 				return err
 			}
-			switch action {
-			case WalkActionStop:
+			if action == WalkActionStop {
 				break
-			case WalkActionNext:
+			} else if action == WalkActionNext {
 				k, v = c.Next()
-			case WalkActionSeek:
+			} else if action == WalkActionSeek {
 				k, v = c.SeekTo(nextkey)
 			}
 		}
@@ -307,6 +305,10 @@ func (db *LDBDatabase) Walk(bucket, startkey []byte, fixedbits uint, walker Walk
 
 func (db *LDBDatabase) WalkAsOf(bucket, startkey []byte, fixedbits uint, timestamp uint64, walker func([]byte, []byte) (bool, error)) error {
 	return walkAsOf(db, bucket, startkey, fixedbits, timestamp, walker)
+}
+
+func (db *LDBDatabase) MultiWalkAsOf(bucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
+	return multiWalkAsOf(db, bucket, startkeys, fixedbits, timestamp, walker)
 }
 
 // Delete deletes the key from the queue and database
@@ -637,6 +639,7 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 		m.mu.RLock()
 		defer m.mu.RUnlock()
 		start := startkey
+		stop := false
 		err := m.db.Walk(bucket, startkey, fixedbits, func (k, v []byte) ([]byte, WalkAction, error) {
 			nextkey := start
 			putsIt := m.puts.NewSeekIterator()
@@ -658,29 +661,33 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 				if err != nil {
 					return nil, WalkActionStop, err
 				}
-				switch action {
-				case WalkActionStop:
-					break
-				case WalkActionNext:
+				if action == WalkActionStop {
+					stop = true
+					return nil, WalkActionStop, nil
+				} else if action == WalkActionNext {
 					continue
-				case WalkActionSeek:
+				} else if action == WalkActionSeek {
 					nextkey = wr
 					continue
-				default:
+				} else {
 					panic("Wrong action")
 				}
-
 			}
 			var err error
 			var action WalkAction
 			start, action, err = walker(k, v)
 			if action == WalkActionNext {
 				start = k
+			} else if action == WalkActionStop {
+				stop = true
 			}
 			return start, action, err
 		})
 		if err != nil {
 			return err
+		}
+		if stop {
+			return nil
 		}
 		putsIt := m.puts.NewSeekIterator()
 		nextkey := start
@@ -699,16 +706,15 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 			if err != nil {
 				return err
 			}
-			switch action {
-			case WalkActionStop:
+			if action == WalkActionStop {
 				break
-			case WalkActionNext:
+			} else if action == WalkActionNext {
 				// When nextkey does not change, it will automatically go to the next item
 				continue
-			case WalkActionSeek:
+			} else if action == WalkActionSeek {
 				nextkey = wr
 				continue
-			default:
+			} else {
 				panic("Wrong action")
 			}
 		}
@@ -718,6 +724,10 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 
 func (m *mutation) WalkAsOf(bucket, startkey []byte, fixedbits uint, timestamp uint64, walker func([]byte, []byte) (bool, error)) error {
 	return walkAsOf(m, bucket, startkey, fixedbits, timestamp, walker)
+}
+
+func (m *mutation) MultiWalkAsOf(bucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
+	return multiWalkAsOf(m, bucket, startkeys, fixedbits, timestamp, walker)
 }
 
 func (m *mutation) Delete(bucket, key []byte) error {
@@ -883,6 +893,10 @@ func (dt *table) WalkAsOf(bucket, startkey []byte, fixedbits uint, timestamp uin
 	return dt.db.WalkAsOf(bucket, append([]byte(dt.prefix), startkey...), fixedbits+uint(8*len(dt.prefix)), timestamp, walker)
 }
 
+func (dt *table) MultiWalkAsOf(bucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
+	return dt.db.MultiWalkAsOf(bucket, startkeys, fixedbits, timestamp, walker)
+}
+
 func (dt *table) Delete(bucket, key []byte) error {
 	return dt.db.Delete(bucket, append([]byte(dt.prefix), key...))
 }
@@ -949,17 +963,36 @@ func multiWalkAsOf(db Getter, bucket []byte, startkeys [][]byte, fixedbits []uin
 	sl := l + len(suffix)
 	keyIdx := 0 // What is the current key we are extracting
 	fixedbytes, mask := bytesmask(fixedbits[keyIdx])
-	err := db.Walk(bucket, startkeys[0], 0, func (k, v []byte) ([]byte, WalkAction, error) {
-		// Do we need to switch to the next key and keybits
-		if fixedbits[keyIdx] > 0 && (!bytes.Equal(k[:fixedbytes-1], startkeys[keyIdx][:fixedbytes-1]) || (k[fixedbytes-1]&mask)!=(startkeys[keyIdx][fixedbytes-1]&mask)) {
-			keyIdx++
-			if keyIdx == len(startkeys) {
-				return nil, WalkActionStop, nil
+	if err := db.Walk(bucket, startkeys[0], 0, func (k, v []byte) ([]byte, WalkAction, error) {
+		// Skip the keys preceeding the current keyIdx
+		if fixedbits[keyIdx] > 0 {
+			c := int(-1)
+			for c != 0 {
+				c = bytes.Compare(k[:fixedbytes-1], startkeys[keyIdx][:fixedbytes-1])
+				if c == 0 {
+					k1 := k[fixedbytes-1]&mask
+					k2 := startkeys[keyIdx][fixedbytes-1]&mask
+					if k1 < k2 {
+						c = -1
+					} else if k1 > k2 {
+						c = 1
+					}
+				}
+				if c < 0 {
+					copy(keyBuffer, startkeys[keyIdx])
+					copy(keyBuffer[l:], suffix)
+					return keyBuffer[:sl], WalkActionSeek, nil
+				} else if c > 0 {
+					keyIdx++
+					if _, err := walker(keyIdx, nil, nil); err != nil {
+						return nil, WalkActionStop, err
+					}					
+					if keyIdx == len(startkeys) {
+						return nil, WalkActionStop, nil
+					}
+					fixedbytes, mask = bytesmask(fixedbits[keyIdx])
+				}
 			}
-			fixedbytes, mask = bytesmask(fixedbits[keyIdx])
-			copy(keyBuffer, startkeys[keyIdx])
-			copy(keyBuffer[l:], suffix)
-			return keyBuffer[:sl], WalkActionSeek, nil
 		}
 		if bytes.Compare(k[l:], suffix) >= 0 {
 			// Current key inserted at the given block suffix or earlier
@@ -976,7 +1009,15 @@ func multiWalkAsOf(db Getter, bucket []byte, startkeys [][]byte, fixedbits []uin
 			copy(keyBuffer[l:], suffix)
 			return keyBuffer[:sl], WalkActionSeek, nil
 		}
-	})
-	return err
+	}); err != nil {
+		return err
+	}
+	for keyIdx < len(startkeys) {
+		keyIdx++
+		if _, err := walker(keyIdx, nil, nil); err != nil {
+			return err
+		}	
+	}
+	return nil
 }
 
