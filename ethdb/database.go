@@ -679,55 +679,38 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 		defer m.mu.RUnlock()
 		start := estartkey
 		err := m.db.Walk(bucket, estartkey, fixedbits, func (k, v []byte) ([]byte, WalkAction, error) {
-			for nextkey := start; nextkey != nil; {
-				from := nextkey
-				nextkey = nil
-				var extErr error
-				m.puts.AscendRange(&PutItem{bucket: bucket, key: from}, &PutItem{bucket: bucket, key: k}, func (i llrb.Item) bool {
-					item := i.(*PutItem)
-					if item.value == nil {
-						return true
-					}
-					if fixedbits > 0 && (!bytes.Equal(item.key[:fixedbytes-1], estartkey[:fixedbytes-1]) || (item.key[fixedbytes-1]&mask)!=(estartkey[fixedbytes-1]&mask)) {
-						return true
-					}
-					wr, action, err := walker(item.key, item.value)
-					if err != nil {
-						extErr = err
-						return false
-					}
-					switch action {
-					case WalkActionStop:
-						return false
-					case WalkActionNext:
-						return true
-					case WalkActionSeek:
-						nextkey = wr
-						return false
-					default:
-						panic("Wrong action")
-					}
-				})
-				if extErr != nil {
-					return nil, WalkActionStop, extErr
-				}
-			}
-			i := m.puts.Get(&PutItem{bucket: bucket, key: k})
-			if i != nil {
-				// mutation data shadows database data
+			nextkey := start
+			putsIt := m.puts.NewSeekIterator()
+			for i := putsIt.SeekTo(&PutItem{bucket: bucket, key: nextkey}); i != nil; i = putsIt.SeekTo(&PutItem{bucket: bucket, key: nextkey}) {
 				item := i.(*PutItem)
+				if !bytes.Equal(item.bucket, bucket) {
+					break
+				}
 				if item.value == nil {
-					// item has been deleted in mutation, so we skip it from the database
-					start = k
-					return nil, WalkActionNext, nil
+					continue
 				}
-				var err error
-				var action WalkAction
-				start, action, err = walker(item.key, item.value)
-				if action == WalkActionNext {
-					start = item.key
+				if bytes.Compare(item.key, k) > 0 {
+					break
 				}
-				return start, action, err
+				if fixedbits > 0 && (!bytes.Equal(item.key[:fixedbytes-1], estartkey[:fixedbytes-1]) || (item.key[fixedbytes-1]&mask)!=(estartkey[fixedbytes-1]&mask)) {
+					continue
+				}
+				wr, action, err := walker(item.key, item.value)
+				if err != nil {
+					return nil, WalkActionStop, err
+				}
+				switch action {
+				case WalkActionStop:
+					break
+				case WalkActionNext:
+					continue
+				case WalkActionSeek:
+					nextkey = wr
+					continue
+				default:
+					panic("Wrong action")
+				}
+
 			}
 			var err error
 			var action WalkAction
@@ -741,8 +724,8 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 			return err
 		}
 		putsIt := m.puts.NewSeekIterator()
-		var nextkey []byte
-		for i := putsIt.SeekTo(&PutItem{bucket: bucket, key: start}); i != nil; i = putsIt.SeekTo(&PutItem{bucket: bucket, key: nextkey}) {
+		nextkey := start
+		for i := putsIt.SeekTo(&PutItem{bucket: bucket, key: nextkey}); i != nil; i = putsIt.SeekTo(&PutItem{bucket: bucket, key: nextkey}) {
 			item := i.(*PutItem)
 			if !bytes.Equal(item.bucket, bucket) {
 				break
@@ -770,44 +753,6 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 				panic("Wrong action")
 			}
 		}
-		/*
-		for nextkey := start; nextkey != nil; {
-			from := nextkey
-			nextkey = nil
-			var extErr error
-			m.puts.AscendGreaterOrEqual1(&PutItem{bucket: bucket, key: from}, func (i llrb.Item) bool {
-				item := i.(*PutItem)
-				if !bytes.Equal(item.bucket, bucket) {
-					return false
-				}
-				if item.value == nil {
-					return true
-				}
-				if fixedbits > 0 && (!bytes.Equal(item.key[:fixedbytes-1], estartkey[:fixedbytes-1]) || (item.key[fixedbytes-1]&mask)!=(estartkey[fixedbytes-1]&mask)) {
-					return true
-				}
-				wr, action, err := walker(item.key, item.value)
-				if err != nil {
-					extErr = err
-					return false
-				}
-				switch action {
-				case WalkActionStop:
-					return false
-				case WalkActionNext:
-					return true
-				case WalkActionSeek:
-					nextkey = wr
-					return false
-				default:
-					panic("Wrong action")
-				}
-			})
-			if extErr != nil {
-				return extErr
-			}
-		}
-		*/
 		return nil
 	}
 }
