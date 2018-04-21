@@ -253,10 +253,19 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 	// First, execute storage updates and account deletions
 	oldContinuations := tds.continuations
 	newContinuations := []*trie.TrieContinuation{}
+	it := 0
+	//var oldResolvers map[common.Address]*trie.TrieResolver
 	for len(oldContinuations) > 0 {
 		resolvers := make(map[common.Address]*trie.TrieResolver)
 		for _, c := range oldContinuations {
 			if !c.RunWithDb(tds.db.TrieDB()) {
+				//if it > 0 {
+				//	fmt.Printf("\n\n")
+				//	c.Print()
+				//	fmt.Printf("Old resolver's resolveHexes\n")
+				//	oldResolver := oldResolvers[*c.Address()]
+				//	oldResolver.Print()
+				//}
 				newContinuations = append(newContinuations, c)
 				resolver, ok := resolvers[*c.Address()]
 				if !ok {
@@ -266,25 +275,21 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 				resolver.AddContinuation(c)
 			}
 		}
-		//al := make(AddrList, 0)
-		//for a, _ := range resolvers {
-		//	al = append(al, a)
-		//}
-		//sort.Sort(al)
 		for _, resolver := range resolvers {
-			//resolver := resolvers[a]
 			if err := resolver.ResolveWithDb(tds.db.TrieDB(), tds.blockNr); err != nil {
 				return common.Hash{}, err
 			}
 		}
 		oldContinuations, newContinuations = newContinuations, []*trie.TrieContinuation{}
+		//oldResolvers = resolvers
+		it++
 	}
-	//for _, storageTrie := range tds.updatedStorage {
-	//	storageTrie.Relist()
-	//	if storageTrie.IsMalformed() {
-	//		fmt.Printf("Storage trie is malformed\n")
-	//	}
-	//}
+	if it > 3 {
+		fmt.Printf("Resolved storage in %d iterations\n", it)
+	}
+	for _, storageTrie := range tds.updatedStorage {
+		storageTrie.Relist()
+	}
 	tds.updatedStorage = make(map[common.Address]*trie.Trie)
 	for address, account := range tds.accountUpdates {
 		storageTrie, err := tds.getStorageTrie(&address)
@@ -314,7 +319,7 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 	}
 	tds.accountUpdates = make(map[common.Address]*Account)
 	tds.accountDeletes = make(map[common.Address]struct{})
-	it := 0
+	it = 0
 	for len(oldContinuations) > 0 {
 		resolver := tds.t.NewResolver(tds.db.TrieDB())
 		for _, c := range oldContinuations {
@@ -327,22 +332,17 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 			if err := resolver.ResolveWithDb(tds.db.TrieDB(), tds.blockNr); err != nil {
 				return common.Hash{}, err
 			}
-//		} else {
-//			if tds.t.IsMalformed() {
-//				fmt.Printf("Account trie is malformed\n")
-//			}
 		}
 		oldContinuations, newContinuations = newContinuations, []*trie.TrieContinuation{}
 		it++
 	}
-	if it > 2 {
+	if it > 3 {
 		fmt.Printf("Resolved in %d iterations\n", it)
 	}
 	tds.t.SaveHashes(tds.db.TrieDB())
 	tds.t.Relist()
 	tds.continuations = newContinuations
 	hash := tds.t.Hash()
-	//fmt.Printf("Root hash: %x\n", hash)
 	return hash, nil
 }
 

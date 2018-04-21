@@ -348,6 +348,12 @@ func (tr *TrieResolver) AddContinuation(c *TrieContinuation) {
 	tr.resolveHexes = append(tr.resolveHexes, c.resolveKey)
 }
 
+func (tr *TrieResolver) Print() {
+	for _, c := range tr.continuations {
+		c.Print()
+	}
+}
+
 // Prepares information for the MultiSuffixWalk
 func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
 	// Remove continuations strictly contained in the preceeding ones
@@ -356,7 +362,7 @@ func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
 	if len(tr.continuations) == 0 {
 		return startkeys, fixedbits
 	}
-	sort.Sort(tr)
+	sort.Stable(tr)
 	sort.Sort(tr.resolveHexes)
 	newHexes := [][]byte{}
 	for i, h := range tr.resolveHexes {
@@ -411,16 +417,15 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 			}
 		}
 	}
-	var rhPrefixLenLte, rhPrefixLenGt int
+	var rhPrefixLen int
 	if tr.rhIndexLte >= 0 {
-		rhPrefixLenLte = prefixLen(hex, tr.resolveHexes[tr.rhIndexLte])
+		rhPrefixLen = prefixLen(hex, tr.resolveHexes[tr.rhIndexLte])
 	}
 	if tr.rhIndexGt < tr.resolveHexes.Len() {
-		rhPrefixLenGt = prefixLen(hex, tr.resolveHexes[tr.rhIndexGt])
-	}
-	rhPrefixLen := rhPrefixLenLte
-	if rhPrefixLenGt > rhPrefixLen {
-		rhPrefixLen = rhPrefixLenGt
+		rhPrefixLenGt := prefixLen(hex, tr.resolveHexes[tr.rhIndexGt])
+		if rhPrefixLenGt > rhPrefixLen {
+			rhPrefixLen = rhPrefixLenGt
+		}
 	}
 	for level := startLevel; level >= stopLevel; level-- {
 		keynibble := hex[level]

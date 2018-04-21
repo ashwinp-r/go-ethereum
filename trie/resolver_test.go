@@ -1,7 +1,7 @@
 package trie
 
 import (
-	"fmt"
+	//"fmt"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -141,7 +141,7 @@ func TestTrieResolver(t *testing.T) {
 		value: nil,
 		resolveKey: keybytesToHex([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")),
 		resolvePos: 10, // 5 bytes is 10 nibbles
-		resolveHash: hashNode(common.HexToHash("03e27bd9cc47c0a03a8480035f765a4ba242c40ae4badfd1628af5a1ca5fd57a").Bytes()),
+		resolveHash: hashNode(common.HexToHash("c9f98a7d966d37c7231d11910c72f01a213057111b8171f5f137269bb73e45e4").Bytes()),
 		resolved: nil,
 		n: nil,
 		touched: []Touch{},
@@ -152,8 +152,8 @@ func TestTrieResolver(t *testing.T) {
 		key: keybytesToHex([]byte("bbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")),
 		value: nil,
 		resolveKey: keybytesToHex([]byte("bbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")),
-		resolvePos: 4, // 2 bytes is 4 nibbles
-		resolveHash: hashNode(common.HexToHash("03e27bd9cc47c0a03a8480035f765a4ba242c40ae4badfd1628af5a1ca5fd57a").Bytes()),
+		resolvePos: 2, // 2 bytes is 4 nibbles
+		resolveHash: hashNode(common.HexToHash("b183c6dd36a92675ab74e32008a41735f485d20df283be0f349a412c769fe6c9").Bytes()),
 		resolved: nil,
 		n: nil,
 		touched: []Touch{},
@@ -164,8 +164,8 @@ func TestTrieResolver(t *testing.T) {
 		key: keybytesToHex([]byte("bbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")),
 		value: nil,
 		resolveKey: keybytesToHex([]byte("bbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")),
-		resolvePos: 6, // 3 bytes is 6 nibbles
-		resolveHash: hashNode(common.HexToHash("03e27bd9cc47c0a03a8480035f765a4ba242c40ae4badfd1628af5a1ca5fd57a").Bytes()),
+		resolvePos: 2, // 3 bytes is 6 nibbles
+		resolveHash: hashNode(common.HexToHash("b183c6dd36a92675ab74e32008a41735f485d20df283be0f349a412c769fe6c9").Bytes()),
 		resolved: nil,
 		n: nil,
 		touched: []Touch{},
@@ -174,9 +174,8 @@ func TestTrieResolver(t *testing.T) {
 	resolver.AddContinuation(tc3)
 	resolver.AddContinuation(tc2)
 	resolver.AddContinuation(tc1)
-	startkeys, fixedbits := resolver.PrepareResolveParams()
-	for i, startkey := range startkeys {
-		fmt.Printf("TTR %s %d %d\n", startkey, fixedbits[i], resolver.contIndices[i])
+	if err := resolver.ResolveWithDb(db, 0); err != nil {
+		t.Errorf("Resolve error: %v", err)
 	}
-	t.Errorf("Got here")
+	//t.Errorf("TestTrieResolver resolved:\n%s\n", tc3.resolved.fstring(""))
 }

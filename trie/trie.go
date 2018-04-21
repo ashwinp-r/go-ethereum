@@ -493,7 +493,7 @@ func (tc *TrieContinuation) Trie() *Trie {
 }
 
 func (tc *TrieContinuation) Print() {
-	fmt.Printf("tc{t:%x,action:%d,key:%x}\n", tc.t.prefix, tc.action, tc.key)
+	fmt.Printf("tc{t:%x,action:%d,key:%x,resolveKey:%x,resolvePos:%d}\n", tc.t.prefix, tc.action, tc.key, tc.resolveKey, tc.resolvePos)
 }
 
 func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieContinuation) bool {

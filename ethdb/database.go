@@ -964,7 +964,6 @@ func multiWalkAsOf(db Getter, bucket []byte, startkeys [][]byte, fixedbits []uin
 	keyIdx := 0 // What is the current key we are extracting
 	fixedbytes, mask := bytesmask(fixedbits[keyIdx])
 	if err := db.Walk(bucket, startkeys[0], 0, func (k, v []byte) ([]byte, WalkAction, error) {
-		// Skip the keys preceeding the current keyIdx
 		if fixedbits[keyIdx] > 0 {
 			c := int(-1)
 			for c != 0 {
