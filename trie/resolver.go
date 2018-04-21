@@ -345,6 +345,23 @@ func (tr *TrieResolver) Swap(i, j int) {
 
 func (tr *TrieResolver) AddContinuation(c *TrieContinuation) {
 	tr.continuations = append(tr.continuations, c)
+	if c.action == TrieActionDelete {
+		stopLevel := len(c.resolveKey)
+		if stopLevel > 8 {
+			stopLevel = 8
+		}
+		for i := c.resolvePos; i < stopLevel; i++ {
+			for b := byte(0); b < 16; b++ {
+				if b == c.resolveKey[i] {
+					continue
+				}
+				rh := make([]byte, i+1)
+				copy(rh, c.resolveKey[:i])
+				rh[i] = b
+				tr.resolveHexes = append(tr.resolveHexes, rh)
+			}
+		}
+	}
 	tr.resolveHexes = append(tr.resolveHexes, c.resolveKey)
 }
 
@@ -358,6 +375,16 @@ func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
 	}
 	sort.Sort(tr)
 	sort.Sort(tr.resolveHexes)
+	newHexes := [][]byte{}
+	for i, h := range tr.resolveHexes {
+		if i == len(tr.resolveHexes) - 1 || !bytes.HasPrefix(tr.resolveHexes[i+1], h) {
+			newHexes = append(newHexes, h)
+		}
+	}
+	//if len(tr.resolveHexes) != len(newHexes) {
+	//	fmt.Printf("Deduplicated %d resolveHexes\n", len(tr.resolveHexes) - len(newHexes))
+	//}
+	tr.resolveHexes = newHexes
 	var prevC *TrieContinuation
 	for i, c := range tr.continuations {
 		if prevC == nil || c.resolvePos < prevC.resolvePos || !bytes.HasPrefix(c.resolveKey[:c.resolvePos], prevC.resolveKey[:prevC.resolvePos]) {
