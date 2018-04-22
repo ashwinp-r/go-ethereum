@@ -570,6 +570,13 @@ func (tds *TrieDbState) IntermediateRoot(s *StateDB, deleteEmptyObjects bool) (c
 	return tds.TrieRoot()
 }
 
+func (tds *TrieDbState) FinalRoot(s *StateDB, deleteEmptyObjects bool) (common.Hash, error) {
+	if err := s.Commit(deleteEmptyObjects, tds.TrieStateWriter()); err != nil {
+		return common.Hash{}, err
+	}
+	return tds.TrieRoot()
+}
+
 // Prepare sets the current transaction hash and index and block hash which is
 // used when the EVM emits new state logs.
 func (self *StateDB) Prepare(thash, bhash common.Hash, ti int) {
