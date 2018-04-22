@@ -221,51 +221,17 @@ func (tds *TrieDbState) AccountTrie() *trie.Trie {
 	return tds.t
 }
 
-type AddrList []common.Address
-
-func (l AddrList) Len() int {
-	return len(l)
-}
-func (l AddrList) Less(i, j int) bool {
-	return bytes.Compare(l[i][:], l[j][:]) < 0
-}
-func (l AddrList) Swap(i, j int) {
-	var a common.Address
-	a.Set(l[i])
-	l[i].Set(l[j])
-	l[j].Set(a)
-}
-
 func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 	if len(tds.continuations) == 0 && len(tds.updatedStorage) == 0 && len(tds.accountUpdates) == 0 && len(tds.accountDeletes) == 0 {
 		return tds.t.Hash(), nil
 	}
-	//fmt.Printf("tds.blockNr %d\n", tds.blockNr)
-	//fmt.Printf("TrieRoot. Continuatons: %d, updatedStorage: %d, accountUpdates: %d, accountDeletes: %d\n",
-	//	len(tds.continuations),
-	//	len(tds.updatedStorage),
-	//	len(tds.accountUpdates),
-	//	len(tds.accountDeletes),
-	//)
-	//for addr, _ := range tds.accountUpdates {
-	//	fmt.Printf("Udate account %x\n", addr)
-	//}
-	// First, execute storage updates and account deletions
 	oldContinuations := tds.continuations
 	newContinuations := []*trie.TrieContinuation{}
 	it := 0
-	//var oldResolvers map[common.Address]*trie.TrieResolver
 	for len(oldContinuations) > 0 {
 		resolvers := make(map[common.Address]*trie.TrieResolver)
 		for _, c := range oldContinuations {
 			if !c.RunWithDb(tds.db.TrieDB()) {
-				//if it > 0 {
-				//	fmt.Printf("\n\n")
-				//	c.Print()
-				//	fmt.Printf("Old resolver's resolveHexes\n")
-				//	oldResolver := oldResolvers[*c.Address()]
-				//	oldResolver.Print()
-				//}
 				newContinuations = append(newContinuations, c)
 				resolver, ok := resolvers[*c.Address()]
 				if !ok {
@@ -281,7 +247,6 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 			}
 		}
 		oldContinuations, newContinuations = newContinuations, []*trie.TrieContinuation{}
-		//oldResolvers = resolvers
 		it++
 	}
 	if it > 3 {
@@ -346,82 +311,6 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 	return hash, nil
 }
 
-func (tds *TrieDbState) TrieRootOld() (common.Hash, error) {
-	if len(tds.continuations) == 0 && len(tds.updatedStorage) == 0 && len(tds.accountUpdates) == 0 && len(tds.accountDeletes) == 0 {
-		return tds.t.Hash(), nil
-	}
-	//fmt.Printf("TrieRoot. Continuatons: %d, updatedStorage: %d, accountUpdates: %d, accountDeletes: %d, Stack:\n%s\n",
-	//	len(tds.continuations),
-	//	len(tds.updatedStorage),
-	//	len(tds.accountUpdates),
-	//	len(tds.accountDeletes),
-	//	debug.Stack(),
-	//)
-	//for addr, _ := range tds.accountUpdates {
-	//	fmt.Printf("Udate account %x\n", addr)
-	//}
-	// First, execute storage updates and account deletions
-	oldContinuations := tds.continuations
-	newContinuations := []*trie.TrieContinuation{}
-	for len(oldContinuations) > 0 {
-		for _, c := range oldContinuations {
-			for !c.RunWithDb(tds.db.TrieDB()) {
-				if err := c.ResolveWithDb(tds.db.TrieDB(), tds.blockNr); err != nil {
-					return common.Hash{}, err
-				}
-			}
-		}
-		oldContinuations, newContinuations = newContinuations, []*trie.TrieContinuation{}
-	}
-	for _, storageTrie := range tds.updatedStorage {
-		storageTrie.Relist()
-	}
-	tds.updatedStorage = make(map[common.Address]*trie.Trie)
-	for address, account := range tds.accountUpdates {
-		storageTrie, err := tds.getStorageTrie(&address)
-		if err != nil {
-			return common.Hash{}, err
-		}
-		account.Root = storageTrie.Hash()
-		data, err := rlp.EncodeToBytes(account)
-		if err != nil {
-			return common.Hash{}, err
-		}
-		addrHash, err := tds.HashKey(address[:])
-		if err != nil {
-			return common.Hash{}, err
-		}
-		c := tds.t.UpdateAction(nil, addrHash[:], data)
-		oldContinuations = append(oldContinuations, c)
-	}
-	for address, _ := range tds.accountDeletes {
-		addrHash, err := tds.HashKey(address[:])
-		if err != nil {
-			return common.Hash{}, err
-		}
-		c := tds.t.DeleteAction(nil, addrHash[:])
-		oldContinuations = append(oldContinuations, c)
-	}
-	tds.accountUpdates = make(map[common.Address]*Account)
-	tds.accountDeletes = make(map[common.Address]struct{})
-	for len(oldContinuations) > 0 {
-		for _, c := range oldContinuations {
-			for !c.RunWithDb(tds.db.TrieDB()) {
-				if err := c.ResolveWithDb(tds.db.TrieDB(), tds.blockNr); err != nil {
-					return common.Hash{}, err
-				}
-			}
-		}
-		oldContinuations, newContinuations = newContinuations, []*trie.TrieContinuation{}
-	}
-	tds.t.SaveHashes(tds.db.TrieDB())
-	tds.t.Relist()
-	tds.continuations = newContinuations
-	hash := tds.t.Hash()
-	//fmt.Printf("Root hash: %x\n", hash)
-	//ic("")
-	return hash, nil
-}
 
 func (tds *TrieDbState) Rebuild() error {
 	tr := tds.AccountTrie()

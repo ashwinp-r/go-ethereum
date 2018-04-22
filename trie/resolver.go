@@ -354,7 +354,7 @@ func (tr *TrieResolver) Print() {
 	}
 }
 
-// Prepares information for the MultiSuffixWalk
+// Prepares information for the MultiWalk
 func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
 	// Remove continuations strictly contained in the preceeding ones
 	startkeys := [][]byte{}
@@ -370,9 +370,6 @@ func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
 			newHexes = append(newHexes, h)
 		}
 	}
-	//if len(tr.resolveHexes) != len(newHexes) {
-	//	fmt.Printf("Deduplicated %d resolveHexes\n", len(tr.resolveHexes) - len(newHexes))
-	//}
 	tr.resolveHexes = newHexes
 	var prevC *TrieContinuation
 	for i, c := range tr.continuations {
@@ -576,21 +573,6 @@ func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
 func (tr *TrieResolver) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
 	startkeys, fixedbits := tr.PrepareResolveParams()
 	if err := db.MultiWalkAsOf(tr.t.prefix, startkeys, fixedbits, blockNr, tr.Walker); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (tr *TrieResolver) ResolveWithDbOld(db ethdb.Database, blockNr uint64) error {
-	startkeys, fixedbits := tr.PrepareResolveParams()
-	for idx, startkey := range startkeys {
-		if err := db.WalkAsOf(tr.t.prefix, startkey, fixedbits[idx], blockNr, func(k, v []byte) (bool, error) {
-			return tr.Walker(idx, k, v)
-		}); err != nil {
-			return err
-		}
-	}
-	if _, err := tr.Walker(len(startkeys), nil, nil); err != nil {
 		return err
 	}
 	return nil
