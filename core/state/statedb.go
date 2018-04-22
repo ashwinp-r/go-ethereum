@@ -555,6 +555,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool, stateWriter StateWriter) error
 				return err
 			}
 		}
+		delete(s.stateObjectsDirty, addr)
 	}
 	return nil
 }
