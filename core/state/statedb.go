@@ -495,9 +495,42 @@ func (self *StateDB) GetRefund() uint64 {
 	return self.refund
 }
 
+
+func (s *StateDB) finalise(deleteEmptyObjects bool, stateWriter StateWriter) error {
+	for addr := range s.journal.dirties {
+		stateObject, exist := s.stateObjects[addr]
+		if !exist {
+			// ripeMD is 'touched' at block 1714175, in tx 0x1237f737031e40bcde4a8b7e717b2d15e3ecadfe49bb1bbc71ee9deb09c6fcf2
+			// That tx goes out of gas, and although the notion of 'touched' does not exist there, the
+			// touch-event will still be recorded in the journal. Since ripeMD is a special snowflake,
+			// it will persist in the journal even though the journal is reverted. In this special circumstance,
+			// it may exist in `s.journal.dirties` but not in `s.stateObjects`.
+			// Thus, we can safely ignore it here
+			continue
+		}
+
+		if stateObject.suicided || (deleteEmptyObjects && stateObject.empty()) {
+			if err := stateWriter.DeleteAccount(&addr); err != nil {
+				return err
+			}
+			stateObject.deleted = true
+		} else {
+			if err := stateObject.updateTrie(stateWriter); err != nil {
+				return err
+			}
+			if err := stateWriter.UpdateAccountData(&addr, &stateObject.data); err != nil {
+				return err
+			}
+		}
+	}
+	// Invalidate journal because reverting across transactions is not allowed.
+	s.ClearJournalAndRefund()
+	return nil
+}
+
 // Finalise finalises the state by removing the self destructed objects
 // and clears the journal as well as the refunds.
-func (s *StateDB) Finalise(deleteEmptyObjects bool, stateWriter StateWriter) error {
+func (s *StateDB) Commit(deleteEmptyObjects bool, stateWriter StateWriter) error {
 	// Invalidate journal because reverting across transactions is not allowed.
 	s.ClearJournalAndRefund()
 	for addr, stateObject := range s.stateObjects {
@@ -530,7 +563,7 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool, stateWriter StateWriter) err
 // It is called in between transactions to get the root hash that
 // goes into transaction receipts.
 func (tds *TrieDbState) IntermediateRoot(s *StateDB, deleteEmptyObjects bool) (common.Hash, error) {
-	if err := s.Finalise(deleteEmptyObjects, tds.TrieStateWriter()); err != nil {
+	if err := s.finalise(deleteEmptyObjects, tds.TrieStateWriter()); err != nil {
 		return common.Hash{}, err
 	}
 	return tds.TrieRoot()

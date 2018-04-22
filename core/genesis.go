@@ -285,7 +285,7 @@ func (g *Genesis) Commit(db ethdb.Database) (*types.Block, *state.StateDB, error
 		return nil, statedb, fmt.Errorf("can't commit genesis block with number > 0")
 	}
 	tds.SetBlockNr(0)
-	if err := statedb.Finalise(false, tds.DbStateWriter()); err != nil {
+	if err := statedb.Commit(false, tds.DbStateWriter()); err != nil {
 		return nil, statedb, fmt.Errorf("cannot write state: %v", err)
 	}
 	if err := WriteTd(db, block.Hash(), block.NumberU64(), g.Difficulty); err != nil {
