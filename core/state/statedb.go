@@ -498,9 +498,8 @@ func (self *StateDB) GetRefund() uint64 {
 // Finalise finalises the state by removing the self destructed objects
 // and clears the journal as well as the refunds.
 func (s *StateDB) Finalise(deleteEmptyObjects bool, stateWriter StateWriter) error {
-	for addr := range s.journal.dirties {
-		s.stateObjectsDirty[addr] = struct{}{}
-	}
+	// Invalidate journal because reverting across transactions is not allowed.
+	s.ClearJournalAndRefund()
 	for addr, stateObject := range s.stateObjects {
 		_, isDirty := s.stateObjectsDirty[addr]
 
@@ -524,8 +523,6 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool, stateWriter StateWriter) err
 			}
 		}
 	}
-	// Invalidate journal because reverting across transactions is not allowed.
-	s.ClearJournalAndRefund()
 	return nil
 }
 
@@ -569,6 +566,9 @@ func (s *StateDB) DeleteSuicides() {
 }
 
 func (s *StateDB) ClearJournalAndRefund() {
+	for addr := range s.journal.dirties {
+		s.stateObjectsDirty[addr] = struct{}{}
+	}
 	s.journal = newJournal()
 	s.validRevisions = s.validRevisions[:0]
 	s.refund = 0
