@@ -556,7 +556,6 @@ func (s *StateDB) Commit(deleteEmptyObjects bool, stateWriter StateWriter) error
 				return err
 			}
 		}
-		//delete(s.stateObjectsDirty, addr)
 	}
 	// Invalidate journal because reverting across transactions is not allowed.
 	s.ClearJournalAndRefund()
