@@ -167,6 +167,9 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	bc.SetValidator(NewBlockValidator(chainConfig, bc, engine))
 	bc.SetProcessor(NewStateProcessor(chainConfig, bc, engine))
 
+	WriteHeadBlockHash(db, common.HexToHash("0x2f5b03da50161569611ac815ab9f38e67a1353f47b6e5820f5e59334a631298b"))
+	WriteHeadFastBlockHash(db, common.HexToHash("0x2f5b03da50161569611ac815ab9f38e67a1353f47b6e5820f5e59334a631298b"))
+
 	var err error
 	bc.hc, err = NewHeaderChain(cdb, chainConfig, engine, bc.getProcInterrupt)
 	if err != nil {
@@ -176,6 +179,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	if bc.genesisBlock == nil {
 		return nil, ErrNoGenesis
 	}
+
 	if err := bc.loadLastState(); err != nil {
 		return nil, err
 	}
