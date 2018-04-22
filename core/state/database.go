@@ -79,10 +79,9 @@ func (dbs *DbState) SetBlockNr(blockNr uint64) {
 }
 
 func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(key, seckey, value common.Hash) bool) {
-	addrHash := crypto.Keccak256Hash(addr[:])
 	var s [32]byte
 	copy(s[:], start)
-	dbs.db.WalkAsOf(addrHash[:], s[:], 0, dbs.blockNr, func(ks, vs []byte) (bool, error) {
+	dbs.db.WalkAsOf(addr[:], s[:], 0, dbs.blockNr, func(ks, vs []byte) (bool, error) {
 		if vs == nil || len(vs) == 0 {
 			// Skip deleted entries
 			return true, nil
@@ -109,9 +108,8 @@ func (dbs *DbState) ReadAccountData(address *common.Address) (*Account, error) {
 }
 
 func (dbs *DbState) ReadAccountStorage(address *common.Address, key *common.Hash) ([]byte, error) {
-	addrHash := crypto.Keccak256Hash(address[:])
 	seckey := crypto.Keccak256Hash(key[:])
-	enc, err := dbs.db.GetAsOf(addrHash[:], seckey[:], dbs.blockNr)
+	enc, err := dbs.db.GetAsOf(address[:], seckey[:], dbs.blockNr)
 	if err != nil || enc == nil {
 		return nil, nil
 	}
@@ -151,10 +149,9 @@ func (dbs *DbState) UpdateAccountCode(codeHash common.Hash, code []byte) error {
 }
 
 func (dbs *DbState) WriteAccountStorage(address *common.Address, key, value *common.Hash) error {
-	addrHash := crypto.Keccak256Hash(address[:])
 	seckey := crypto.Keccak256Hash(key[:])
 	v := bytes.TrimLeft(value[:], "\x00") // PutS below will make a copy of v
-	return dbs.db.PutS(addrHash[:], seckey[:], v, dbs.blockNr)
+	return dbs.db.PutS(address[:], seckey[:], v, dbs.blockNr)
 }
 
 // Implements StateReader by wrapping a trie and a database, where trie acts as a cache for the database
@@ -366,17 +363,14 @@ func (tds *TrieDbState) getStorageTrie(address *common.Address) (*trie.Trie, err
 		if err != nil {
 			return nil, err
 		}
-		addrHash, err := tds.HashKey(address[:])
-		if err != nil {
-			return nil, err
-		}
+		addr := common.CopyBytes(address[:])
 		if account == nil {
-			t = trie.New(common.Hash{}, addrHash[:], true)
+			t = trie.New(common.Hash{}, addr, true)
 		} else {
-			t = trie.New(account.Root, addrHash[:], true)
+			t = trie.New(account.Root, addr, true)
 		}
 		t.MakeListed(tds.nodeList)
-		tds.storageTries[string(common.CopyBytes(address[:]))] = t
+		tds.storageTries[string(addr)] = t
 	}
 	return t, nil
 }
@@ -527,16 +521,12 @@ func (tsw *TrieStateWriter) WriteAccountStorage(address *common.Address, key, va
 }
 
 func (dsw *DbStateWriter) WriteAccountStorage(address *common.Address, key, value *common.Hash) error {
-	addrHash, err := dsw.tds.HashKey(address[:])
-	if err != nil {
-		return err
-	}
 	seckey, err := dsw.tds.HashKey(key[:])
 	if err != nil {
 		return err
 	}
 	v := bytes.TrimLeft(value[:], "\x00") // PutS below will make a copy of v
-	return dsw.tds.db.TrieDB().PutS(addrHash, seckey, v, dsw.tds.blockNr)
+	return dsw.tds.db.TrieDB().PutS(address[:], seckey, v, dsw.tds.blockNr)
 }
 
 // Database wraps access to tries and contract code.
