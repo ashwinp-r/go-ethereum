@@ -19,6 +19,7 @@ package ethdb
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path"
 	"sync"
@@ -973,7 +974,12 @@ func multiWalkAsOf(db Getter, bucket []byte, startkeys [][]byte, fixedbits []uin
 	sl := l + len(suffix)
 	keyIdx := 0 // What is the current key we are extracting
 	fixedbytes, mask := bytesmask(fixedbits[keyIdx])
+	fmt.Printf("New walk\n")
+	for i, sk := range startkeys {
+		fmt.Printf("startkey[%d]=%x\n", i, sk)
+	}
 	if err := db.Walk(bucket, startkeys[0], 0, func (k, v []byte) ([]byte, WalkAction, error) {
+		fmt.Printf("k:%x v:%x\n", k, v)
 		if fixedbits[keyIdx] > 0 {
 			c := int(-1)
 			for c != 0 {
