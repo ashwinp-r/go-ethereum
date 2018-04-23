@@ -652,6 +652,7 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 				c := bytes.Compare(item.key, k)
 				if c == 0 {
 					shadowed = true
+					start = k
 				} else if c > 0 {
 					break
 				}
@@ -679,7 +680,7 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 				}
 			}
 			if shadowed {
-				return nil, WalkActionNext, nil
+				return start, WalkActionNext, nil
 			}
 			var err error
 			var action WalkAction
