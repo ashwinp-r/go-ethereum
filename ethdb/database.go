@@ -643,16 +643,21 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 		err := m.db.Walk(bucket, startkey, fixedbits, func (k, v []byte) ([]byte, WalkAction, error) {
 			nextkey := start
 			putsIt := m.puts.NewSeekIterator()
+			shadowed := false // Whether the current DB item has been shadowed by the mutation
 			for i := putsIt.SeekTo(&PutItem{bucket: bucket, key: nextkey}); i != nil; i = putsIt.SeekTo(&PutItem{bucket: bucket, key: nextkey}) {
 				item := i.(*PutItem)
 				if !bytes.Equal(item.bucket, bucket) {
 					break
 				}
-				if item.value == nil {
-					continue
-				}
-				if bytes.Compare(item.key, k) > 0 {
+				c := bytes.Compare(item.key, k)
+				if c == 0 {
+					shadowed = true
+				} else if c > 0 {
 					break
+				}
+				if item.value == nil {
+					// Item has been deleted
+					continue
 				}
 				if fixedbits > 0 && (!bytes.Equal(item.key[:fixedbytes-1], startkey[:fixedbytes-1]) || (item.key[fixedbytes-1]&mask)!=(startkey[fixedbytes-1]&mask)) {
 					continue
@@ -672,6 +677,9 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 				} else {
 					panic("Wrong action")
 				}
+			}
+			if shadowed {
+				return nil, WalkActionNext, nil
 			}
 			var err error
 			var action WalkAction
