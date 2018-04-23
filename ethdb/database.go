@@ -646,6 +646,7 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 			shadowed := false // Whether the current DB item has been shadowed by the mutation
 			for i := putsIt.SeekTo(&PutItem{bucket: bucket, key: nextkey}); i != nil; i = putsIt.SeekTo(&PutItem{bucket: bucket, key: nextkey}) {
 				item := i.(*PutItem)
+				nextkey = item.key
 				if !bytes.Equal(item.bucket, bucket) {
 					break
 				}
