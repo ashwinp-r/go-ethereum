@@ -389,7 +389,7 @@ func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
 func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 	pLen := prefixLen(k, tr.key[:])
 	if k!= nil && pLen == len(k) || pLen == len(tr.key[:]) {
-		fmt.Printf("k %x, tr.key %x\n", k, tr.key[:])
+		//fmt.Printf("k %x, tr.key %x\n", k, tr.key[:])
 	}
 	stopLevel := 2*pLen
 	if k != nil && (k[pLen]^tr.key[pLen])&0xf0 == 0 {

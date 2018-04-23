@@ -19,7 +19,7 @@ package ethdb
 import (
 	"bytes"
 	"errors"
-	"fmt"
+	//"fmt"
 	"os"
 	"path"
 	"sync"
@@ -644,6 +644,9 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 		err := m.db.Walk(bucket, startkey, fixedbits, func (k, v []byte) ([]byte, WalkAction, error) {
 			nextkey := start
 			putsIt := m.puts.NewSeekIterator()
+			var action WalkAction
+			var err error
+			var wr []byte
 			shadowed := false // Whether the current DB item has been shadowed by the mutation
 			for i := putsIt.SeekTo(&PutItem{bucket: bucket, key: nextkey}); i != nil; i = putsIt.SeekTo(&PutItem{bucket: bucket, key: nextkey}) {
 				item := i.(*PutItem)
@@ -663,9 +666,9 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 					continue
 				}
 				if fixedbits > 0 && (!bytes.Equal(item.key[:fixedbytes-1], startkey[:fixedbytes-1]) || (item.key[fixedbytes-1]&mask)!=(startkey[fixedbytes-1]&mask)) {
-					continue
+					break
 				}
-				wr, action, err := walker(item.key, item.value)
+				wr, action, err = walker(item.key, item.value)
 				if err != nil {
 					return nil, WalkActionStop, err
 				}
@@ -684,8 +687,9 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 			if shadowed {
 				return start, WalkActionNext, nil
 			}
-			var err error
-			var action WalkAction
+			if action == WalkActionSeek && bytes.Compare(wr, k) > 0 {
+				return wr, WalkActionSeek, nil
+			}
 			start, action, err = walker(k, v)
 			if action == WalkActionNext {
 				start = k
@@ -974,12 +978,12 @@ func multiWalkAsOf(db Getter, bucket []byte, startkeys [][]byte, fixedbits []uin
 	sl := l + len(suffix)
 	keyIdx := 0 // What is the current key we are extracting
 	fixedbytes, mask := bytesmask(fixedbits[keyIdx])
-	fmt.Printf("New walk, syffix %x\n", suffix)
-	for i, sk := range startkeys {
-		fmt.Printf("startkey[%d]=%x\n", i, sk)
-	}
+	//fmt.Printf("New walk, syffix %x\n", suffix)
+	//for i, sk := range startkeys {
+	//	fmt.Printf("startkey[%d]=%x\n", i, sk)
+	//}
 	if err := db.Walk(bucket, startkeys[0], 0, func (k, v []byte) ([]byte, WalkAction, error) {
-		fmt.Printf("k:%x v:%x\n", k, v)
+		//fmt.Printf("k:%x v:%x\n", k, v)
 		if fixedbits[keyIdx] > 0 {
 			c := int(-1)
 			for c != 0 {
