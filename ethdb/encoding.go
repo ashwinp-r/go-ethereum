@@ -97,11 +97,11 @@ func encodeTimestamp(timestamp uint64) []byte {
 	return suffix
 }
 
-func decodeTimestamp(suffix []byte) uint64 {
+func decodeTimestamp(suffix []byte) (uint64, []byte) {
 	bytecount := int((suffix[0]^0xff)>>5)
 	timestamp := uint64((suffix[0]^0xff)&0x1f)
 	for i := 1; i < bytecount; i++ {
 		timestamp = (timestamp<<8) | uint64(suffix[i]^0xff)
 	}
-	return timestamp
+	return timestamp, suffix[bytecount:]
 }

@@ -319,6 +319,37 @@ func (tds *TrieDbState) SetBlockNr(blockNr uint64) {
 	tds.blockNr = blockNr
 }
 
+func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
+	if err := tds.db.TrieDB().RewindData(tds.blockNr, blockNr, func (bucket, key, value []byte) error {
+		var c *trie.TrieContinuation
+		var t *trie.Trie
+		var a *common.Address
+		if bytes.Equal(bucket, AccountsBucket) {
+			t = tds.t
+		} else {
+			address := common.BytesToAddress(bucket)
+			a = &address
+			var err error
+			t, err = tds.getStorageTrie(a)
+			if err != nil {
+				return err
+			}
+			tds.updatedStorage[address] = t
+		}
+		if len(value) > 0 {
+			c = t.UpdateAction(a, key, value)
+		} else {
+			c = t.DeleteAction(a, key)
+		}
+		tds.continuations = append(tds.continuations, c)
+		return nil
+	}); err != nil {
+		return err
+	}
+	tds.blockNr = blockNr
+	return nil
+}
+
 func (tds *TrieDbState) ReadAccountData(address *common.Address) (*Account, error) {
 	addrHash, err := tds.HashKey(address[:])
 	if err != nil {

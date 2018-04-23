@@ -63,6 +63,7 @@ type Database interface {
 	Putter
 	Delete(bucket, key []byte) error
 	MultiPut(tuples ...[]byte) error
+	RewindData(timestampSrc, timestampDst uint64, df func(bucket, key, value []byte) error) error
 	Close()
 	NewBatch() Mutation
 	Size() int

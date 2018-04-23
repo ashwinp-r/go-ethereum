@@ -312,6 +312,10 @@ func (db *LDBDatabase) MultiWalkAsOf(bucket []byte, startkeys [][]byte, fixedbit
 	return multiWalkAsOf(db, bucket, startkeys, fixedbits, timestamp, walker)
 }
 
+func (db *LDBDatabase) RewindData(timestampSrc, timestampDst uint64, df func(bucket, key, value []byte) error) error {
+	return rewindData(db, timestampSrc, timestampDst, df)
+}
+
 // Delete deletes the key from the queue and database
 func (db *LDBDatabase) Delete(bucket, key []byte) error {
 	// Execute the actual operation
@@ -745,6 +749,10 @@ func (m *mutation) MultiWalkAsOf(bucket []byte, startkeys [][]byte, fixedbits []
 	return multiWalkAsOf(m, bucket, startkeys, fixedbits, timestamp, walker)
 }
 
+func (m *mutation) RewindData(timestampSrc, timestampDst uint64, df func(bucket, key, value []byte) error) error {
+	return rewindData(m, timestampSrc, timestampDst, df)
+}
+
 func (m *mutation) Delete(bucket, key []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -912,6 +920,10 @@ func (dt *table) MultiWalkAsOf(bucket []byte, startkeys [][]byte, fixedbits []ui
 	return dt.db.MultiWalkAsOf(bucket, startkeys, fixedbits, timestamp, walker)
 }
 
+func (dt *table) RewindData(timestampSrc, timestampDst uint64, df func(bucket, key, value []byte) error) error {
+	return rewindData(dt, timestampSrc, timestampDst, df)
+}
+
 func (dt *table) Delete(bucket, key []byte) error {
 	return dt.db.Delete(bucket, append([]byte(dt.prefix), key...))
 }
@@ -938,105 +950,5 @@ func (dt *table) GetHash(index uint32) []byte {
 
 func (dt *table) PutHash(index uint32, hash []byte) {
 	dt.db.PutHash(index, hash)
-}
-
-var EndSuffix []byte = []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
-
-func walkAsOf(db Getter, bucket, startkey []byte, fixedbits uint, timestamp uint64, walker func([]byte, []byte) (bool, error)) error {
-	suffix := encodeTimestamp(timestamp)
-	l := len(startkey)
-	keyBuffer := make([]byte, l+len(EndSuffix))
-	sl := l + len(suffix)
-	err := db.Walk(bucket, startkey, fixedbits, func(k, v []byte) ([]byte, WalkAction, error) {
-		if bytes.Compare(k[l:], suffix) >=0 {
-			// Current key inserted at the given block suffix or earlier
-			goOn, err := walker(k[:l], v)
-			if err != nil || !goOn {
-				return nil, WalkActionStop, err
-			}
-			copy(keyBuffer, k[:l])
-			copy(keyBuffer[l:], EndSuffix)
-			return keyBuffer[:], WalkActionSeek, nil
-		} else {
-			// Current key inserted after the given block suffix, seek to it
-			copy(keyBuffer, k[:l])
-			copy(keyBuffer[l:], suffix)
-			return keyBuffer[:sl], WalkActionSeek, nil
-		}
-	})
-	return err
-}
-
-// keys is sorted, prefixes strightly containing each other removed
-func multiWalkAsOf(db Getter, bucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
-	if len(startkeys) == 0 {
-		return nil
-	}
-	suffix := encodeTimestamp(timestamp)
-	l := len(startkeys[0])
-	keyBuffer := make([]byte, l+len(EndSuffix))
-	sl := l + len(suffix)
-	keyIdx := 0 // What is the current key we are extracting
-	fixedbytes, mask := bytesmask(fixedbits[keyIdx])
-	//fmt.Printf("New walk, syffix %x\n", suffix)
-	//for i, sk := range startkeys {
-	//	fmt.Printf("startkey[%d]=%x\n", i, sk)
-	//}
-	if err := db.Walk(bucket, startkeys[0], 0, func (k, v []byte) ([]byte, WalkAction, error) {
-		//fmt.Printf("k:%x v:%x\n", k, v)
-		if fixedbits[keyIdx] > 0 {
-			c := int(-1)
-			for c != 0 {
-				c = bytes.Compare(k[:fixedbytes-1], startkeys[keyIdx][:fixedbytes-1])
-				if c == 0 {
-					k1 := k[fixedbytes-1]&mask
-					k2 := startkeys[keyIdx][fixedbytes-1]&mask
-					if k1 < k2 {
-						c = -1
-					} else if k1 > k2 {
-						c = 1
-					}
-				}
-				if c < 0 {
-					copy(keyBuffer, startkeys[keyIdx])
-					copy(keyBuffer[l:], suffix)
-					return keyBuffer[:sl], WalkActionSeek, nil
-				} else if c > 0 {
-					keyIdx++
-					if _, err := walker(keyIdx, nil, nil); err != nil {
-						return nil, WalkActionStop, err
-					}					
-					if keyIdx == len(startkeys) {
-						return nil, WalkActionStop, nil
-					}
-					fixedbytes, mask = bytesmask(fixedbits[keyIdx])
-				}
-			}
-		}
-		if bytes.Compare(k[l:], suffix) >= 0 {
-			// Current key inserted at the given block suffix or earlier
-			goOn, err := walker(keyIdx, k[:l], v)
-			if err != nil || !goOn {
-				return nil, WalkActionStop, err
-			}
-			copy(keyBuffer, k[:l])
-			copy(keyBuffer[l:], EndSuffix)
-			return keyBuffer[:], WalkActionSeek, nil
-		} else {
-			// Current key inserted after the given block suffix, seek to it
-			copy(keyBuffer, k[:l])
-			copy(keyBuffer[l:], suffix)
-			return keyBuffer[:sl], WalkActionSeek, nil
-		}
-	}); err != nil {
-		return err
-	}
-	for keyIdx < len(startkeys) {
-		keyIdx++
-		if _, err := walker(keyIdx, nil, nil); err != nil {
-			return err
-		}	
-	}
-	return nil
 }
 

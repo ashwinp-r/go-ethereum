@@ -1,6 +1,7 @@
 package ethdb
 
 import (
+	//"fmt"
 	"testing"
 )
 
@@ -34,7 +35,9 @@ func TestWalk2(t *testing.T) {
 		[]uint{10},
 		0,
 		func(i int, k []byte, v []byte) (bool, error) {
-			count++
+			if k != nil {
+				count++
+			}
 			return true, nil
 		},
 	)
@@ -66,8 +69,9 @@ func TestWalkN(t *testing.T) {
 		[]uint{40, 16},
 		0,
 		func(i int, k []byte, v []byte) (bool, error) {
-			//fmt.Printf("%d %s %s\n", i, k, v)
-			count[i]++
+			if k != nil {
+				count[i]++
+			}
 			return true, nil
 		},
 	)
@@ -82,5 +86,101 @@ func TestWalkN(t *testing.T) {
 	}
 	if count[1] != 3 {
 		t.Errorf("Expected 3 keys in group 1, got %d", count[1])
+	}
+}
+
+func TestRewindData1Bucket(t *testing.T) {
+	db := NewMemDatabase()
+
+	db.PutS(testbucket, []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), 0)
+	db.PutS(testbucket, []byte("aaaaaccccccccccccccccccccccccccc"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), 0)
+
+	db.PutS(testbucket, []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxyyyyyyyyyyyyyyyyyyyyyyyy"), 1)
+	db.PutS(testbucket, []byte("aaaaaccccccccccccccccccccccccccc"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxyyyyyyyyyyyyyyyyyyyyyyyy"), 1)
+	db.PutS(testbucket, []byte("baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), 1)
+	db.PutS(testbucket, []byte("bbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), 1)
+
+	db.PutS(testbucket, []byte("baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxzzzzzzzzzzzzzzzzzzzzzzzz"), 2)
+	db.PutS(testbucket, []byte("bbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), 2)
+	db.PutS(testbucket, []byte("bbaaaccccccccccccccccccccccccccc"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), 2)
+	db.PutS(testbucket, []byte("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxaaaaaaaaaaaaaaaaaaaaaaaaa"), 2)
+	db.PutS(testbucket, []byte("bccccccccccccccccccccccccccccccc"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), 2)
+
+	db.PutS(testbucket, []byte("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"), nil, 3)
+	db.PutS(testbucket, []byte("bccccccccccccccccccccccccccccccc"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), 3)
+
+	count := 0
+	err := rewindData(db, 3, 2, func(bucket, key, value []byte) error {
+		count++
+		//fmt.Printf("bucket: %s, key: %s, value: %s\n", string(bucket), string(key), string(value))
+		return nil
+	})
+	if err != nil {
+		t.Errorf("Could not rewind 3->2 %v", err)
+	}
+	if count != 2 {
+		t.Errorf("Expected %d items in rewind data, got %d", 2, count)
+	}
+
+	count = 0
+	err = rewindData(db, 3, 0, func(bucket, key, value []byte) error {
+		count++
+		//fmt.Printf("bucket: %s, key: %s, value: %s\n", string(bucket), string(key), string(value))
+		return nil
+	})
+	if err != nil {
+		t.Errorf("Could not rewind 3->0 %v", err)
+	}
+	if count != 7 {
+		t.Errorf("Expected %d items in rewind data, got %d", 7, count)
+	}
+}
+
+func TestRewindData2Bucket(t *testing.T) {
+	db := NewMemDatabase()
+
+	otherbucket := []byte("OB")
+
+	db.PutS(testbucket, []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), 0)
+	db.PutS(testbucket, []byte("aaaaaccccccccccccccccccccccccccc"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), 0)
+
+	db.PutS(testbucket, []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxyyyyyyyyyyyyyyyyyyyyyyyy"), 1)
+	db.PutS(testbucket, []byte("aaaaaccccccccccccccccccccccccccc"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxyyyyyyyyyyyyyyyyyyyyyyyy"), 1)
+	db.PutS(testbucket, []byte("baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), 1)
+	db.PutS(testbucket, []byte("bbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), 1)
+
+	db.PutS(otherbucket, []byte("baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxzzzzzzzzzzzzzzzzzzzzzzzz"), 2)
+	db.PutS(otherbucket, []byte("bbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), 2)
+	db.PutS(otherbucket, []byte("bbaaaccccccccccccccccccccccccccc"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), 2)
+	db.PutS(otherbucket, []byte("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxaaaaaaaaaaaaaaaaaaaaaaaaa"), 2)
+	db.PutS(otherbucket, []byte("bccccccccccccccccccccccccccccccc"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), 2)
+
+	db.PutS(testbucket, []byte("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"), nil, 3)
+	db.PutS(testbucket, []byte("bccccccccccccccccccccccccccccccc"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), 3)
+
+	count := 0
+	err := rewindData(db, 3, 2, func(bucket, key, value []byte) error {
+		count++
+		//fmt.Printf("bucket: %s, key: %s, value: %s\n", string(bucket), string(key), string(value))
+		return nil
+	})
+	if err != nil {
+		t.Errorf("Could not rewind 3->2 %v", err)
+	}
+	if count != 2 {
+		t.Errorf("Expected %d items in rewind data, got %d", 2, count)
+	}
+
+	count = 0
+	err = rewindData(db, 3, 0, func(bucket, key, value []byte) error {
+		count++
+		//fmt.Printf("bucket: %s, key: %s, value: %s\n", string(bucket), string(key), string(value))
+		return nil
+	})
+	if err != nil {
+		t.Errorf("Could not rewind 3->0 %v", err)
+	}
+	if count != 11 {
+		t.Errorf("Expected %d items in rewind data, got %d", 11, count)
 	}
 }

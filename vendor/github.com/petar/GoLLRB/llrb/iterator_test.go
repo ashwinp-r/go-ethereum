@@ -116,6 +116,10 @@ func TestSeekIterator(t *testing.T) {
 		tree.InsertNoReplace(Int(i))
 	}
 	it := tree.NewSeekIterator()
+	gotFirst := it.SeekTo(tree.Min())
+	if gotFirst.(Int) != Int(2) {
+		t.Errorf("got %d, want %d", gotFirst, 2)
+	}
 	got3 := it.SeekTo(Int(3))
 	if got3.(Int) != Int(4) {
 		t.Errorf("got %d, want %d", got3, 4)
