@@ -974,7 +974,7 @@ func multiWalkAsOf(db Getter, bucket []byte, startkeys [][]byte, fixedbits []uin
 	sl := l + len(suffix)
 	keyIdx := 0 // What is the current key we are extracting
 	fixedbytes, mask := bytesmask(fixedbits[keyIdx])
-	fmt.Printf("New walk\n")
+	fmt.Printf("New walk, syffix %x\n", suffix)
 	for i, sk := range startkeys {
 		fmt.Printf("startkey[%d]=%x\n", i, sk)
 	}
