@@ -359,6 +359,10 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
 	}); err != nil {
 		return err
 	}
+	if _, err := tds.TrieRoot(); err != nil {
+		return err
+	}
+	tds.blockNr = blockNr
 	return nil
 }
 
