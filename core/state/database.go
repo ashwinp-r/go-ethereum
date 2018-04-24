@@ -227,19 +227,32 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 	it := 0
 	for len(oldContinuations) > 0 {
 		resolvers := make(map[common.Address]*trie.TrieResolver)
+		var accountResolver *trie.TrieResolver
 		for _, c := range oldContinuations {
 			if !c.RunWithDb(tds.db.TrieDB()) {
 				newContinuations = append(newContinuations, c)
-				resolver, ok := resolvers[*c.Address()]
-				if !ok {
-					resolver = c.Trie().NewResolver(tds.db.TrieDB())
-					resolvers[*c.Address()] = resolver
+				if c.Address() == nil {
+					if accountResolver == nil {
+						accountResolver = tds.t.NewResolver(tds.db.TrieDB())
+					}
+					accountResolver.AddContinuation(c)
+				} else {
+					resolver, ok := resolvers[*c.Address()]
+					if !ok {
+						resolver = c.Trie().NewResolver(tds.db.TrieDB())
+						resolvers[*c.Address()] = resolver
+					}
+					resolver.AddContinuation(c)
 				}
-				resolver.AddContinuation(c)
 			}
 		}
 		for _, resolver := range resolvers {
 			if err := resolver.ResolveWithDb(tds.db.TrieDB(), tds.blockNr); err != nil {
+				return common.Hash{}, err
+			}
+		}
+		if accountResolver != nil {
+			if err := accountResolver.ResolveWithDb(tds.db.TrieDB(), tds.blockNr); err != nil {
 				return common.Hash{}, err
 			}
 		}
@@ -346,7 +359,6 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
 	}); err != nil {
 		return err
 	}
-	tds.blockNr = blockNr
 	return nil
 }
 

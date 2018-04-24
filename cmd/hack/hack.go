@@ -633,8 +633,22 @@ func testRewind() {
 	defer ethDb.Close()
 	bc, err := core.NewBlockChain(ethDb, nil, params.MainnetChainConfig, ethash.NewFaker(), vm.Config{})
 	check(err)
-	currentBlockNr := bc.CurrentBlock().NumberU64()
+	currentBlock := bc.CurrentBlock()
+	currentBlockNr := currentBlock.NumberU64()
 	fmt.Printf("Current block number: %d\n", currentBlockNr)
+	fmt.Printf("Current block root hash: %x\n", currentBlock.Root())
+	tds, err := state.NewTrieDbState(currentBlock.Root(), state.NewDatabase(ethDb), currentBlockNr)
+	check(err)
+	err = tds.Rebuild()
+	check(err)
+	err = tds.UnwindTo(currentBlockNr - 16)
+	check(err)
+	rewoundBlock := bc.GetBlockByNumber(currentBlockNr - 16)
+	fmt.Printf("Rewound block number: %d\n", rewoundBlock.NumberU64())
+	fmt.Printf("Rewound block root hash: %x\n", rewoundBlock.Root())
+	rewoundRoot, err := tds.TrieRoot()
+	check(err)
+	fmt.Printf("Calculated rewound root hash: %x\n", rewoundRoot)
 }
 
 func main() {

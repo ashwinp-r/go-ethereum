@@ -166,7 +166,7 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 				// Find the next item that could match
 				for bytes.Compare(item.key, k[:len(item.key)]) < 0 {
 					item, _ = it.SeekTo(item).(*PutItem)
-					if !bytes.Equal(item.bucket, bucket) {
+					if item == nil || !bytes.Equal(item.bucket, bucket) {
 						seeking = false
 						return nil, WalkActionStop, nil
 					}
