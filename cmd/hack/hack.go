@@ -9,21 +9,21 @@ import (
 	"runtime/pprof"
 	"os"
 	"log"
-	"sort"
 	"io/ioutil"
 
-	//"github.com/petar/GoLLRB/llrb"
 	"github.com/boltdb/bolt"
 	"github.com/wcharczuk/go-chart"
 	util "github.com/wcharczuk/go-chart/util"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie"
-	"github.com/ethereum/go-ethereum/rlp"
 )
 
 var emptyCodeHash = crypto.Keccak256(nil)
@@ -62,104 +62,6 @@ func prefixLen(a, b []byte) int {
 		}
 	}
 	return i
-}
-
-// Transforms b into encoding where only
-// 7 bits of each byte are used to encode the bits of b
-// The most significant bit is left empty, for other purposes
-func encode8to7(b []byte) []byte {
-	// Calculate number of bytes in the output
-	bits := 8*len(b)
-	outbytes := (bits + 6)/7
-	in := make([]byte, outbytes)
-	copy(in, b)
-	out := make([]byte, outbytes)
-	inidx := 0
-	for outidx := 0; outidx < outbytes; outidx++ {
-		switch (outidx%8) {
-		case 0:
-			out[outidx] =                             in[inidx]>>1
-		case 1:
-			out[outidx] = ((in[inidx]&0x1)<<6)    | ((in[inidx+1]>>2)&0x3f)
-		case 2:
-			out[outidx] = ((in[inidx+1]&0x3)<<5)  | ((in[inidx+2]>>3)&0x1f)
-		case 3:
-			out[outidx] = ((in[inidx+2]&0x7)<<4)  | ((in[inidx+3]>>4)&0xf)
-		case 4:
-			out[outidx] = ((in[inidx+3]&0xf)<<3)  | ((in[inidx+4]>>5)&0x7)
-		case 5:
-			out[outidx] = ((in[inidx+4]&0x1f)<<2) | ((in[inidx+5]>>6)&0x3)
-		case 6:
-			out[outidx] = ((in[inidx+5]&0x3f)<<1) |  (in[inidx+6]>>7)
-		case 7:
-			out[outidx] =   in[inidx+6]&0x7f
-			inidx += 7
-		}
-	}
-	return out
-}
-
-func calcBucketSaving(db *bolt.DB, bucket []byte) int {
-	keyCounts := make(map[string]int)
-	err := db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucket)
-		c := b.Cursor()
-		for k, _ := c.First(); k != nil; k, _ = c.Next() {
-			key := encode8to7(k[:32])
-			keyStr := string(key)
-			if _, ok := keyCounts[keyStr]; ok {
-				keyCounts[keyStr]++
-			} else {
-				keyCounts[keyStr] = 1
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		panic(fmt.Sprintf("Could view db: %s", err))
-	}
-	keys := []string{}
-	for k, _ := range keyCounts {
-		keys = append(keys, k)
-	}
-	prefixLens := make([]int, len(keys))
-	sort.Strings(keys)
-	maxLen := 0
-	for i, k := range keys {
-		if i == 0 {
-			continue
-		}
-		l := prefixLen([]byte(k), []byte(keys[i-1])) + 1
-		if l > prefixLens[i-1] {
-			prefixLens[i-1] = l
-		}
-		if l > prefixLens[i] {
-			prefixLens[i] = l
-		}
-		if l > maxLen {
-			maxLen = l
-		}
-	}
-	total := 0
-	for i, k := range keys {
-		c := keyCounts[k]
-		p := prefixLens[i]
-		currentUsage := 36*c
-		nextUsage := 32 + p + 32 + (p+5)*c
-		saving := currentUsage - nextUsage
-		total += saving
-	}
-	fmt.Printf("Calculating for bucket: %x, maxLen: %d, count: %d, saving: %d\n", bucket, maxLen, len(keys), total)
-	return total
-}
-
-func calcSpaceSaving(db *bolt.DB) int {
-	total := 0
-	bucketList := bucketList(db)
-	for _, bucket := range bucketList {
-		total += calcBucketSaving(db, bucket)
-	}
-	return total
 }
 
 	
@@ -451,8 +353,8 @@ func printOccupancies(t *trie.Trie, db ethdb.Database, blockNr uint64) {
 }
 
 func trieStats() {
-	//db, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata", 4096, 16)
-	db, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 4096, false)
+	//db, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata", 4096)
+	db, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 4096)
 	if err != nil {
 		panic(err)
 	}
@@ -725,45 +627,14 @@ func trieChart() {
     check(err)
 }
 
-func testRebuild() {
-	db := ethdb.NewMemDatabase()
-	defer db.Close()
-	bucket := []byte("AT")
-	writeBlockNr := uint64(0)
-	t := trie.New(common.Hash{}, bucket, false)
-
-	keys := []string{
-		"FIRSTFIRSTFIRSTFIRSTFIRSTFIRSTFI",
-		"SECONDSECONDSECONDSECONDSECONDSE",
-		"FISECONDSECONDSECONDSECONDSECOND",
-		"FISECONDSECONDSECONDSECONDSECONB",
-		"THIRDTHIRDTHIRDTHIRDTHIRDTHIRDTH",
-	}
-	values := []string{
-		"FIRST",
-		"SECOND",
-		"THIRD",
-		"FORTH",
-		"FIRTH",
-	}
-
-	for i := 0; i < len(keys); i++ {
-		key := []byte(keys[i])
-		value := []byte(values[i])
-		v1, err := rlp.EncodeToBytes(bytes.TrimLeft(value, "\x00"))
-		check(err)
-		t.TryUpdate(db, key, v1, 0)
-		t.PrintTrie()
-		root1 := t.Root()
-		fmt.Printf("Root1: %x\n", t.Root())
-		v1, err = trie.EncodeAsValue(v1)
-		check(err)
-		db.PutS(bucket, key, v1, writeBlockNr)
-		db.Commit()
-		t1 := trie.New(common.BytesToHash(root1), bucket, false)
-		t1.Rebuild(db, 0)
-		fmt.Printf("\n\n")
-	}
+func testRewind() {
+	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024)
+	check(err)
+	defer ethDb.Close()
+	bc, err := core.NewBlockChain(ethDb, nil, params.MainnetChainConfig, ethash.NewFaker(), vm.Config{})
+	check(err)
+	currentBlockNr := bc.CurrentBlock().NumberU64()
+	fmt.Printf("Current block number: %d\n", currentBlockNr)
 }
 
 func main() {
@@ -783,7 +654,7 @@ func main() {
  	//	panic(fmt.Sprintf("Could not open file: %s", err))
  	//}
  	//defer db.Close()
- 	trieStats()
+ 	testRewind()
  	//testRebuild()
 }
 

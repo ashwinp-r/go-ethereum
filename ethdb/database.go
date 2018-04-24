@@ -84,7 +84,7 @@ func openHashFile(file string) (*os.File, []byte, error) {
 }
 
 // NewLDBDatabase returns a LevelDB wrapped object.
-func NewLDBDatabase(file string, cache int, varKeys bool) (*LDBDatabase, error) {
+func NewLDBDatabase(file string, cache int) (*LDBDatabase, error) {
 	logger := log.New("database", file)
 
 	// Ensure we have some minimal caching and file guarantees

@@ -1,12 +1,62 @@
 package trie
 
 import (
-	//"fmt"
+	"bytes"
+	"fmt"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/rlp"
 )
+
+func TestRebuild(t *testing.T) {
+	db := ethdb.NewMemDatabase()
+	defer db.Close()
+	bucket := []byte("AT")
+	writeBlockNr := uint64(0)
+	tr := New(common.Hash{}, bucket, false)
+	l := NewList()
+	tr.MakeListed(l)
+
+	keys := []string{
+		"FIRSTFIRSTFIRSTFIRSTFIRSTFIRSTFI",
+		"SECONDSECONDSECONDSECONDSECONDSE",
+		"FISECONDSECONDSECONDSECONDSECOND",
+		"FISECONDSECONDSECONDSECONDSECONB",
+		"THIRDTHIRDTHIRDTHIRDTHIRDTHIRDTH",
+	}
+	values := []string{
+		"FIRST",
+		"SECOND",
+		"THIRD",
+		"FORTH",
+		"FIRTH",
+	}
+
+	for i := 0; i < len(keys); i++ {
+		key := []byte(keys[i])
+		value := []byte(values[i])
+		v1, err := rlp.EncodeToBytes(bytes.TrimLeft(value, "\x00"))
+		if err != nil {
+			t.Errorf("Could not encode value: %v", err)
+		}
+		tr.TryUpdate(db, key, v1, 0)
+		tr.PrintTrie()
+		root1 := tr.Root()
+		fmt.Printf("Root1: %x\n", tr.Root())
+		v1, err = EncodeAsValue(v1)
+		if err != nil {
+			t.Errorf("Could not encode value: %v", err)
+		}
+		db.PutS(bucket, key, v1, writeBlockNr)
+		db.Commit()
+		t1 := New(common.BytesToHash(root1), bucket, false)
+		t1.MakeListed(l)
+		t1.Rebuild(db, 0)
+		fmt.Printf("\n\n")
+	}
+}
 
 // Put 1 embedded entry into the database and try to resolve it
 func TestResolve1Embedded(t *testing.T) {
