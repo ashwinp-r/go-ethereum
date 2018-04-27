@@ -495,8 +495,47 @@ func (self *StateDB) GetRefund() uint64 {
 	return self.refund
 }
 
-
 func (s *StateDB) finalise(deleteEmptyObjects bool, stateWriter StateWriter) error {
+	return s.Commit(deleteEmptyObjects, stateWriter)
+}
+
+// Finalise finalises the state by removing the self destructed objects
+// and clears the journal as well as the refunds.
+func (s *StateDB) Commit(deleteEmptyObjects bool, stateWriter StateWriter) error {
+	for addr := range s.journal.dirties {
+		s.stateObjectsDirty[addr] = struct{}{}
+	}
+	for addr := range s.stateObjectsDirty {
+		stateObject, exists := s.stateObjects[addr]
+		if !exists {
+			continue
+		}
+		if stateObject.suicided || (deleteEmptyObjects && stateObject.empty()) {
+			if err := stateWriter.DeleteAccount(&addr); err != nil {
+				return err
+			}
+			stateObject.deleted = true
+		} else {
+			// Write any contract code associated with the state object
+			if stateObject.code != nil && stateObject.dirtyCode {
+				if err := stateWriter.UpdateAccountCode(common.BytesToHash(stateObject.CodeHash()), stateObject.code); err != nil {
+					return err
+				}
+			}
+			if err := stateObject.updateTrie(stateWriter); err != nil {
+				return err
+			}
+			if err := stateWriter.UpdateAccountData(&addr, &stateObject.data); err != nil {
+				return err
+			}
+		}		
+	}
+	// Invalidate journal because reverting across transactions is not allowed.
+	s.ClearJournalAndRefund()
+	return nil
+}
+
+func (s *StateDB) finalise1(deleteEmptyObjects bool, stateWriter StateWriter) error {
 	for addr := range s.journal.dirties {
 		stateObject, exist := s.stateObjects[addr]
 		if !exist {
@@ -530,7 +569,7 @@ func (s *StateDB) finalise(deleteEmptyObjects bool, stateWriter StateWriter) err
 
 // Finalise finalises the state by removing the self destructed objects
 // and clears the journal as well as the refunds.
-func (s *StateDB) Commit(deleteEmptyObjects bool, stateWriter StateWriter) error {
+func (s *StateDB) Commit1(deleteEmptyObjects bool, stateWriter StateWriter) error {
 	for addr := range s.journal.dirties {
 		s.stateObjectsDirty[addr] = struct{}{}
 	}

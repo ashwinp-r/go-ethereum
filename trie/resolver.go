@@ -151,7 +151,7 @@ type rebuidData struct {
 	hashes bool
 	key_set bool
 	startLevel int
-	nodeStack [Levels+1]node
+	nodeStack [Levels+1]shortNode
 	vertical [Levels+1]fullNode
 	fillCount [Levels+1]int
 }
@@ -170,7 +170,9 @@ func (r *rebuidData) rebuildInsert(k, v []byte, h *hasher) error {
 				startLevel = stopLevel
 			}
 			hex := keybytesToHex(r.key[:])
-			r.nodeStack[startLevel+1] = &shortNode{Key: hexToCompact(hex[startLevel+1:]), Val: valueNode(r.value)}
+			r.nodeStack[startLevel+1].Key = hexToCompact(hex[startLevel+1:])
+			r.nodeStack[startLevel+1].Val = valueNode(r.value)
+			r.nodeStack[startLevel+1].setcache(nil)
 			r.fillCount[startLevel+1] = 1
 			rhIndex := prefixLen(hex, r.resolveHex)
 			for level := startLevel; level >= stopLevel; level-- {
@@ -182,13 +184,9 @@ func (r *rebuidData) rebuildInsert(k, v []byte, h *hasher) error {
 				}
 				if r.fillCount[level+1] == 1 {
 					// Short node, needs to be promoted to the level above
-					short, ok := r.nodeStack[level+1].(*shortNode)
-					var newShort *shortNode
-					if ok {
-						newShort = &shortNode{Key: hexToCompact(append([]byte{keynibble}, compactToHex(short.Key)...)), Val: short.Val}
-					} else {
-						// r.nodeStack[level+1] is a value node
-						newShort = &shortNode{Key: hexToCompact([]byte{keynibble, 16}), Val: r.nodeStack[level+1]}
+					short := &r.nodeStack[level+1]
+					if short.Key == nil {
+						short = nil
 					}
 					var hn node
 					var err error
@@ -200,11 +198,18 @@ func (r *rebuidData) rebuildInsert(k, v []byte, h *hasher) error {
 						}
 					}
 					if onResolvingPath {
-						r.vertical[level].Children[keynibble] = short
+						if short != nil {
+							c := short.copy()
+							r.vertical[level].Children[keynibble] = c
+						} else {
+							r.vertical[level].Children[keynibble] = nil
+						}
 					} else {
 						r.vertical[level].Children[keynibble] = hn
 					}
-					r.nodeStack[level] = newShort
+					r.nodeStack[level].Key = hexToCompact(append([]byte{keynibble}, compactToHex(short.Key)...))
+					r.nodeStack[level].Val = short.Val
+					r.nodeStack[level].setcache(nil)
 					r.fillCount[level]++
 					if short != nil && r.hashes && level <= 4 && compactLen(short.Key) + level >= 4 {
 						hash, ok := hn.(hashNode)
@@ -214,7 +219,9 @@ func (r *rebuidData) rebuildInsert(k, v []byte, h *hasher) error {
 						r.dbw.PutHash(hashIdx, hash)
 					}
 					if level >= r.pos {
-						r.nodeStack[level+1] = nil
+						r.nodeStack[level+1].Key = nil
+						r.nodeStack[level+1].Val = nil
+						r.nodeStack[level+1].setcache(nil)
 						r.fillCount[level+1] = 0
 						for i := 0; i < 17; i++ {
 							r.vertical[level+1].Children[i] = nil
@@ -234,17 +241,21 @@ func (r *rebuidData) rebuildInsert(k, v []byte, h *hasher) error {
 					}
 					r.dbw.PutHash(hashIdx, hash)
 				}
+				r.nodeStack[level].Key = hexToCompact([]byte{keynibble})
+				r.nodeStack[level].setcache(nil)
 				if onResolvingPath {
 					c := r.vertical[level+1].copy()
 					r.vertical[level].Children[keynibble] = c
-					r.nodeStack[level] = &shortNode{Key: hexToCompact([]byte{keynibble}), Val: c}
+					r.nodeStack[level].Val = c
 				} else {
 					r.vertical[level].Children[keynibble] = hn
-					r.nodeStack[level] = &shortNode{Key: hexToCompact([]byte{keynibble}), Val: hn}
+					r.nodeStack[level].Val = hn
 				}
 				r.fillCount[level]++
 				if level >= r.pos {
-					r.nodeStack[level+1] = nil
+					r.nodeStack[level+1].Key = nil
+					r.nodeStack[level+1].Val = nil
+					r.nodeStack[level+1].setcache(nil)
 					r.fillCount[level+1] = 0
 					for i := 0; i < 17; i++ {
 						r.vertical[level+1].Children[i] = nil
@@ -296,7 +307,7 @@ type TrieResolver struct {
 	key [32]byte
 	value []byte
 	key_set bool
-	nodeStack [Levels+1]node
+	nodeStack [Levels+1]shortNode
 	vertical [Levels+1]fullNode
 	fillCount [Levels+1]int
 	startLevel int
@@ -404,7 +415,9 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 		startLevel = stopLevel
 	}
 	hex := keybytesToHex(tr.key[:])
-	tr.nodeStack[startLevel+1] = &shortNode{Key: hexToCompact(hex[startLevel+1:]), Val: valueNode(tr.value)}
+	tr.nodeStack[startLevel+1].Key = hexToCompact(hex[startLevel+1:])
+	tr.nodeStack[startLevel+1].Val = valueNode(tr.value)
+	tr.nodeStack[startLevel+1].setcache(nil)
 	tr.fillCount[startLevel+1] = 1
 	// Adjust rhIndices if needed
 	if tr.rhIndexGt < tr.resolveHexes.Len() {
@@ -437,29 +450,34 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 		}
 		if tr.fillCount[level+1] == 1 {
 			// Short node, needs to be promoted to the level above
-			short, ok := tr.nodeStack[level+1].(*shortNode)
-			var newShort *shortNode
-			if ok {
-				newShort = &shortNode{Key: hexToCompact(append([]byte{keynibble}, compactToHex(short.Key)...)), Val: short.Val}
-			} else {
-				// r.nodeStack[level+1] is a value node
-				newShort = &shortNode{Key: hexToCompact([]byte{keynibble, 16}), Val: tr.nodeStack[level+1]}
+			short := &tr.nodeStack[level+1]
+			if short.Key == nil {
+				short = nil
 			}
 			var hn node
 			var err error
 			if short != nil && (!onResolvingPath || tr.hashes && level <= 4 && compactLen(short.Key) + level >= 4) {
-				//short.setcache(nil)
+				short.setcache(nil)
 				hn, err = tr.h.hash(short, false)
 				if err != nil {
 					return err
 				}
 			}
 			if onResolvingPath {
-				tr.vertical[level].Children[keynibble] = short
+				if short != nil {
+					c := short.copy()
+					tr.vertical[level].Children[keynibble] = c
+				} else {
+					tr.vertical[level].Children[keynibble] = nil
+				}
 			} else {
 				tr.vertical[level].Children[keynibble] = hn
 			}
-			tr.nodeStack[level] = newShort
+			if short != nil {
+				tr.nodeStack[level].Key = hexToCompact(append([]byte{keynibble}, compactToHex(short.Key)...))
+				tr.nodeStack[level].Val = short.Val
+				tr.nodeStack[level].setcache(nil)
+			}
 			tr.fillCount[level]++
 			if short != nil && tr.hashes && level <= 4 && compactLen(short.Key) + level >= 4 {
 				hash, ok := hn.(hashNode)
@@ -469,7 +487,8 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 				tr.dbw.PutHash(hashIdx, hash)
 			}
 			if level >= tc.resolvePos {
-				tr.nodeStack[level+1] = nil
+				tr.nodeStack[level+1].Key = nil
+				tr.nodeStack[level+1].Val = nil
 				tr.fillCount[level+1] = 0
 				for i := 0; i < 17; i++ {
 					tr.vertical[level+1].Children[i] = nil
@@ -489,18 +508,22 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 			}
 			tr.dbw.PutHash(hashIdx, hash)
 		}
+		tr.nodeStack[level].Key = hexToCompact([]byte{keynibble})
+		tr.nodeStack[level].setcache(nil)
 		if onResolvingPath {
 			c := tr.vertical[level+1].copy()
 			c.setcache(nil)
 			tr.vertical[level].Children[keynibble] = c
-			tr.nodeStack[level] = &shortNode{Key: hexToCompact([]byte{keynibble}), Val: c}
+			tr.nodeStack[level].Val = c
 		} else {
 			tr.vertical[level].Children[keynibble] = hn
-			tr.nodeStack[level] = &shortNode{Key: hexToCompact([]byte{keynibble}), Val: hn}
+			tr.nodeStack[level].Val = hn
 		}
 		tr.fillCount[level]++
 		if level >= tc.resolvePos {
-			tr.nodeStack[level+1] = nil
+			tr.nodeStack[level+1].Key = nil
+			tr.nodeStack[level+1].Val = nil
+			tr.nodeStack[level+1].setcache(nil)
 			tr.fillCount[level+1] = 0
 			tr.vertical[level+1].setcache(nil)
 			for i := 0; i < 17; i++ {
@@ -512,7 +535,7 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 	if k == nil {
 		var root node
 		if tr.fillCount[tc.resolvePos] == 1 {
-			root = tr.nodeStack[tc.resolvePos]
+			root = tr.nodeStack[tc.resolvePos].copy()
 		} else if tr.fillCount[tc.resolvePos] > 1 {
 			root = tr.vertical[tc.resolvePos].copy()
 		}
@@ -537,7 +560,9 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 		}
 		tc.resolved = root
 		for i := 0; i <= Levels; i++ {
-			tr.nodeStack[i] = nil
+			tr.nodeStack[i].Key = nil
+			tr.nodeStack[i].Val = nil
+			tr.nodeStack[i].setcache(nil)
 			tr.vertical[i].setcache(nil)
 			for j := 0; j<17; j++ {
 				tr.vertical[i].Children[j] = nil
@@ -602,7 +627,7 @@ func (tc *TrieContinuation) ResolveWithDb(db ethdb.Database, blockNr uint64) err
 	}
 	var root node
 	if r.fillCount[tc.resolvePos] == 1 {
-		root = r.nodeStack[tc.resolvePos]
+		root = &r.nodeStack[tc.resolvePos]
 	} else if r.fillCount[tc.resolvePos] > 1 {
 		root = &r.vertical[tc.resolvePos]
 	}
@@ -649,7 +674,7 @@ func (t *Trie) rebuildHashes(db ethdb.Database, key []byte, pos int, blockNr uin
 	}
 	var root node
 	if r.fillCount[pos] == 1 {
-		root = r.nodeStack[pos]
+		root = &r.nodeStack[pos]
 	} else if r.fillCount[pos] > 1 {
 		root = &r.vertical[pos]
 	}
