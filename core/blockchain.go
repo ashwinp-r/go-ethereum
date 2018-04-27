@@ -1102,7 +1102,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		if readBlockNr == 4549571 {
 			bc.vmConfig.Debug = false
 			bc.vmConfig.Tracer = nil
-			file, err := os.Open("structlogs.txt")
+			file, err := os.OpenFile("structlogs.txt", os.O_RDWR|os.O_CREATE, 0755)
 			if err != nil {
 				panic(err)
 			}
