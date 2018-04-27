@@ -479,12 +479,19 @@ func (tds *TrieDbState) PruneTries() {
 	prevMemStats = m
 }
 
+type NoopStateWriter struct {
+}
+
 type TrieStateWriter struct {
 	tds *TrieDbState
 }
 
 type DbStateWriter struct {
 	tds *TrieDbState
+}
+
+func (tds *TrieDbState) NoopStateWriter() *NoopStateWriter {
+	return &NoopStateWriter{}
 }
 
 func (tds *TrieDbState) TrieStateWriter() *TrieStateWriter {
@@ -496,6 +503,10 @@ func (tds *TrieDbState) DbStateWriter() *DbStateWriter {
 }
 
 var emptyRoot = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
+
+func (nsw *NoopStateWriter) UpdateAccountData(address *common.Address, account *Account) error {
+	return nil
+}
 
 func (tsw *TrieStateWriter) UpdateAccountData(address *common.Address, account *Account) error {
 	tsw.tds.accountUpdates[*address] = account
@@ -519,6 +530,10 @@ func (dsw *DbStateWriter) UpdateAccountData(address *common.Address, account *Ac
 	return dsw.tds.db.TrieDB().PutS(AccountsBucket, seckey, data, dsw.tds.blockNr)
 }
 
+func (tsw *NoopStateWriter) DeleteAccount(address *common.Address, deleteStorage bool) error {
+	return nil
+}
+
 func (tsw *TrieStateWriter) DeleteAccount(address *common.Address, deleteStorage bool) error {
 	if deleteStorage {
 		storageTrie, err := tsw.tds.getStorageTrie(address)
@@ -540,12 +555,20 @@ func (dsw *DbStateWriter) DeleteAccount(address *common.Address, deleteStorage b
 	return dsw.tds.db.TrieDB().PutS(AccountsBucket, seckey, []byte{}, dsw.tds.blockNr)
 }
 
+func (tsw *NoopStateWriter) UpdateAccountCode(codeHash common.Hash, code []byte) error {
+	return nil
+}
+
 func (tsw *TrieStateWriter) UpdateAccountCode(codeHash common.Hash, code []byte) error {
 	return nil
 }
 
 func (dsw *DbStateWriter) UpdateAccountCode(codeHash common.Hash, code []byte) error {
 	return dsw.tds.db.TrieDB().Put(CodeBucket, codeHash[:], code)
+}
+
+func (tsw *NoopStateWriter) WriteAccountStorage(address *common.Address, key, value *common.Hash) error {
+	return nil
 }
 
 func (tsw *TrieStateWriter) WriteAccountStorage(address *common.Address, key, value *common.Hash) error {

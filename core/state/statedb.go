@@ -116,7 +116,7 @@ func (self *StateDB) Reset() error {
 	self.logs = make(map[common.Hash][]*types.Log)
 	self.logSize = 0
 	self.preimages = make(map[common.Hash][]byte)
-	self.ClearJournalAndRefund()
+	self.clearJournalAndRefund()
 	return nil
 }
 
@@ -159,9 +159,6 @@ func (self *StateDB) Preimages() map[common.Hash][]byte {
 }
 
 func (self *StateDB) AddRefund(gas uint64) {
-	if self.thash == common.HexToHash("0xf555c250dded7f78fed6a3193c4f5c1f7bba3838456d42d51bc41ab071a447d7") {
-		fmt.Printf("AddRefund %d\n", gas)
-	}
 	self.journal.append(refundChange{prev: self.refund})
 	self.refund += gas
 }
@@ -495,9 +492,6 @@ func (self *StateDB) RevertToSnapshot(revid int) {
 
 // GetRefund returns the current value of the refund counter.
 func (self *StateDB) GetRefund() uint64 {
-	if self.thash == common.HexToHash("0xf555c250dded7f78fed6a3193c4f5c1f7bba3838456d42d51bc41ab071a447d7") {
-		fmt.Printf("GetRefund %d\n", self.refund)
-	}
 	return self.refund
 }
 
@@ -530,7 +524,7 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool, stateWriter StateWriter) err
 		s.stateObjectsDirty[addr] = struct{}{}
 	}
 	// Invalidate journal because reverting across transactions is not allowed.
-	s.ClearJournalAndRefund()
+	s.clearJournalAndRefund()
 	return nil
 }
 
@@ -564,7 +558,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool, stateWriter StateWriter) error
 		}
 	}
 	// Invalidate journal because reverting across transactions is not allowed.
-	s.ClearJournalAndRefund()
+	s.clearJournalAndRefund()
 	return nil
 }
 
@@ -600,7 +594,7 @@ func (self *StateDB) Prepare(thash, bhash common.Hash, ti int) {
 // under any circumstances.
 func (s *StateDB) DeleteSuicides() {
 	// Reset refund so that any used-gas calculations can use this method.
-	s.ClearJournalAndRefund()
+	s.clearJournalAndRefund()
 
 	for addr, _ := range s.stateObjectsDirty {
 		stateObject := s.stateObjects[addr]
@@ -614,13 +608,7 @@ func (s *StateDB) DeleteSuicides() {
 	}
 }
 
-func (s *StateDB) ClearJournalAndRefund() {
-	if s.thash == common.HexToHash("0xf555c250dded7f78fed6a3193c4f5c1f7bba3838456d42d51bc41ab071a447d7") {
-		fmt.Printf("ClearJournalAndRefund %d -> 0\n", s.refund)
-	}
-	//for addr := range s.journal.dirties {
-	//	s.stateObjectsDirty[addr] = struct{}{}
-	//}
+func (s *StateDB) clearJournalAndRefund() {
 	s.journal = newJournal()
 	s.validRevisions = s.validRevisions[:0]
 	s.refund = 0
