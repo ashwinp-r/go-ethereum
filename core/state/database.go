@@ -56,7 +56,7 @@ type StateReader interface {
 type StateWriter interface {
 	UpdateAccountData(address *common.Address, account *Account) error
 	UpdateAccountCode(codeHash common.Hash, code []byte) error
-	DeleteAccount(address *common.Address, deleteStorage bool) error
+	DeleteAccount(address *common.Address) error
 	WriteAccountStorage(address *common.Address, key, value *common.Hash) error
 }
 
@@ -139,7 +139,7 @@ func (dbs *DbState) UpdateAccountData(address *common.Address, account *Account)
 	return dbs.db.PutS(AccountsBucket, seckey[:], data, dbs.blockNr)
 }
 
-func (dbs *DbState) DeleteAccount(address *common.Address, deleteStorage bool) error {
+func (dbs *DbState) DeleteAccount(address *common.Address) error {
 	seckey := crypto.Keccak256Hash(address[:])
 	return dbs.db.PutS(AccountsBucket, seckey[:], []byte{}, dbs.blockNr)
 }
@@ -530,24 +530,22 @@ func (dsw *DbStateWriter) UpdateAccountData(address *common.Address, account *Ac
 	return dsw.tds.db.TrieDB().PutS(AccountsBucket, seckey, data, dsw.tds.blockNr)
 }
 
-func (tsw *NoopStateWriter) DeleteAccount(address *common.Address, deleteStorage bool) error {
+func (tsw *NoopStateWriter) DeleteAccount(address *common.Address) error {
 	return nil
 }
 
-func (tsw *TrieStateWriter) DeleteAccount(address *common.Address, deleteStorage bool) error {
-	if deleteStorage {
-		storageTrie, err := tsw.tds.getStorageTrie(address)
-		if err != nil {
-			return err
-		}
-		storageTrie.Unlink()
-		delete(tsw.tds.storageTries, string(address[:]))
+func (tsw *TrieStateWriter) DeleteAccount(address *common.Address) error {
+	storageTrie, err := tsw.tds.getStorageTrie(address)
+	if err != nil {
+		return err
 	}
+	storageTrie.Unlink()
+	delete(tsw.tds.storageTries, string(address[:]))
 	tsw.tds.accountDeletes[*address] = struct{}{}
 	return nil
 }
 
-func (dsw *DbStateWriter) DeleteAccount(address *common.Address, deleteStorage bool) error {
+func (dsw *DbStateWriter) DeleteAccount(address *common.Address) error {
 	seckey, err := dsw.tds.HashKey(address[:])
 	if err != nil {
 		return err
