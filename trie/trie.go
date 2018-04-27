@@ -529,9 +529,10 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 				c.n = n
 				return done
 			}
-			newnode := &shortNode{n.Key, c.n, t.newFlag()}
+			n.Val = c.n
+			n.setcache(nil)
 			c.updated = true
-			c.n = newnode
+			c.n = n
 			return done
 		}
 		// Otherwise branch out at the index where they differ.
@@ -557,9 +558,11 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 			return true
 		}
 		// Otherwise, replace it with a short node leading up to the branch.
-		newnode := &shortNode{hexToCompact(key[pos:pos+matchlen]), branch, t.newFlag()}
+		n.Key = hexToCompact(key[pos:pos+matchlen])
+		n.Val = branch
+		n.setcache(nil)
 		c.updated = true
-		c.n = newnode
+		c.n = n
 		return true
 
 	case *duoNode:
@@ -571,11 +574,10 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 				c.n = n
 				return done
 			}
-			newnode := n.copy()
-			newnode.flags = t.newFlag()
-			newnode.child1 = c.n
+			n.child1 = c.n
+			n.setcache(nil)
 			c.updated = true
-			c.n = newnode
+			c.n = n
 			return done
 		case i2:
 			done := t.insert(n.child2, key, pos+1, value, c)
@@ -583,11 +585,10 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 				c.n = n
 				return done
 			}
-			newnode := n.copy()
-			newnode.flags = t.newFlag()
-			newnode.child2 = c.n
+			n.child2 = c.n
+			n.setcache(nil)
 			c.updated = true
-			c.n = newnode
+			c.n = n
 			return done
 		default:
 			done := t.insert(nil, key, pos+1, value, c)
@@ -610,11 +611,10 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 			c.n = n
 			return done
 		}
-		newnode := n.copy()
-		newnode.flags = t.newFlag()
-		newnode.Children[key[pos]] = c.n
+		n.Children[key[pos]] = c.n
+		n.setcache(nil)
 		c.updated = true
-		c.n = newnode
+		c.n = n
 		return done
 
 	case nil:
@@ -804,9 +804,10 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 			c.n = newnode
 			return done
 		}
-		newnode := &shortNode{n.Key, child, t.newFlag()}
+		n.Val = child
+		n.setcache(nil)
 		c.updated = true
-		c.n = newnode
+		c.n = n
 		return done
 
 	case *duoNode:
@@ -834,11 +835,10 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 				c.n = n
 				return done
 			}
-			newnode := n.copy()
-			newnode.flags = t.newFlag()
-			newnode.child1 = nn
+			n.child1 = nn
+			n.setcache(nil)
 			c.updated = true
-			c.n = newnode
+			c.n = n
 			return done
 		case i2:
 			done := t.delete(n.child2, key, keyStart+1, c)
@@ -862,11 +862,10 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 				c.n = n
 				return done
 			}
-			newnode := n.copy()
-			newnode.flags = t.newFlag()
-			newnode.child2 = nn
+			n.child2 = nn
+			n.setcache(nil)
 			c.updated = true
-			c.n = newnode
+			c.n = n
 			return done
 		default:
 			c.updated = false
@@ -943,11 +942,10 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 			return done
 		}
 		// n still contains at least three values and cannot be reduced.
-		newnode := n.copy()
-		newnode.flags = t.newFlag()
-		newnode.Children[key[keyStart]] = nn
+		n.Children[key[keyStart]] = nn
+		n.setcache(nil)
 		c.updated = true
-		c.n = newnode
+		c.n = n
 		return done
 
 	case valueNode:
@@ -966,11 +964,6 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 		// the path to the value in the trie.
 		if c.resolved == nil || !bytes.Equal(key, c.resolveKey) || keyStart != c.resolvePos {
 			// It is either unresolved, or resolved by other request
-			//if c.resolved != nil {
-			//	fmt.Printf("key %x, keyStart %d, c.resolveKey %x, c.resolvePos %d\n", key, keyStart, c.resolveKey, c.resolvePos)
-			//} else {
-			//	fmt.Printf("(delete) Requested key %x, keyStart %d\n", key, keyStart)
-			//}
 			c.resolved = nil
 			c.resolveKey = key
 			c.resolvePos = keyStart
@@ -993,51 +986,6 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 	default:
 		panic(fmt.Sprintf("%T: invalid node: %v (%v)", n, n, key[:keyStart]))
 	}
-}
-
-func (t *Trie) IsMalformed() bool {
-	return isMalformed(t.root)
-}
-
-func isMalformed(n node) bool {
-	switch n := n.(type) {
-	case *shortNode:
-		if n.Val == nil {
-			fmt.Printf("Malformed short nil\n")
-			return true
-		}
-		_, ok := n.Val.(*shortNode)
-		if ok {
-			fmt.Printf("Malformed short short\n")
-			return true
-		}
-		return isMalformed(n.Val)
-	case *duoNode:
-		if n.child1 == nil || n.child2 == nil {
-			fmt.Printf("Malformed duoChild\n")
-			return true
-		}
-		return isMalformed(n.child1) || isMalformed(n.child2)
-	case *fullNode:
-		count := 0
-		for _, child := range n.Children {
-			if child != nil {
-				count++
-			}
-		}
-		if count < 2 {
-			fmt.Printf("Malformed fullChild %d\n", count)
-			return true
-		}
-		for _, child := range n.Children {
-			if child != nil {
-				if isMalformed(child) {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }
 
 func concat(s1 []byte, s2 ...byte) []byte {
