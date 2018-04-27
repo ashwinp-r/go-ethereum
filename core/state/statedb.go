@@ -501,7 +501,7 @@ func (self *StateDB) GetRefund() uint64 {
 	return self.refund
 }
 
-func (s *StateDB) finalise(deleteEmptyObjects bool, stateWriter StateWriter) error {
+func (s *StateDB) Finalise(deleteEmptyObjects bool, stateWriter StateWriter) error {
 	for addr := range s.journal.dirties {
 		stateObject, exist := s.stateObjects[addr]
 		if !exist {
@@ -527,6 +527,7 @@ func (s *StateDB) finalise(deleteEmptyObjects bool, stateWriter StateWriter) err
 				return err
 			}
 		}
+		s.stateObjectsDirty[addr] = struct{}{}
 	}
 	// Invalidate journal because reverting across transactions is not allowed.
 	s.ClearJournalAndRefund()
@@ -571,7 +572,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool, stateWriter StateWriter) error
 // It is called in between transactions to get the root hash that
 // goes into transaction receipts.
 func (tds *TrieDbState) IntermediateRoot(s *StateDB, deleteEmptyObjects bool) (common.Hash, error) {
-	if err := s.finalise(deleteEmptyObjects, tds.TrieStateWriter()); err != nil {
+	if err := s.Finalise(deleteEmptyObjects, tds.TrieStateWriter()); err != nil {
 		return common.Hash{}, err
 	}
 	return tds.TrieRoot()
@@ -617,9 +618,9 @@ func (s *StateDB) ClearJournalAndRefund() {
 	if s.thash == common.HexToHash("0xf555c250dded7f78fed6a3193c4f5c1f7bba3838456d42d51bc41ab071a447d7") {
 		fmt.Printf("ClearJournalAndRefund %d -> 0\n", s.refund)
 	}
-	for addr := range s.journal.dirties {
-		s.stateObjectsDirty[addr] = struct{}{}
-	}
+	//for addr := range s.journal.dirties {
+	//	s.stateObjectsDirty[addr] = struct{}{}
+	//}
 	s.journal = newJournal()
 	s.validRevisions = s.validRevisions[:0]
 	s.refund = 0
