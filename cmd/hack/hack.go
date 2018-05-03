@@ -76,8 +76,8 @@ func parseFloat64(str string) float64 {
 	return v
 }
 
-func readData() (blocks []float64, hours []float64, dbsize []float64, trienodes []float64, heap []float64) {
-	err := util.File.ReadByLines("geth.csv", func(line string) error {
+func readData(filename string) (blocks []float64, hours []float64, dbsize []float64, trienodes []float64, heap []float64) {
+	err := util.File.ReadByLines(filename, func(line string) error {
 		parts := strings.Split(line, ",")
 		blocks = append(blocks, parseFloat64(strings.Trim(parts[0], " ")))
 		hours = append(hours, parseFloat64(strings.Trim(parts[1], " ")))
@@ -111,9 +111,10 @@ func days() []chart.GridLine {
 }
 
 func mychart() {
-	blocks, hours, dbsize, trienodes, heap := readData()
+	blocks, hours, dbsize, trienodes, heap := readData("geth1.csv")
+	blocks0, hours0, _, _, _ := readData("geth.csv")
 	mainSeries := &chart.ContinuousSeries{
-		Name: "Cumulative sync time",
+		Name: "Cumulative sync time (SSD)",
 		Style: chart.Style{
 			Show:        true,
 			StrokeColor: chart.ColorBlue,
@@ -122,15 +123,25 @@ func mychart() {
 		XValues: blocks,
 		YValues: hours,
 	}
+	hddSeries := &chart.ContinuousSeries{
+		Name: "Cumulative sync time (HDD)",
+		Style: chart.Style{
+			Show:        true,
+			StrokeColor: chart.ColorRed,
+			FillColor:   chart.ColorRed.WithAlpha(100),
+		},
+		XValues: blocks0,
+		YValues: hours0,
+	}
 	dbsizeSeries := &chart.ContinuousSeries{
 		Name: "Database size",
 		Style: chart.Style{
 			Show:        true,
-			StrokeColor: chart.ColorRed,
+			StrokeColor: chart.ColorBlack,
 		},
 		YAxis:   chart.YAxisSecondary,
 		XValues: blocks,
-		YValues: dbsize,		
+		YValues: dbsize,
 	}
 
 	graph1 := chart.Chart{
@@ -185,6 +196,7 @@ func mychart() {
 		},
 		Series: []chart.Series{
 			mainSeries,
+			hddSeries,
 			dbsizeSeries,
 		},
 	}
@@ -249,7 +261,7 @@ func mychart() {
 				TextRotationDegrees: 45.0,
 			},
 			ValueFormatter: func(v interface{}) string {
-				return fmt.Sprintf("%d m", int(v.(float64)))
+				return fmt.Sprintf("%.1f m", v.(float64))
 			},
 		},
 		XAxis: chart.XAxis{
@@ -668,7 +680,7 @@ func main() {
  	//	panic(fmt.Sprintf("Could not open file: %s", err))
  	//}
  	//defer db.Close()
- 	testRewind()
+ 	mychart()
  	//testRebuild()
 }
 

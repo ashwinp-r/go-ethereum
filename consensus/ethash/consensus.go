@@ -517,15 +517,10 @@ func (ethash *Ethash) Finalize(chain consensus.ChainReader, header *types.Header
 	// Accumulate any block and uncle rewards and commit the final state root
 	accumulateRewards(chain.Config(), state, header, uncles)
 	var err error
-	if chain.Config().IsByzantium(header.Number) {
-		header.Root, err = tds.FinalRoot(state, chain.Config().IsEIP158(header.Number))
-	} else {
-		header.Root, err = tds.IntermediateRoot(state, chain.Config().IsEIP158(header.Number))
-	}
+	header.Root, err = tds.IntermediateRoot(state, chain.Config().IsEIP158(header.Number))
 	if err != nil {
 		return nil, err
 	}
-
 	// Header seems complete, assemble into a block and return
 	return types.NewBlock(header, txs, uncles, receipts), nil
 }

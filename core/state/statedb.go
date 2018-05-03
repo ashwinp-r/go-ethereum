@@ -370,6 +370,7 @@ func (self *StateDB) createObject(addr common.Address) (newobj, prev *stateObjec
 	prev = self.getStateObject(addr)
 	newobj = newObject(self, addr, Account{})
 	newobj.setNonce(0) // sets the object to dirty
+	newobj.data.Root.SetBytes(emptyRoot[:])
 	if prev == nil {
 		self.journal.append(createObjectChange{account: &addr})
 	} else {
@@ -536,6 +537,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool, stateWriter StateWriter) error
 	}
 	for addr, stateObject := range s.stateObjects {
 		_, isDirty := s.stateObjectsDirty[addr]
+		//fmt.Printf("%x %d %x %x\n", addr[:], stateObject.data.Balance, stateObject.data.CodeHash, stateObject.data.Root[:])
 
 		if stateObject.suicided || (isDirty && deleteEmptyObjects && stateObject.empty()) {
 			if err := stateWriter.DeleteAccount(&addr); err != nil {
@@ -567,13 +569,6 @@ func (s *StateDB) Commit(deleteEmptyObjects bool, stateWriter StateWriter) error
 // goes into transaction receipts.
 func (tds *TrieDbState) IntermediateRoot(s *StateDB, deleteEmptyObjects bool) (common.Hash, error) {
 	if err := s.Finalise(deleteEmptyObjects, tds.TrieStateWriter()); err != nil {
-		return common.Hash{}, err
-	}
-	return tds.TrieRoot()
-}
-
-func (tds *TrieDbState) FinalRoot(s *StateDB, deleteEmptyObjects bool) (common.Hash, error) {
-	if err := s.Commit(deleteEmptyObjects, tds.TrieStateWriter()); err != nil {
 		return common.Hash{}, err
 	}
 	return tds.TrieRoot()

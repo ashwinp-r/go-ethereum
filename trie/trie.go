@@ -400,7 +400,7 @@ func (t *Trie) Update(db ethdb.Database, key, value []byte, blockNr uint64) {
 //
 // If a node was not found in the database, a MissingNodeError is returned.
 func (t *Trie) TryUpdate(db ethdb.Database, key, value []byte, blockNr uint64) error {
-	tc := t.UpdateAction(nil, key, value)
+	tc := t.UpdateAction(key, value)
 	for !tc.RunWithDb(db) {
 		if err := tc.ResolveWithDb(db, blockNr); err != nil {
 			return err
@@ -411,9 +411,8 @@ func (t *Trie) TryUpdate(db ethdb.Database, key, value []byte, blockNr uint64) e
 	return nil
 }
 
-func (t *Trie) UpdateAction(addr *common.Address, key, value []byte) *TrieContinuation {
+func (t *Trie) UpdateAction(key, value []byte) *TrieContinuation {
 	var tc TrieContinuation
-	tc.addr = addr
 	tc.t = t
 	tc.key = keybytesToHex(key)
 	if len(value) != 0 {
@@ -445,7 +444,6 @@ func (tc *TrieContinuation) RunWithDb(db ethdb.Database) bool {
 	case TrieActionDelete:
 		done = tc.t.delete(tc.t.root, tc.key, 0, tc)
 	}
-	//fmt.Printf("done: %s, updated %s\n", done, tc.updated)
 	if tc.updated {
 		for _, touch := range tc.touched {
 			tc.t.touch(db, touch.np, touch.key, touch.pos)
@@ -470,7 +468,6 @@ type Touch struct {
 }
 
 type TrieContinuation struct {
-	addr *common.Address // Address of the storage tree, nil if this is the account trie
 	t *Trie              // trie to act upon
 	action TrieAction    // insert of delete
 	key []byte           // original key being inserted or deleted
@@ -482,10 +479,6 @@ type TrieContinuation struct {
 	n node               // Returned node after the operation is complete
 	updated bool         // Whether the trie was updated
 	touched []Touch      // Nodes touched during the operation, by level
-}
-
-func (tc *TrieContinuation) Address() *common.Address {
-	return tc.addr
 }
 
 func (tc *TrieContinuation) Trie() *Trie {
@@ -673,7 +666,7 @@ func (t *Trie) Delete(db ethdb.Database, key []byte, blockNr uint64) {
 // TryDelete removes any existing value for key from the trie.
 // If a node was not found in the database, a MissingNodeError is returned.
 func (t *Trie) TryDelete(db ethdb.Database, key []byte, blockNr uint64) error {
-	tc := t.DeleteAction(nil, key)
+	tc := t.DeleteAction(key)
 	for !tc.RunWithDb(db) {
 		if err := tc.ResolveWithDb(db, blockNr); err != nil {
 			return err
@@ -683,9 +676,8 @@ func (t *Trie) TryDelete(db ethdb.Database, key []byte, blockNr uint64) error {
 	return nil
 }
 
-func (t *Trie) DeleteAction(addr *common.Address, key []byte) *TrieContinuation {
+func (t *Trie) DeleteAction(key []byte) *TrieContinuation {
 	var tc TrieContinuation
-	tc.addr = addr
 	tc.t = t
 	tc.key = keybytesToHex(key)
 	tc.action = TrieActionDelete
