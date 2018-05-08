@@ -105,7 +105,7 @@ func (t *odrTrie) TryGet(db ethdb.Database, key []byte, blockNr uint64) ([]byte,
 	key = crypto.Keccak256(key)
 	var res []byte
 	err := t.do(key, func() (err error) {
-		res, err = t.trie.TryGet(db, key, blockNr)
+		res, _, err = t.trie.TryGet(db, key, blockNr)
 		return err
 	})
 	return res, err

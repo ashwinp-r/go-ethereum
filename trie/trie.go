@@ -117,7 +117,7 @@ func (t *Trie) NodeIterator(db ethdb.Database, start []byte, blockNr uint64) Nod
 // Get returns the value for key stored in the trie.
 // The value bytes must not be modified by the caller.
 func (t *Trie) Get(db ethdb.Database, key []byte, blockNr uint64) []byte {
-	res, err := t.TryGet(db, key, blockNr)
+	res, _, err := t.TryGet(db, key, blockNr)
 	if err != nil {
 		log.Error(fmt.Sprintf("Unhandled trie error: %v", err))
 	}
@@ -127,7 +127,7 @@ func (t *Trie) Get(db ethdb.Database, key []byte, blockNr uint64) []byte {
 // TryGet returns the value for key stored in the trie.
 // The value bytes must not be modified by the caller.
 // If a node was not found in the database, a MissingNodeError is returned.
-func (t *Trie) TryGet(db ethdb.Database, key []byte, blockNr uint64) ([]byte, error) {
+func (t *Trie) TryGet(db ethdb.Database, key []byte, blockNr uint64) ([]byte, bool, error) {
 	if t.nodeList != nil {
 		// We want t.root to be evaluated on exit, not now
 		defer func() { t.relistNodes(t.root) }()
@@ -135,12 +135,12 @@ func (t *Trie) TryGet(db ethdb.Database, key []byte, blockNr uint64) ([]byte, er
 	k := keybytesToHex(key)
 	value, gotValue, err := t.tryGet1(db, t.root, k, 0, blockNr)
 	if err != nil {
-		return value, err
+		return value, false, err
 	}
 	if !gotValue {
-		value, err = t.tryGet(db, t.root, k, 0, blockNr)
+		value, err = t.tryGet(db, t.root, key, 0, blockNr)
 	}
-	return value, err
+	return value, gotValue, err
 }
 
 func (t *Trie) emptyShortHash(db ethdb.Database, n *shortNode, level int, index uint32) {
@@ -338,7 +338,7 @@ func (t *Trie) relistNodes(n node) {
 }
 
 func (t *Trie) tryGet(dbr DatabaseReader, origNode node, key []byte, pos int, blockNr uint64) (value []byte, err error) {
-	val, err := dbr.GetAsOf(t.prefix, hexToKeybytes(key), blockNr)
+	val, err := dbr.GetAsOf(t.prefix, key, blockNr)
 	if err != nil || val == nil {
 		return nil, nil
 	}

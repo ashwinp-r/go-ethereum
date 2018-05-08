@@ -80,7 +80,8 @@ func (t *SecureTrie) Get(db ethdb.Database, key []byte, blockNr uint64) []byte {
 // The value bytes must not be modified by the caller.
 // If a node was not found in the database, a MissingNodeError is returned.
 func (t *SecureTrie) TryGet(db ethdb.Database, key []byte, blockNr uint64) ([]byte, error) {
-	return t.trie.TryGet(db, t.HashKey(key), blockNr)
+	value, _, err := t.trie.TryGet(db, t.HashKey(key), blockNr)
+	return value, err
 }
 
 // Update associates key with value in the trie. Subsequent calls to

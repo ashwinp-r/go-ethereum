@@ -398,9 +398,12 @@ func (tds *TrieDbState) ReadAccountData(address *common.Address) (*Account, erro
 	if err != nil {
 		return nil, err
 	}
-	enc, err := tds.t.TryGet(tds.db.TrieDB(), addrHash, tds.blockNr)
+	enc, gotValue, err := tds.t.TryGet(tds.db.TrieDB(), addrHash, tds.blockNr)
 	if err != nil {
 		return nil, err
+	}
+	if !gotValue {
+		fmt.Printf("DBREAD %x\n", address[:])
 	}
 	if enc == nil || len(enc) == 0 {
 		return nil, nil
@@ -457,7 +460,7 @@ func (tds *TrieDbState) ReadAccountStorage(address *common.Address, key *common.
 	if err != nil {
 		return nil, err
 	}
-	enc, err := t.TryGet(tds.db.TrieDB(), seckey, tds.blockNr)
+	enc, _, err := t.TryGet(tds.db.TrieDB(), seckey, tds.blockNr)
 	if err != nil {
 		return nil, err
 	}

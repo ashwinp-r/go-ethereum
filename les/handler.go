@@ -1096,7 +1096,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 // getAccount retrieves an account from the state based at root.
 func (pm *ProtocolManager) getAccount(tds *state.TrieDbState, root, hash common.Hash) (state.Account, error) {
 	trie := trie.New(root, state.AccountsBucket, false)
-	blob, err := trie.TryGet(tds.Database().TrieDB(), hash[:], 0 /* Replace with correct blockNr */)
+	blob, _, err := trie.TryGet(tds.Database().TrieDB(), hash[:], 0 /* Replace with correct blockNr */)
 	if err != nil {
 		return state.Account{}, err
 	}
