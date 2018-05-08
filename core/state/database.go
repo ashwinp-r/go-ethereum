@@ -20,7 +20,7 @@ import (
 	"bytes"
 	"fmt"
 	"runtime"
-	"runtime/debug"
+	//"runtime/debug"
 	//"sort"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -403,8 +403,8 @@ func (tds *TrieDbState) ReadAccountData(address *common.Address) (*Account, erro
 		return nil, err
 	}
 	if !gotValue {
-		fmt.Printf("DBREAD %x\n", address[:])
-		fmt.Printf("%s\n", debug.Stack())
+		//fmt.Printf("DBREAD %x\n", address[:])
+		//fmt.Printf("%s\n", debug.Stack())
 	}
 	if enc == nil || len(enc) == 0 {
 		return nil, nil

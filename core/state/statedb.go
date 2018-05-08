@@ -359,16 +359,16 @@ func (self *StateDB) setStateObject(object *stateObject) {
 func (self *StateDB) GetOrNewStateObject(addr common.Address) *stateObject {
 	stateObject := self.getStateObject(addr)
 	if stateObject == nil || stateObject.deleted {
-		stateObject, _ = self.createObject(addr)
+		stateObject, _ = self.createObject(addr, stateObject)
 	}
 	return stateObject
 }
 
 // createObject creates a new state object. If there is an existing account with
 // the given address, it is overwritten and returned as the second return value.
-func (self *StateDB) createObject(addr common.Address) (newobj, prev *stateObject) {
-	fmt.Printf("CREATE %x\n", addr[:])
-	prev = self.getStateObject(addr)
+func (self *StateDB) createObject(addr common.Address, previous *stateObject) (newobj, prev *stateObject) {
+	//fmt.Printf("CREATE %x\n", addr[:])
+	prev = previous
 	newobj = newObject(self, addr, Account{})
 	newobj.setNonce(0) // sets the object to dirty
 	newobj.data.Root.SetBytes(emptyRoot[:])
@@ -392,7 +392,7 @@ func (self *StateDB) createObject(addr common.Address) (newobj, prev *stateObjec
 //
 // Carrying over the balance ensures that Ether doesn't disappear.
 func (self *StateDB) CreateAccount(addr common.Address) {
-	new, prev := self.createObject(addr)
+	new, prev := self.createObject(addr, nil)
 	if prev != nil {
 		new.setBalance(prev.data.Balance)
 	}
