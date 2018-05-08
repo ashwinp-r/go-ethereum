@@ -56,6 +56,8 @@ type StateDB struct {
 	stateObjects      map[common.Address]*stateObject
 	stateObjectsDirty map[common.Address]struct{}
 
+	nilAccounts map[common.Address]struct{} // Remember non-existent account to avoid reading them again
+
 	// DB error.
 	// State objects are used by the consensus core and VM which are
 	// unable to deal with database-level errors. Any error that occurs
@@ -88,6 +90,7 @@ func New(stateReader StateReader) *StateDB {
 		stateReader:       stateReader,
 		stateObjects:      make(map[common.Address]*stateObject),
 		stateObjectsDirty: make(map[common.Address]struct{}),
+		nilAccounts:       make(map[common.Address]struct{}),
 		logs:              make(map[common.Hash][]*types.Log),
 		preimages:         make(map[common.Hash][]byte),
 		journal:           newJournal(),
@@ -215,6 +218,7 @@ func (self *StateDB) GetCodeSize(addr common.Address) int {
 	if err != nil {
 		self.setError(err)
 	}
+	stateObject.code = code
 	return len(code)
 }
 
@@ -322,12 +326,16 @@ func (self *StateDB) getStateObject(addr common.Address) (stateObject *stateObje
 	}
 
 	// Load the object from the database.
+	if _, ok := self.nilAccounts[addr]; ok {
+		return nil
+	}
 	account, err := self.stateReader.ReadAccountData(&addr)
 	if err != nil {
 		self.setError(err)
 		return nil
 	}
 	if account == nil {
+		self.nilAccounts[addr] = struct{}{}
 		return nil
 	}
 	// Insert into the live set.
@@ -435,6 +443,7 @@ func (self *StateDB) Copy() *StateDB {
 		stateReader:       self.stateReader,
 		stateObjects:      make(map[common.Address]*stateObject, len(self.journal.dirties)),
 		stateObjectsDirty: make(map[common.Address]struct{}, len(self.journal.dirties)),
+		nilAccounts:       make(map[common.Address]struct{}),
 		refund:            self.refund,
 		logs:              make(map[common.Hash][]*types.Log, len(self.logs)),
 		logSize:           self.logSize,
