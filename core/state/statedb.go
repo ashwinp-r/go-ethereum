@@ -391,9 +391,12 @@ func (self *StateDB) createObject(addr common.Address, previous *stateObject) (n
 //   2. tx_create(sha(account ++ nonce)) (note that this gets the address of 1)
 //
 // Carrying over the balance ensures that Ether doesn't disappear.
-func (self *StateDB) CreateAccount(addr common.Address) {
-	stateObject := self.getStateObject(addr)
-	new, prev := self.createObject(addr, stateObject)
+func (self *StateDB) CreateAccount(addr common.Address, checkPrev bool) {
+	var previous *stateObject
+	if checkPrev {
+		previous = self.getStateObject(addr)
+	}
+	new, prev := self.createObject(addr, previous)
 	if prev != nil {
 		new.setBalance(prev.data.Balance)
 	}
