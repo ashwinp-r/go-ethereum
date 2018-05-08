@@ -26,6 +26,11 @@ hack:
 	@echo "Done building."
 	@echo "Run \"$(GOBIN)/hack\" to launch hack."
 
+tester:
+	build/env.sh go run build/ci.go install ./cmd/tester
+	@echo "Done building."
+	@echo "Run \"$(GOBIN)/tester\" to launch tester."
+
 all:
 	build/env.sh go run build/ci.go install
 
