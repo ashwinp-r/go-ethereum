@@ -680,7 +680,8 @@ func main() {
  	//	panic(fmt.Sprintf("Could not open file: %s", err))
  	//}
  	//defer db.Close()
- 	mychart()
+ 	//mychart()
  	//testRebuild()
+ 	testRewind()
 }
 

@@ -159,7 +159,7 @@ func (dbs *DbState) UpdateAccountCode(codeHash common.Hash, code []byte) error {
 
 func (dbs *DbState) WriteAccountStorage(address *common.Address, key, value *common.Hash) error {
 	seckey := crypto.Keccak256Hash(key[:])
-	v := bytes.TrimLeft(value[:], "\x00") // PutS below will make a copy of v
+	v := bytes.TrimLeft(value[:], "\x00")
 	return dbs.db.PutS(address[:], seckey[:], v, dbs.blockNr)
 }
 
@@ -378,23 +378,19 @@ func (tds *TrieDbState) SetBlockNr(blockNr uint64) {
 func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
 	if err := tds.db.TrieDB().RewindData(tds.blockNr, blockNr, func (bucket, key, value []byte) error {
 		//var c *trie.TrieContinuation
-		//var t *trie.Trie
 		//var a *common.Address
 		if bytes.Equal(bucket, AccountsBucket) {
-			//t = tds.t
-		} else {
-			//address := common.BytesToAddress(bucket)
-			//a = &address
-			var err error
-			//t, err = tds.getStorageTrie(a)
-			if err != nil {
-				return err
+			if len(value) > 0 {
+				//c = t.UpdateAction(a, key, value)
+			} else {
+				//c = t.DeleteAction(a, key)
 			}
-		}
-		if len(value) > 0 {
-			//c = t.UpdateAction(a, key, value)
 		} else {
-			//c = t.DeleteAction(a, key)
+			if len(value) > 0 {
+				//c = t.UpdateAction(a, key, value)
+			} else {
+				//c = t.DeleteAction(a, key)
+			}
 		}
 		//tds.continuations = append(tds.continuations, c)
 		return nil
@@ -617,7 +613,7 @@ func (dsw *DbStateWriter) WriteAccountStorage(address *common.Address, key, valu
 	if err != nil {
 		return err
 	}
-	v := bytes.TrimLeft(value[:], "\x00") // PutS below will make a copy of v
+	v := bytes.TrimLeft(value[:], "\x00")
 	return dsw.tds.db.TrieDB().PutS(address[:], seckey, v, dsw.tds.blockNr)
 }
 

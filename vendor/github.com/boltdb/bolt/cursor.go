@@ -198,7 +198,11 @@ func (c *Cursor) seekTo(seek []byte) (key []byte, value[]byte, flags uint32) {
 		if elem.node != nil {
 			n := elem.node
 			pageid = n.pgid
-			lastkey = n.inodes[len(n.inodes)-1].key
+			if len(n.inodes) > 0 {
+				lastkey = n.inodes[len(n.inodes)-1].key
+			} else {
+				fmt.Printf("len(n.inodes) == 0 %x\n", seek)
+			}
 		} else {
 			p := elem.page
 			if p.count == 0 {

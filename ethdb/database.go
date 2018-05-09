@@ -25,6 +25,7 @@ import (
 	"sync"
 	"encoding/binary"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/syndtr/goleveldb/leveldb"
 
@@ -433,6 +434,7 @@ type Hash struct {
 
 type mutation struct {
 	puts *llrb.LLRB
+	suffixkeys map[uint64]map[string][][]byte
 	hashes map[uint32]Hash
 
 	mu sync.RWMutex
@@ -443,6 +445,7 @@ func (db *LDBDatabase) NewBatch() Mutation {
 	m := &mutation{
 		db: db,
 		puts: llrb.New(),
+		suffixkeys: make(map[uint64]map[string][][]byte),
 		hashes: make(map[uint32]Hash),
 	}
 	return m
@@ -480,6 +483,22 @@ func (m *mutation) Get(bucket, key []byte) ([]byte, error) {
 	return nil, ErrKeyNotFound
 }
 
+func (m *mutation) getNoLock(bucket, key []byte) ([]byte, error) {
+	i := m.puts.Get(&PutItem{bucket: bucket, key: key})
+	if i != nil {
+		if item, ok := i.(*PutItem); ok {
+			if item.value == nil {
+				return nil, ErrKeyNotFound
+			}
+			return common.CopyBytes(item.value), nil
+		}
+	}
+	if m.db != nil {
+		return m.db.Get(bucket, key)
+	}
+	return nil, ErrKeyNotFound
+}
+
 func (m *mutation) hasMem(bucket, key []byte) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -504,45 +523,39 @@ func (m *mutation) Size() int {
 }
 
 func (m *mutation) Put(bucket, key []byte, value []byte) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	bb := make([]byte, len(bucket))
 	copy(bb, bucket)
 	k := make([]byte, len(key))
 	copy(k, key)
 	v := make([]byte, len(value))
 	copy(v, value)
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.puts.ReplaceOrInsert(&PutItem{bucket: bb, key: k, value: v})
 	return nil
 }
 
+// Assumes that bucket, key, and value won't be modified
 func (m *mutation) PutS(bucket, key, value []byte, timestamp uint64) error {
 	//fmt.Printf("PutS bucket %x key %x value %x timestamp %d\n", bucket, key, value, timestamp)
-	composite, suffix := compositeKeySuffix(key, timestamp)
-	bb := make([]byte, len(bucket))
-	copy(bb, bucket)
+	composite, _ := compositeKeySuffix(key, timestamp)
+	bb := common.CopyBytes(bucket)
 	v := make([]byte, len(value))
 	copy(v, value)
+	suffix_m, ok := m.suffixkeys[timestamp]
+	if !ok {
+		suffix_m = make(map[string][][]byte)
+		m.suffixkeys[timestamp] = suffix_m
+	}
+	suffix_l, ok := suffix_m[string(bb)]
+	if !ok {
+		suffix_l = [][]byte{}
+	}
+	suffix_l = append(suffix_l, common.CopyBytes(key))
+	suffix_m[string(bb)] = suffix_l
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.puts.ReplaceOrInsert(&PutItem{bucket: bb, key: composite, value: v})
-	suffixkey := make([]byte, len(suffix) + len(bucket))
-	copy(suffixkey, suffix)
-	copy(suffixkey[len(suffix):], bucket)
-	dat, err := m.Get(SuffixBucket, suffixkey)
-	if err != nil && err != ErrKeyNotFound {
-		return err
-	}
-	var l int
-	if dat == nil {
-		l = 4
-	} else {
-		l = len(dat)
-	}
-	dv := make([]byte, l+1+len(key))
-	copy(dv, dat)
-	binary.BigEndian.PutUint32(dv, 1+binary.BigEndian.Uint32(dv))
-	dv[l] = byte(len(key))
-	copy(dv[l+1:], key)
-	m.puts.ReplaceOrInsert(&PutItem{bucket: SuffixBucket, key: suffixkey, value: dv})
 	return nil
 }
 
@@ -766,6 +779,7 @@ func (m *mutation) Delete(bucket, key []byte) error {
 
 // Deletes all keys with specified suffix from all the buckets
 func (m *mutation) DeleteTimestamp(timestamp uint64) error {
+	items := []*PutItem{}
 	suffix := encodeTimestamp(timestamp)
 	err := m.Walk(SuffixBucket, suffix, uint(8*len(suffix)), func(k, v []byte) ([]byte, WalkAction, error) {
 		bucket := k[len(suffix):]
@@ -773,19 +787,20 @@ func (m *mutation) DeleteTimestamp(timestamp uint64) error {
 		for i, ki := 4, 0; ki < keycount; ki++ {
 			l := int(v[i])
 			i++
-			bb := make([]byte, len(bucket))
-			copy(bb, bucket)
 			kk := make([]byte, l+len(suffix))
 			copy(kk, v[i:i+l])
 			copy(kk[l:], suffix)
-			m.puts.ReplaceOrInsert(&PutItem{bucket: bb, key: kk, value: nil})
+			items = append(items, &PutItem{bucket: common.CopyBytes(bucket), key: kk, value: nil})
 			i += l
 		}
-		kk := make([]byte, len(k))
-		copy(kk, k)
-		m.puts.ReplaceOrInsert(&PutItem{bucket: SuffixBucket, key: kk, value: nil})
+		items = append(items, &PutItem{bucket: SuffixBucket, key: common.CopyBytes(k), value: nil})
 		return nil, WalkActionNext, nil
 	})
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, item := range items {
+		m.puts.ReplaceOrInsert(item)
+	}
 	return err
 }
 
@@ -795,6 +810,41 @@ func (m *mutation) Commit() error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for timestamp, suffix_m := range m.suffixkeys {
+		suffix := encodeTimestamp(timestamp)
+		for bucketStr, suffix_l := range suffix_m {
+			bucket := []byte(bucketStr)
+			suffixkey := make([]byte, len(suffix) + len(bucket))
+			copy(suffixkey, suffix)
+			copy(suffixkey[len(suffix):], bucket)
+			dat, err := m.getNoLock(SuffixBucket, suffixkey)
+			if err != nil && err != ErrKeyNotFound {
+				return err
+			}
+			var l int
+			if dat == nil {
+				l = 4
+			} else {
+				l = len(dat)
+			}
+			newlen := len(suffix_l)
+			for _, key := range suffix_l {
+				newlen += len(key)
+			}
+			dv := make([]byte, l+newlen)
+			copy(dv, dat)
+			binary.BigEndian.PutUint32(dv, uint32(len(suffix_l))+binary.BigEndian.Uint32(dv))
+			i := l
+			for _, key := range suffix_l {
+				dv[i] = byte(len(key))
+				i++
+				copy(dv[i:], key)
+				i += len(key)
+			}
+			m.puts.ReplaceOrInsert(&PutItem{bucket: SuffixBucket, key: suffixkey, value: dv})
+		}
+	}
+	m.suffixkeys = make(map[uint64]map[string][][]byte)
 	tuples := make([][]byte, m.puts.Len()*3)
 	var index int
 	m.puts.AscendGreaterOrEqual1(&PutItem{}, func (i llrb.Item) bool {
@@ -821,10 +871,14 @@ func (m *mutation) Commit() error {
 func (m *mutation) Rollback() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.suffixkeys = make(map[uint64]map[string][][]byte)
 	m.puts = llrb.New()
+	m.hashes = make(map[uint32]Hash)
 }
 
 func (m *mutation) Keys() [][]byte {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	pairs := make([][]byte, 2*m.puts.Len())
 	idx := 0
 	m.puts.AscendGreaterOrEqual1(&PutItem{}, func(i llrb.Item) bool {
