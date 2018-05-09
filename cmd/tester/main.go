@@ -8,7 +8,13 @@ import (
 
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/console"
+	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/eth"
+	"github.com/ethereum/go-ethereum/eth/downloader"
+	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/internal/debug"
+	"github.com/ethereum/go-ethereum/params"
 	"gopkg.in/urfave/cli.v1"
 )
 
@@ -56,6 +62,40 @@ func main() {
 }
 
 func tester(ctx *cli.Context) error {
+	// Create a protocol manager
+	fd, err := NewFakeDatabase()
+	if err != nil {
+		return err
+	}
+	bc, err := core.NewBlockChain(
+		fd,
+		nil, /* *CacheConfig */
+		params.MainnetChainConfig,
+		nil, /* consensus.Engine */
+		vm.Config{},
+	)
+	if err != nil {
+		return err
+	}
+	txPool := core.NewTxPool(
+		core.DefaultTxPoolConfig,
+		params.MainnetChainConfig,
+		bc,
+	)
+	pm, err := eth.NewProtocolManager(
+		params.MainnetChainConfig,
+		downloader.FullSync,
+		1,
+		new(event.TypeMux),
+		txPool, /* txPool */
+		nil, /* consensus.Engine */
+		bc, /* *core.BlockChain */
+		fd, /* ethdb.Database */
+	)
+	if err != nil {
+		return err
+	}
+	pm.Start(1)
 	fmt.Printf("Hello, world!\n")
 	return nil
 }
