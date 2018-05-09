@@ -78,17 +78,17 @@ func testMissingNode(t *testing.T, memonly bool) {
 	root := trie.Hash()
 
 	trie = New(root, testbucket, false)
-	_, err := trie.TryGet(diskdb, []byte("120000"), 0)
+	_, _, err := trie.TryGet(diskdb, []byte("120000"), 0)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
 	trie = New(root, testbucket, false)
-	_, err = trie.TryGet(diskdb, []byte("120099"), 0)
+	_, _, err = trie.TryGet(diskdb, []byte("120099"), 0)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
 	trie = New(root, testbucket, false)
-	_, err = trie.TryGet(diskdb, []byte("123456"), 0)
+	_, _, err = trie.TryGet(diskdb, []byte("123456"), 0)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
@@ -109,17 +109,17 @@ func testMissingNode(t *testing.T, memonly bool) {
 	}
 
 	trie = New(root, testbucket, false)
-	_, err = trie.TryGet(diskdb, []byte("120000"), 0)
+	_, _, err = trie.TryGet(diskdb, []byte("120000"), 0)
 	if _, ok := err.(*MissingNodeError); !ok {
 		t.Errorf("Wrong error: %v", err)
 	}
 	trie = New(root, testbucket, false)
-	_, err = trie.TryGet(diskdb, []byte("120099"), 0)
+	_, _, err = trie.TryGet(diskdb, []byte("120099"), 0)
 	if _, ok := err.(*MissingNodeError); !ok {
 		t.Errorf("Wrong error: %v", err)
 	}
 	trie = New(root, testbucket, false)
-	_, err = trie.TryGet(diskdb, []byte("123456"), 0)
+	_, _, err = trie.TryGet(diskdb, []byte("123456"), 0)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
@@ -142,6 +142,7 @@ func TestInsert(t *testing.T) {
 	updateString(trie, diskdb, "dog", "puppy")
 	updateString(trie, diskdb, "dogglesworth", "cat")
 
+	fmt.Printf("\n\n%s\n\n", trie.root.fstring(""))
 	exp := common.HexToHash("8aad789dff2f538bca5d8ea56e8abe10f4c7ba3a5dea95fea4cd6e7c3a1168d3")
 	root := trie.Hash()
 	if root != exp {
@@ -489,7 +490,7 @@ func tempDB() (string, ethdb.Database) {
 	if err != nil {
 		panic(fmt.Sprintf("can't create temporary directory: %v", err))
 	}
-	diskdb, err := ethdb.NewLDBDatabase(dir, 256, false)
+	diskdb, err := ethdb.NewLDBDatabase(dir, 256)
 	if err != nil {
 		panic(fmt.Sprintf("can't create temporary database: %v", err))
 	}

@@ -1447,9 +1447,10 @@ func TestTransactionPoolStableUnderpricing(t *testing.T) {
 	t.Parallel()
 
 	// Create the pool to test the pricing enforcement with
-	db, _ := ethdb.NewMemDatabase()
-	statedb, _ := state.New(common.Hash{}, state.NewDatabase(db))
-	blockchain := &testBlockChain{statedb, 1000000, new(event.Feed)}
+	db := ethdb.NewMemDatabase()
+	tds, _ := state.NewTrieDbState(common.Hash{}, state.NewDatabase(db), 0)
+	statedb := state.New(tds)
+	blockchain := &testBlockChain{statedb, tds, 1000000, new(event.Feed)}
 
 	config := testTxPoolConfig
 	config.GlobalSlots = 128

@@ -17,7 +17,6 @@
 package core
 
 import (
-	"io"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
@@ -43,5 +42,5 @@ type Validator interface {
 // of gas used in the process and return an error if any of the internal rules
 // failed.
 type Processor interface {
-	Process(block *types.Block, statedb *state.StateDB, tds *state.TrieDbState, cfg vm.Config, w io.Writer) (types.Receipts, []*types.Log, uint64, error)
+	Process(block *types.Block, statedb *state.StateDB, tds *state.TrieDbState, cfg vm.Config) (types.Receipts, []*types.Log, uint64, error)
 }

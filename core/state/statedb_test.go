@@ -153,7 +153,7 @@ func TestCopy(t *testing.T) {
 
 	// Copy the state, modify both in-memory
 	copy := orig.Copy()
-	copyTds, _ := origTds.Copy()
+	copyTds := origTds.Copy()
 
 	for i := byte(0); i < 255; i++ {
 		origObj := orig.GetOrNewStateObject(common.BytesToAddress([]byte{i}))
@@ -273,7 +273,7 @@ func newTestAction(addr common.Address, r *rand.Rand) testAction {
 		{
 			name: "CreateAccount",
 			fn: func(a testAction, s *StateDB) {
-				s.CreateAccount(addr)
+				s.CreateAccount(addr, true)
 			},
 		},
 		{
@@ -453,8 +453,9 @@ func (s *StateSuite) TestTouchDelete(c *check.C) {
 // TestCopyOfCopy tests that modified objects are carried over to the copy, and the copy of the copy.
 // See https://github.com/ethereum/go-ethereum/pull/15225#issuecomment-380191512
 func TestCopyOfCopy(t *testing.T) {
-	db, _ := ethdb.NewMemDatabase()
-	sdb, _ := New(common.Hash{}, NewDatabase(db))
+	db := ethdb.NewMemDatabase()
+	sdbTds, _ := NewTrieDbState(common.Hash{}, NewDatabase(db), 0)
+	sdb := New(sdbTds)
 	addr := common.HexToAddress("aaaa")
 	sdb.SetBalance(addr, big.NewInt(42))
 

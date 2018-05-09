@@ -109,7 +109,7 @@ func Execute(code, input []byte, cfg *Config, blockNr uint64) ([]byte, *state.St
 		vmenv   = NewEnv(cfg)
 		sender  = vm.AccountRef(cfg.Origin)
 	)
-	cfg.State.CreateAccount(address)
+	cfg.State.CreateAccount(address, true)
 	// set the receiver's (the executing contract) code for execution.
 	cfg.State.SetCode(address, code)
 	// Call the code with the given configuration.

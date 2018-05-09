@@ -29,7 +29,6 @@ var indices = []string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b
 
 type node interface {
 	fstring(string) string
-	cache() (hashNode)
 	unlisted() bool
 }
 
@@ -38,24 +37,30 @@ type nodep interface {
 	setnext(nodep)
 	prev() nodep
 	setprev(nodep)
-	setcache(hashNode)
 }
 
 type (
 	fullNode struct {
 		Children [17]node // Actual trie node data to encode/decode (needs custom encoder)
 		flags    nodeFlag
+		hashTrueMask uint32 // When bit is set, the hash with the corresponding index is valid
+		childHashes [17]hashNode
 	}
 	duoNode struct {
 		mask	uint32 // Bitmask. The set bits indicate the child is not nil
 		child1  node
 		child2  node
 		flags   nodeFlag
+		hashTrueMask uint32
+		child1Hash hashNode
+		child2Hash hashNode
 	}
 	shortNode struct {
 		Key   []byte
 		Val   node
 		flags nodeFlag
+		hashTrue bool
+		valHash hashNode
 	}
 	hashNode  []byte
 	valueNode []byte
@@ -97,13 +102,55 @@ func (n *duoNode) childrenIdx() (i1 byte, i2 byte) {
 	return i1, i2
 }
 
-func (n *fullNode) copy() *fullNode   { copy := *n; copy.flags.next = nil; copy.flags.prev = nil; return &copy }
-func (n *duoNode) copy() *duoNode     { copy := *n; copy.flags.next = nil; copy.flags.prev = nil; return &copy }
-func (n *shortNode) copy() *shortNode { copy := *n; copy.flags.next = nil; copy.flags.prev = nil; return &copy }
+func (n *fullNode) copy() *fullNode   {
+	copy := *n
+	copy.flags.next = nil
+	copy.flags.prev = nil
+	for i, childHash := range copy.childHashes {
+		copy.childHashes[i] = common.CopyBytes(childHash)
+	}
+	for i, child := range copy.Children {
+		if hash, ok := child.(hashNode); ok {
+			if (copy.hashTrueMask & (uint32(1)<<uint(i))) != 0 {
+				copy.Children[i] = copy.childHashes[i]
+			} else {
+				copy.Children[i] = hashNode(common.CopyBytes(hash))
+			}
+		}
+	}
+	return &copy
+}
+func (n *duoNode) copy() *duoNode     {
+	copy := *n
+	copy.flags.next = nil
+	copy.flags.prev = nil
+	if hash, ok := copy.child1.(hashNode); ok {
+		copy.child1 = hashNode(common.CopyBytes(hash))
+	}
+	if hash, ok := copy.child2.(hashNode); ok {
+		copy.child2 = hashNode(common.CopyBytes(hash))
+	}
+	copy.child1Hash = common.CopyBytes(copy.child1Hash)
+	copy.child2Hash = common.CopyBytes(copy.child2Hash)
+	return &copy
+}
+func (n *shortNode) copy() *shortNode {
+	copy := *n
+	copy.flags.next = nil
+	copy.flags.prev = nil
+	copy.valHash = common.CopyBytes(copy.valHash)
+	if hash, ok := copy.Val.(hashNode); ok {
+		if copy.hashTrue {
+			copy.Val = copy.valHash
+		} else {
+			copy.Val = hashNode(common.CopyBytes(hash))
+		}
+	}
+	return &copy
+}
 
 // nodeFlag contains caching-related metadata about a node.
 type nodeFlag struct {
-	hash  		hashNode   // cached hash of the node (may be nil)
 	next, prev  nodep      // list element for efficient disposing of nodes
 }
 
@@ -112,12 +159,6 @@ func (n *duoNode) unlisted() bool   { return n.flags.next == nil && n.flags.prev
 func (n *shortNode) unlisted() bool { return n.flags.next == nil && n.flags.prev == nil }
 func (n hashNode) unlisted() bool   { return false }
 func (n valueNode) unlisted() bool  { return false }
-
-func (n *fullNode) cache() hashNode  { return n.flags.hash }
-func (n *duoNode) cache() hashNode   { return n.flags.hash }
-func (n *shortNode) cache() hashNode { return n.flags.hash }
-func (n hashNode) cache() hashNode   { return nil }
-func (n valueNode) cache() hashNode  { return nil}
 
 func (n *fullNode) next() nodep  { return n.flags.next }
 func (n *duoNode) next() nodep   { return n.flags.next }
@@ -135,10 +176,6 @@ func (n *fullNode) setprev(prev nodep)  { n.flags.prev = prev }
 func (n *duoNode) setprev(prev nodep)   { n.flags.prev = prev }
 func (n *shortNode) setprev(prev nodep) { n.flags.prev = prev }
 
-func (n *fullNode) setcache(h hashNode)  { n.flags.hash = h }
-func (n *duoNode) setcache(h hashNode)   { n.flags.hash = h }
-func (n *shortNode) setcache(h hashNode) { n.flags.hash = h }
-
 // Pretty printing.
 func (n fullNode) String() string  { return n.fstring("") }
 func (n duoNode) String() string   { return n.fstring("") }
@@ -147,7 +184,7 @@ func (n hashNode) String() string   { return n.fstring("") }
 func (n valueNode) String() string  { return n.fstring("") }
 
 func (n *fullNode) fstring(ind string) string {
-	resp := fmt.Sprintf("[\n%s  ", ind)
+	resp := fmt.Sprintf("full\n%s  ", ind)
 	for i, node := range n.Children {
 		if node == nil {
 			resp += fmt.Sprintf("%s: <nil> ", indices[i])
@@ -159,7 +196,7 @@ func (n *fullNode) fstring(ind string) string {
 }
 
 func (n *duoNode) fstring(ind string) string {
-	resp := fmt.Sprintf("[\n%s  ", ind)
+	resp := fmt.Sprintf("duo[\n%s  ", ind)
 	i1, i2 := n.childrenIdx()
 	resp += fmt.Sprintf("%s: %v", indices[i1], n.child1.fstring(ind+"  "))
 	resp += fmt.Sprintf("%s: %v", indices[i2], n.child2.fstring(ind+"  "))
@@ -174,14 +211,6 @@ func (n hashNode) fstring(ind string) string {
 }
 func (n valueNode) fstring(ind string) string {
 	return fmt.Sprintf("%x ", []byte(n))
-}
-
-func mustDecodeNode(hash, buf []byte) node {
-	n, err := decodeNode(hash, buf)
-	if err != nil {
-		panic(fmt.Sprintf("node %x: %v", hash, err))
-	}
-	return n
 }
 
 // decodeNode parses the RLP encoding of a trie node.
@@ -210,7 +239,6 @@ func decodeShort(hash, buf, elems []byte) (node, error) {
 	if err != nil {
 		return nil, err
 	}
-	flag := nodeFlag{hash: hash}
 	key := compactToHex(kbuf)
 	if hasTerm(key) {
 		// value node
@@ -218,17 +246,17 @@ func decodeShort(hash, buf, elems []byte) (node, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid value node: %v", err)
 		}
-		return &shortNode{key, append(valueNode{}, val...), flag}, nil
+		return &shortNode{Key: key, Val: append(valueNode{}, val...)}, nil
 	}
 	r, _, err := decodeRef(rest)
 	if err != nil {
 		return nil, wrapError(err, "val")
 	}
-	return &shortNode{key, r, flag}, nil
+	return &shortNode{Key: key, Val: r}, nil
 }
 
 func decodeFull(hash, buf, elems []byte) (*fullNode, error) {
-	n := &fullNode{flags: nodeFlag{hash: hash}}
+	n := &fullNode{}
 	for i := 0; i < 16; i++ {
 		cld, rest, err := decodeRef(elems)
 		if err != nil {

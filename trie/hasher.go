@@ -18,23 +18,32 @@ package trie
 
 import (
 	"bytes"
+	//"fmt"
 	"hash"
 	"sync"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto/sha3"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
+type Sha3Hash interface {
+	hash.Hash
+	Read(out []byte) (n int, err error)
+}
+
 type hasher struct {
 	tmp            *bytes.Buffer
-	sha            hash.Hash
+	sha            Sha3Hash
 	encodeToBytes  bool
+	shortCollapsed [Levels]shortNode
+	fullCollapsed  [Levels]fullNode
 }
 
 // hashers live in a global db.
 var hasherPool = sync.Pool{
 	New: func() interface{} {
-		return &hasher{tmp: new(bytes.Buffer), sha: sha3.NewKeccak256()}
+		return &hasher{tmp: new(bytes.Buffer), sha: sha3.NewKeccak256().(Sha3Hash)}
 	},
 }
 
@@ -50,26 +59,21 @@ func returnHasherToPool(h *hasher) {
 
 // hash collapses a node down into a hash node, also returning a copy of the
 // original node initialized with the computed hash to replace the original one.
-func (h *hasher) hash(n node, force bool) (node, error) {
-	// If we're not storing the node, just hashing, use available cached data
-	if hash := n.cache(); hash != nil {
-		return hash, nil
-	}
+func (h *hasher) hash(n node, force bool, storeTo []byte) (node, error) {
+	return h.hashInternal(n, force, storeTo, 0)
+}
+
+// hash collapses a node down into a hash node, also returning a copy of the
+// original node initialized with the computed hash to replace the original one.
+func (h *hasher) hashInternal(n node, force bool, storeTo []byte, level int) (node, error) {
 	// Trie not processed yet or needs storage, walk the children
-	collapsed, err := h.hashChildren(n)
+	collapsed, err := h.hashChildren(n, level)
 	if err != nil {
 		return hashNode{}, err
 	}
-	hashed, err := h.store(collapsed, force)
+	hashed, err := h.store(collapsed, force, storeTo)
 	if err != nil {
 		return hashNode{}, err
-	}
-	// Cache the hash of the node for later reuse and remove
-	// the dirty flag in commit mode. It's fine to assign these values directly
-	// without copying the node first because hashChildren copies it.
-	cachedHash, _ := hashed.(hashNode)
-	if np, ok := n.(nodep); ok {
-		np.setcache(cachedHash)
 	}
 	return hashed, nil
 }
@@ -77,23 +81,34 @@ func (h *hasher) hash(n node, force bool) (node, error) {
 // hashChildren replaces the children of a node with their hashes if the encoded
 // size of the child is larger than a hash, returning the collapsed node as well
 // as a replacement for the original node with the child hashes cached in.
-func (h *hasher) hashChildren(original node) (node, error) {
+func (h *hasher) hashChildren(original node, level int) (node, error) {
 	var err error
-
 	switch n := original.(type) {
 	case *shortNode:
 		// Hash the short node's child, caching the newly hashed subtree
-		collapsed := n.copy()
+		collapsed := &h.shortCollapsed[level]
 		collapsed.Key = n.Key
 
 		if child, ok := n.Val.(valueNode); !ok {
-			collapsed.Val, err = h.hash(n.Val, false)
-			if err != nil {
-				return original, err
+			if !n.hashTrue {
+				if n.valHash == nil {
+					n.valHash = make([]byte, common.HashLength)
+				}
+				collapsed.Val, err = h.hashInternal(n.Val, false, n.valHash, level+1)
+				if err != nil {
+					return original, err
+				}
+				if _, ok := collapsed.Val.(hashNode); ok {
+					n.hashTrue = true
+				}
+			} else {
+				collapsed.Val = n.valHash
 			}
 		} else if h.encodeToBytes {
 			enc, _ := rlp.EncodeToBytes(child)
 			collapsed.Val = valueNode(enc)
+		} else {
+			collapsed.Val = n.Val
 		}
 		if collapsed.Val == nil {
 			collapsed.Val = valueNode(nil) // Ensure that nil children are encoded as empty strings.
@@ -101,37 +116,77 @@ func (h *hasher) hashChildren(original node) (node, error) {
 		return collapsed, nil
 
 	case *duoNode:
-		collapsed := n.copy()
-		collapsed.child1, err = h.hash(n.child1, false)
-		if err != nil {
-			return original, err
-		}
-		collapsed.child2, err = h.hash(n.child2, false)
-		if err != nil {
-			return original, err
+		i1, i2 := n.childrenIdx()
+		collapsed := &h.fullCollapsed[level]
+		for i := 0; i < 17; i++ {
+			if i == int(i1) {
+				if (n.hashTrueMask & (uint32(1)<<i1)) == 0 {
+					if n.child1Hash == nil {
+						n.child1Hash = make([]byte, common.HashLength)
+					}
+					collapsed.Children[i], err = h.hashInternal(n.child1, false, n.child1Hash, level+1)
+					if err != nil {
+						return original, err
+					}
+					if _, ok := collapsed.Children[i].(hashNode); ok {
+						n.hashTrueMask |= (uint32(1)<<i1)
+					}
+				} else {
+					collapsed.Children[i] = n.child1Hash
+				}
+			} else if i == int(i2) {
+				if (n.hashTrueMask & (uint32(1)<<i2)) == 0 {
+					if n.child2Hash == nil {
+						n.child2Hash = make([]byte, common.HashLength)
+					}
+					collapsed.Children[i], err = h.hashInternal(n.child2, false, n.child2Hash, level+1)
+					if err != nil {
+						return original, err
+					}
+					if _, ok := collapsed.Children[i].(hashNode); ok {
+						n.hashTrueMask |= (uint32(1)<<i2)
+					}
+				} else {
+					collapsed.Children[i] = n.child2Hash
+				}
+			} else {
+				collapsed.Children[i] = valueNode(nil)
+			}
 		}
 		return collapsed, nil
 
 	case *fullNode:
 		// Hash the full node's children, caching the newly hashed subtrees
-		collapsed := n.copy()
+		collapsed := &h.fullCollapsed[level]
 
 		for i := 0; i < 16; i++ {
 			if n.Children[i] != nil {
-				collapsed.Children[i], err = h.hash(n.Children[i], false)
-				if err != nil {
-					return original, err
+				if (n.hashTrueMask & (uint32(1)<<uint(i))) == 0 {
+					if n.childHashes[i] == nil {
+						n.childHashes[i] = make([]byte, common.HashLength)
+					}
+					collapsed.Children[i], err = h.hashInternal(n.Children[i], false, n.childHashes[i], level+1)
+					if err != nil {
+						return original, err
+					}
+					if _, ok := collapsed.Children[i].(hashNode); ok {
+						n.hashTrueMask |= (uint32(1)<<uint(i))
+					}
+				} else {
+					collapsed.Children[i] = n.childHashes[i]
 				}
 			} else {
 				collapsed.Children[i] = valueNode(nil) // Ensure that nil children are encoded as empty strings.
 			}
 		}
+		collapsed.Children[16] = n.Children[16]
 		if collapsed.Children[16] == nil {
 			collapsed.Children[16] = valueNode(nil)
 		}
 		return collapsed, nil
 
 	case valueNode:
+		//fmt.Printf("value\n")
 		if h.encodeToBytes {
 			enc, _ := rlp.EncodeToBytes(n)
 			return valueNode(enc), nil
@@ -157,9 +212,10 @@ func EncodeAsValue(data []byte) ([]byte, error) {
 // store hashes the node n and if we have a storage layer specified, it writes
 // the key/value pair to it and tracks any node->child references as well as any
 // node->external trie references.
-func (h *hasher) store(n node, force bool) (node, error) {
+func (h *hasher) store(n node, force bool, storeTo []byte) (node, error) {
 	// Don't store hashes or empty nodes.
 	if hash, isHash := n.(hashNode); n == nil || isHash {
+		copy(storeTo, hash)
 		return hash, nil
 	}
 	// Generate the RLP encoding of the node
@@ -173,9 +229,9 @@ func (h *hasher) store(n node, force bool) (node, error) {
 
 	h.sha.Reset()
 	h.sha.Write(h.tmp.Bytes())
-	hbytes := h.sha.Sum(nil)
-	hbcopy := make([]byte, len(hbytes))
-	copy(hbcopy, hbytes)
-	hash := hashNode(hbcopy)
-	return hash, nil
+	if storeTo != nil {
+		h.sha.Read(storeTo)
+		return hashNode(storeTo), nil
+	}
+	return hashNode(h.sha.Sum(nil)), nil
 }

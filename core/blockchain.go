@@ -27,7 +27,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"os"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/mclock"
@@ -1088,25 +1087,10 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		}
 		stateDB := state.New(bc.trieDbState)
 		// Process block using the parent state as reference point.
-		var file *os.File
-		if readBlockNr == 5026042 {
-			file, err = os.Create("structlogs.txt")
-			if err != nil {
-				panic(err)
-			}
-		}
-		receipts, logs, usedGas, err := bc.processor.Process(block, stateDB, bc.trieDbState, bc.vmConfig, file)
+		receipts, logs, usedGas, err := bc.processor.Process(block, stateDB, bc.trieDbState, bc.vmConfig)
 		if err != nil {
 			bc.reportBlock(block, receipts, err)
 			return i, events, coalescedLogs, err
-		}
-		if readBlockNr == 5026042 {
-			if err := file.Sync(); err != nil {
-				panic(err)
-			}
-			if err := file.Close(); err != nil {
-				panic(err)
-			}
 		}
 		// Validate the state using the default validator
 		err = bc.Validator().ValidateState(block, parent, stateDB, bc.trieDbState, receipts, usedGas)

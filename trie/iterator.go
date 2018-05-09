@@ -276,7 +276,7 @@ func (it *nodeIterator) nextChild(parent *nodeIteratorState, ancestor common.Has
 		for i := parent.index + 1; i < len(n.Children); i++ {
 			child := n.Children[i]
 			if child != nil {
-				hash := child.cache()
+				hash := n.childHashes[i]
 				state := &nodeIteratorState{
 					hash:    common.BytesToHash(hash),
 					node:    child,
@@ -294,15 +294,17 @@ func (it *nodeIterator) nextChild(parent *nodeIteratorState, ancestor common.Has
 		i1, i2 := n.childrenIdx()
 		var child node
 		var i int
+		var hash hashNode
 		if parent.index < 0 {
 			child = n.child1
 			i = int(i1)
+			hash = n.child1Hash
 		} else if parent.index == int(i1) {
 			child = n.child2
 			i = int(i2)
+			hash = n.child2Hash
 		}
 		if child != nil {
-			hash := child.cache()
 			state := &nodeIteratorState{
 				hash:    common.BytesToHash(hash),
 				node:    child,
@@ -317,7 +319,7 @@ func (it *nodeIterator) nextChild(parent *nodeIteratorState, ancestor common.Has
 	case *shortNode:
 		// Short node, return the pointer singleton child
 		if parent.index < 0 {
-			hash := n.Val.cache()
+			hash := n.valHash
 			state := &nodeIteratorState{
 				hash:    common.BytesToHash(hash),
 				node:    n.Val,

@@ -2,7 +2,7 @@ package trie
 
 import (
 	"bytes"
-	"fmt"
+	//"fmt"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -44,7 +44,7 @@ func TestRebuild(t *testing.T) {
 		tr.TryUpdate(db, key, v1, 0)
 		tr.PrintTrie()
 		root1 := tr.Root()
-		fmt.Printf("Root1: %x\n", tr.Root())
+		//fmt.Printf("Root1: %x\n", tr.Root())
 		v1, err = EncodeAsValue(v1)
 		if err != nil {
 			t.Errorf("Could not encode value: %v", err)
@@ -54,7 +54,7 @@ func TestRebuild(t *testing.T) {
 		t1 := New(common.BytesToHash(root1), bucket, false)
 		t1.MakeListed(l)
 		t1.Rebuild(db, 0)
-		fmt.Printf("\n\n")
+		//fmt.Printf("\n\n")
 	}
 }
 

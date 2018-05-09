@@ -539,23 +539,20 @@ func (m *mutation) Put(bucket, key []byte, value []byte) error {
 func (m *mutation) PutS(bucket, key, value []byte, timestamp uint64) error {
 	//fmt.Printf("PutS bucket %x key %x value %x timestamp %d\n", bucket, key, value, timestamp)
 	composite, _ := compositeKeySuffix(key, timestamp)
-	bb := common.CopyBytes(bucket)
-	v := make([]byte, len(value))
-	copy(v, value)
 	suffix_m, ok := m.suffixkeys[timestamp]
 	if !ok {
 		suffix_m = make(map[string][][]byte)
 		m.suffixkeys[timestamp] = suffix_m
 	}
-	suffix_l, ok := suffix_m[string(bb)]
+	suffix_l, ok := suffix_m[string(bucket)]
 	if !ok {
 		suffix_l = [][]byte{}
 	}
-	suffix_l = append(suffix_l, common.CopyBytes(key))
-	suffix_m[string(bb)] = suffix_l
+	suffix_l = append(suffix_l, key)
+	suffix_m[string(bucket)] = suffix_l
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.puts.ReplaceOrInsert(&PutItem{bucket: bb, key: composite, value: v})
+	m.puts.ReplaceOrInsert(&PutItem{bucket: bucket, key: composite, value: value})
 	return nil
 }
 

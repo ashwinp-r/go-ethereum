@@ -82,11 +82,6 @@ func (t *Trie) PrintTrie() {
 	fmt.Printf("%s\n", t.root.fstring(""))
 }
 
-// newFlag returns the cache flag value for a newly created node.
-func (t *Trie) newFlag() nodeFlag {
-	return nodeFlag{next: nil, prev: nil}
-}
-
 // New creates a trie with an existing root node from db.
 //
 // If root is the zero hash or the sha3 hash of an empty string, the
@@ -215,7 +210,7 @@ func (t *Trie) saveShortHash(db ethdb.Database, n *shortNode, level int, index u
 	}
 	h := newHasher(t.encodeToBytes)
 	defer returnHasherToPool(h)
-	hn, err := h.hash(n, false)
+	hn, err := h.hash(n, false, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -245,7 +240,7 @@ func (t *Trie) saveFullHash(db ethdb.Database, n node, level int, hashIdx uint32
 	}
 	h := newHasher(t.encodeToBytes)
 	defer returnHasherToPool(h)
-	hn, err := h.hash(n, false)
+	hn, err := h.hash(n, false, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -490,10 +485,12 @@ func (tc *TrieContinuation) Print() {
 }
 
 func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieContinuation) bool {
+	//fmt.Printf("insert %x %d\n", key, pos)
 	if np, ok := origNode.(nodep); ok {
 		c.touched = append(c.touched, Touch{np: np, key: key, pos: pos})
 	}
 	if len(key) == pos {
+		//fmt.Printf("full match\n")
 		if v, ok := origNode.(valueNode); ok {
 			c.updated = !bytes.Equal(v, value.(valueNode))
 			if c.updated {
@@ -512,6 +509,7 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 	}
 	switch n := origNode.(type) {
 	case *shortNode:
+		//fmt.Printf("short\n")
 		nKey := compactToHex(n.Key)
 		matchlen := prefixLen(key[pos:], nKey)
 		// If the whole key matches, keep this short node as is
@@ -523,7 +521,7 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 				return done
 			}
 			n.Val = c.n
-			n.setcache(nil)
+			n.hashTrue = false
 			c.updated = true
 			c.n = n
 			return done
@@ -534,7 +532,7 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 		c1 = c.n
 		t.insert(nil, key, pos+matchlen+1, value, c)
 		c2 = c.n
-		branch := &duoNode{flags: t.newFlag()}
+		branch := &duoNode{}
 		if nKey[matchlen] < key[pos+matchlen] {
 			branch.child1 = c1
 			branch.child2 = c2
@@ -553,12 +551,13 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 		// Otherwise, replace it with a short node leading up to the branch.
 		n.Key = hexToCompact(key[pos:pos+matchlen])
 		n.Val = branch
-		n.setcache(nil)
+		n.hashTrue = false
 		c.updated = true
 		c.n = n
 		return true
 
 	case *duoNode:
+		//fmt.Printf("duo\n")
 		i1, i2 := n.childrenIdx()
 		switch key[pos] {
 		case i1:
@@ -568,7 +567,7 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 				return done
 			}
 			n.child1 = c.n
-			n.setcache(nil)
+			n.hashTrueMask &^= (uint32(1)<<i1)
 			c.updated = true
 			c.n = n
 			return done
@@ -579,7 +578,7 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 				return done
 			}
 			n.child2 = c.n
-			n.setcache(nil)
+			n.hashTrueMask &^= (uint32(1)<<i2)
 			c.updated = true
 			c.n = n
 			return done
@@ -589,9 +588,12 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 				c.n = n
 				return done
 			}
-			newnode := &fullNode{flags: t.newFlag()}
+			newnode := &fullNode{}
 			newnode.Children[i1] = n.child1
 			newnode.Children[i2] = n.child2
+			newnode.hashTrueMask = n.hashTrueMask
+			newnode.childHashes[i1] = n.child1Hash
+			newnode.childHashes[i2] = n.child2Hash
 			newnode.Children[key[pos]] = c.n
 			c.updated = true
 			c.n = newnode
@@ -599,24 +601,27 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 		}
 
 	case *fullNode:
+		//fmt.Printf("full\n")
 		done := t.insert(n.Children[key[pos]], key, pos+1, value, c)
 		if !c.updated {
 			c.n = n
 			return done
 		}
 		n.Children[key[pos]] = c.n
-		n.setcache(nil)
+		n.hashTrueMask &^= (uint32(1)<<key[pos])
 		c.updated = true
 		c.n = n
 		return done
 
 	case nil:
-		newnode := &shortNode{hexToCompact(key[pos:]), value, t.newFlag()}
+		//fmt.Printf("nil\n")
+		newnode := &shortNode{Key: hexToCompact(key[pos:]), Val: value}
 		c.updated = true
 		c.n = newnode
 		return true
 
 	case hashNode:
+		//fmt.Printf("hash\n")
 		// We've hit a part of the trie that isn't loaded yet. Load
 		// the node and insert into it. This leaves all child nodes on
 		// the path to the value in the trie.
@@ -731,7 +736,7 @@ func (t *Trie) convertToShortNode(key []byte, keyStart int, child node, pos uint
 		if cnode, ok := cnode.(*shortNode); ok {
 			c.touched = append(c.touched, Touch{np: cnode, key: rkey, pos: keyStart+1})
 			k := append([]byte{byte(pos)}, compactToHex(cnode.Key)...)
-			newshort := &shortNode{hexToCompact(k), cnode.Val, t.newFlag()}
+			newshort := &shortNode{Key: hexToCompact(k), Val: cnode.Val}
 			c.updated = true
 			c.n = newshort
 			return done
@@ -740,7 +745,7 @@ func (t *Trie) convertToShortNode(key []byte, keyStart int, child node, pos uint
 	}
 	// Otherwise, n is replaced by a one-nibble short node
 	// containing the child.
-	newshort := &shortNode{hexToCompact([]byte{byte(pos)}), cnode, t.newFlag()}
+	newshort := &shortNode{Key: hexToCompact([]byte{byte(pos)}), Val: cnode}
 	c.updated = true
 	c.n = newshort
 	return done
@@ -790,14 +795,14 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 			// avoid modifying n.Key since it might be shared with
 			// other nodes.
 			childKey := compactToHex(shortChild.Key)
-			newnode := &shortNode{hexToCompact(concat(nKey, childKey...)), shortChild.Val, t.newFlag()}
+			newnode := &shortNode{Key: hexToCompact(concat(nKey, childKey...)), Val: shortChild.Val}
 			c.touched = append(c.touched, Touch{np: shortChild, key: key, pos: keyStart+len(nKey)})
 			c.updated = true
 			c.n = newnode
 			return done
 		}
 		n.Val = child
-		n.setcache(nil)
+		n.hashTrue = false
 		c.updated = true
 		c.n = n
 		return done
@@ -828,7 +833,7 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 				return done
 			}
 			n.child1 = nn
-			n.setcache(nil)
+			n.hashTrueMask &^= (uint32(1)<<i1)
 			c.updated = true
 			c.n = n
 			return done
@@ -855,7 +860,7 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 				return done
 			}
 			n.child2 = nn
-			n.setcache(nil)
+			n.hashTrueMask &^= (uint32(1)<<i2)
 			c.updated = true
 			c.n = n
 			return done
@@ -913,18 +918,22 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 			}
 		}
 		if count == 2 {
-			duo := &duoNode{flags: t.newFlag()}
+			duo := &duoNode{}
 			if pos1 == int(key[keyStart]) {
 				duo.child1 = nn
 			} else {
 				duo.child1 = n.Children[pos1]
+				duo.child1Hash = n.childHashes[pos1]
+				duo.hashTrueMask |= (n.hashTrueMask & (uint32(1)<<uint(pos1)))
 			}
 			if pos2 == int(key[keyStart]) {
 				duo.child2 = nn
 			} else {
 				duo.child2 = n.Children[pos2]
+				duo.child2Hash = n.childHashes[pos2]
+				duo.hashTrueMask |= (n.hashTrueMask & (uint32(1)<<uint(pos2)))
 			}
-			duo.mask = (1 << uint(pos1)) | (1 << uint(pos2))
+			duo.mask = (1 << uint(pos1)) | (uint32(1) << uint(pos2))
 			c.updated = true
 			c.n = duo
 			return done
@@ -935,7 +944,7 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 		}
 		// n still contains at least three values and cannot be reduced.
 		n.Children[key[keyStart]] = nn
-		n.setcache(nil)
+		n.hashTrueMask &^= (uint32(1)<<key[keyStart])
 		c.updated = true
 		c.n = n
 		return done
@@ -995,7 +1004,7 @@ func (t *Trie) resolveHash(db ethdb.Database, n hashNode, key []byte, pos int, b
 	if !bytes.Equal(n, gotHash) {
 		fmt.Printf("Resolving wrong hash for prefix %x, trie prefix %x block %d\n", key[:pos], t.prefix, blockNr)
 		fmt.Printf("Expected hash %s\n", n)
-		fmt.Printf("Got hash %s\n", gotHash)
+		fmt.Printf("Got hash %s\n", hashNode(gotHash))
 		fmt.Printf("Stack: %s\n", debug.Stack())
 		return nil, &MissingNodeError{NodeHash: common.BytesToHash(n), Path: key[:pos]}
 	}
@@ -1020,15 +1029,14 @@ func (t *Trie) resolveHashOld(db ethdb.Database, n hashNode, key []byte, pos int
 	if err == nil && n != nil {
 		h := newHasher(t.encodeToBytes)
 		defer returnHasherToPool(h)
-		var gotHash hashNode
+		var gotHash common.Hash
 		if root != nil {
-			hash, _ := h.hash(root, pos == 0)
-			gotHash = hash.(hashNode)
+			h.hash(root, pos == 0, gotHash[:])
 		}
-		if !bytes.Equal(n, gotHash) {
+		if !bytes.Equal(n, gotHash[:]) {
 			fmt.Printf("Resolving wrong hash for prefix %x, trie prefix %x block %d\n", key[:pos], t.prefix, blockNr)
 			fmt.Printf("Expected hash %s\n", n)
-			fmt.Printf("Got hash %s\n", gotHash)
+			fmt.Printf("Got hash %s\n", hashNode(gotHash[:]))
 			fmt.Printf("Stack: %s\n", debug.Stack())
 			return nil, &MissingNodeError{NodeHash: common.BytesToHash(n), Path: key[:pos]}
 		}
@@ -1099,19 +1107,7 @@ func (t *Trie) tryPrune(n node, depth int) (newnode node, livecount int, unloade
 	if n.unlisted() {
 		// Unload the node from cache. All of its subnodes will have a lower or equal
 		// cache generation number.
-		hash := n.cache()
-		// If the node is dirty, we cannot unload, but instead moving to the back of the list
-		// We also do not want to unload top of the trie
-		if hash == nil {
-			if t.nodeList != nil {
-				if np, ok := n.(nodep); ok {
-					// Defering instead of calling to make sure parent nodes are added after their children and not before
-					defer t.nodeList.PushToBack(np)
-				}
-			}
-		} else {
-			return hash, 0, true, nil
-		}
+		return nil, 0, true, nil
 	}
 	switch n := (n).(type) {
 	case *shortNode:
@@ -1120,7 +1116,11 @@ func (t *Trie) tryPrune(n node, depth int) (newnode node, livecount int, unloade
 		if err == nil && unloaded {
 			t.touch(nil, n, nil, 0)
 			nn = n.copy()
-			nn.Val = newnode
+			if newnode == nil {
+				nn.Val = nn.valHash
+			} else {
+				nn.Val = newnode
+			}
 		}
 		return nn, livecount+1, unloaded, err
 
@@ -1132,7 +1132,11 @@ func (t *Trie) tryPrune(n node, depth int) (newnode node, livecount int, unloade
 			if nc == nil {
 				nc = n.copy()
 			}
-			nc.child1 = newnode
+			if newnode == nil {
+				nc.child1 = nc.child1Hash
+			} else {
+				nc.child1 = newnode
+			}
 		}
 		sumcount += livecount
 		newnode, livecount, unloaded, err = t.tryPrune(n.child2, depth+1)
@@ -1140,7 +1144,11 @@ func (t *Trie) tryPrune(n node, depth int) (newnode node, livecount int, unloade
 			if nc == nil {
 				nc = n.copy()
 			}
-			nc.child2 = newnode
+			if newnode == nil {
+				nc.child2 = nc.child2Hash
+			} else {
+				nc.child2 = newnode
+			}
 		}
 		sumcount += livecount
 		if nc != nil {
@@ -1160,7 +1168,11 @@ func (t *Trie) tryPrune(n node, depth int) (newnode node, livecount int, unloade
 					if nc == nil {
 						nc = n.copy()
 					}
-					nc.Children[i] = newnode
+					if newnode == nil {
+						nc.Children[i] = nc.childHashes[i]
+					} else {
+						nc.Children[i] = newnode
+					}
 				}
 				sumcount += livecount
 			}
@@ -1221,11 +1233,33 @@ func (t *Trie) countOccupancies(n node, level int, o map[int]map[int]int) {
 	return
 }
 
+func (t *Trie) flush(n node) {
+	if n == nil {
+		return
+	}
+	switch n := (n).(type) {
+	case *shortNode:
+		n.hashTrue = false
+		t.flush(n.Val)
+	case *duoNode:
+		n.hashTrueMask = 0
+		t.flush(n.child1)
+		t.flush(n.child2)
+	case *fullNode:
+		n.hashTrueMask = 0
+		for _, child := range n.Children {
+			t.flush(child)
+		}
+	}
+}
+
 func (t *Trie) hashRoot() (node, error) {
 	if t.root == nil {
 		return hashNode(emptyRoot.Bytes()), nil
 	}
 	h := newHasher(t.encodeToBytes)
 	defer returnHasherToPool(h)
-	return h.hash(t.root, true)
+	//t.flush(t.root)
+	//fmt.Printf("hashRoot\n")
+	return h.hash(t.root, true, nil)
 }

@@ -18,8 +18,6 @@ package core
 
 import (
 	"fmt"
-	"io"
-	"encoding/json"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
@@ -111,7 +109,7 @@ func FormatLogs(logs []vm.StructLog) []StructLogRes {
 // Process returns the receipts and logs accumulated during the process and
 // returns the amount of gas that was used in the process. If any of the
 // transactions failed to execute due to insufficient gas it will return an error.
-func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tds *state.TrieDbState, cfg vm.Config, w io.Writer) (types.Receipts, []*types.Log, uint64, error) {
+func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tds *state.TrieDbState, cfg vm.Config) (types.Receipts, []*types.Log, uint64, error) {
 	var (
 		receipts types.Receipts
 		usedGas  = new(uint64)
@@ -133,15 +131,6 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tds
 		receipt, _, err := ApplyTransaction(p.config, p.bc, nil, gp, statedb, tds, header, tx, usedGas, cfg)
 		if err != nil {
 			return nil, nil, 0, err
-		}
-		if block.NumberU64() == 5026043 {
-			encoder := json.NewEncoder(w)
-			logs := FormatLogs(cfg.Tracer.(*vm.StructLogger).StructLogs())
-			if err := encoder.Encode(logs); err != nil {
-				panic(err)
-			}
-			cfg.Debug = false
-			cfg.Tracer = nil
 		}
 		receipts = append(receipts, receipt)
 		allLogs = append(allLogs, receipt.Logs...)

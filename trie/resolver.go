@@ -24,6 +24,7 @@ func (t *Trie) rebuildFromHashes(dbr DatabaseReader) (root node, roothash hashNo
 	var lastFull [6]bool
 	var shorts [6]*shortNode
 	hasher := newHasher(t.encodeToBytes)
+	defer returnHasherToPool(hasher)
 	for i := 0; i < 1024*1024; i++ {
 		hashBytes := dbr.GetHash(uint32(i))
 		var hash node
@@ -93,15 +94,15 @@ func (t *Trie) rebuildFromHashes(dbr DatabaseReader) (root node, roothash hashNo
 			}
 		}
 	}
+	var rootHash common.Hash
 	if root != nil {
-		hn, err := hasher.hash(root, true)
+		_, err := hasher.hash(root, true, rootHash[:])
 		if err != nil {
 			return root, nil, err
 		}
-		roothash, _ = hn.(hashNode)
 	}
 	log.Debug("rebuildFromHashes took %v\n", time.Since(startTime))
-	return root, roothash, nil
+	return root, hashNode(rootHash[:]), nil
 }
 
 func (t *Trie) Rebuild(db ethdb.Database, blockNr uint64) hashNode {
@@ -119,7 +120,7 @@ func (t *Trie) Rebuild(db ethdb.Database, blockNr uint64) hashNode {
 	if bytes.Equal(roothash, n) {
 		t.relistNodes(root)
 		t.root = root
-		log.Info("Successfuly loaded from hashfile", "nodes", t.nodeList.Len())
+		log.Info("Successfuly loaded from hashfile", "nodes", t.nodeList.Len(), "root hash", roothash)
 	} else {
 		_, hn, err := t.rebuildHashes(db, nil, 0, blockNr, true)
 		if err != nil {
@@ -132,7 +133,7 @@ func (t *Trie) Rebuild(db ethdb.Database, blockNr uint64) hashNode {
 		if bytes.Equal(roothash, hn) {
 			t.relistNodes(root)
 			t.root = root
-			log.Info("Rebuilt hashfile and verified", "nodes", t.nodeList.Len())
+			log.Info("Rebuilt hashfile and verified", "nodes", t.nodeList.Len(), "root hash", roothash)
 		} else {
 			log.Error(fmt.Sprintf("Could not rebuild %s vs %s\n", roothash, hn))
 		}
@@ -172,7 +173,7 @@ func (r *rebuidData) rebuildInsert(k, v []byte, h *hasher) error {
 			hex := keybytesToHex(r.key[:])
 			r.nodeStack[startLevel+1].Key = hexToCompact(hex[startLevel+1:])
 			r.nodeStack[startLevel+1].Val = valueNode(r.value)
-			r.nodeStack[startLevel+1].setcache(nil)
+			r.nodeStack[startLevel+1].hashTrue = false
 			r.fillCount[startLevel+1] = 1
 			rhIndex := prefixLen(hex, r.resolveHex)
 			for level := startLevel; level >= stopLevel; level-- {
@@ -188,13 +189,18 @@ func (r *rebuidData) rebuildInsert(k, v []byte, h *hasher) error {
 					if short.Key == nil {
 						short = nil
 					}
-					var hn node
-					var err error
-					if short != nil && (!onResolvingPath || r.hashes && level <= 4 && compactLen(short.Key) + level >= 4) {
-						short.setcache(nil)
-						hn, err = h.hash(short, false)
-						if err != nil {
-							return err
+					if short != nil && r.vertical[level].childHashes[keynibble] == nil {
+						r.vertical[level].childHashes[keynibble] = make([]byte, common.HashLength)
+					}
+					hn, err := h.hash(short, false, r.vertical[level].childHashes[keynibble])
+					if err != nil {
+						return err
+					}
+					if short != nil {
+						if _, ok := hn.(hashNode); ok {
+							r.vertical[level].hashTrueMask |= (uint32(1)<<keynibble)
+						} else {
+							r.vertical[level].hashTrueMask &^= (uint32(1)<<keynibble)	
 						}
 					}
 					if onResolvingPath {
@@ -209,7 +215,7 @@ func (r *rebuidData) rebuildInsert(k, v []byte, h *hasher) error {
 					}
 					r.nodeStack[level].Key = hexToCompact(append([]byte{keynibble}, compactToHex(short.Key)...))
 					r.nodeStack[level].Val = short.Val
-					r.nodeStack[level].setcache(nil)
+					r.nodeStack[level].hashTrue = false
 					r.fillCount[level]++
 					if short != nil && r.hashes && level <= 4 && compactLen(short.Key) + level >= 4 {
 						hash, ok := hn.(hashNode)
@@ -221,18 +227,29 @@ func (r *rebuidData) rebuildInsert(k, v []byte, h *hasher) error {
 					if level >= r.pos {
 						r.nodeStack[level+1].Key = nil
 						r.nodeStack[level+1].Val = nil
-						r.nodeStack[level+1].setcache(nil)
+						r.nodeStack[level+1].hashTrue = false
 						r.fillCount[level+1] = 0
 						for i := 0; i < 17; i++ {
 							r.vertical[level+1].Children[i] = nil
 						}
+						r.vertical[level+1].hashTrueMask = 0
 					}
 					continue
 				}
-				r.vertical[level+1].setcache(nil)
-				hn, err := h.hash(&r.vertical[level+1], false)
+				full := &r.vertical[level+1]
+				if r.vertical[level].childHashes[keynibble] == nil {
+					r.vertical[level].childHashes[keynibble] = make([]byte, common.HashLength)
+				}
+				hn, err := h.hash(full, false, r.vertical[level].childHashes[keynibble])
 				if err != nil {
 					return err
+				}
+				if _, ok := hn.(hashNode); ok {
+					r.vertical[level].hashTrueMask |= (uint32(1)<<keynibble)
+					r.nodeStack[level].hashTrue = true
+				} else {
+					r.vertical[level].hashTrueMask &^= (uint32(1)<<keynibble)
+					r.nodeStack[level].hashTrue = false
 				}
 				if r.hashes && level == 4 {
 					hash, ok := hn.(hashNode)
@@ -242,7 +259,7 @@ func (r *rebuidData) rebuildInsert(k, v []byte, h *hasher) error {
 					r.dbw.PutHash(hashIdx, hash)
 				}
 				r.nodeStack[level].Key = hexToCompact([]byte{keynibble})
-				r.nodeStack[level].setcache(nil)
+				r.nodeStack[level].valHash = common.CopyBytes(r.vertical[level].childHashes[keynibble])
 				if onResolvingPath {
 					c := r.vertical[level+1].copy()
 					r.vertical[level].Children[keynibble] = c
@@ -255,11 +272,12 @@ func (r *rebuidData) rebuildInsert(k, v []byte, h *hasher) error {
 				if level >= r.pos {
 					r.nodeStack[level+1].Key = nil
 					r.nodeStack[level+1].Val = nil
-					r.nodeStack[level+1].setcache(nil)
+					r.nodeStack[level+1].hashTrue = false
 					r.fillCount[level+1] = 0
 					for i := 0; i < 17; i++ {
 						r.vertical[level+1].Children[i] = nil
 					}
+					r.vertical[level+1].hashTrueMask = 0
 				}
 			}
 			r.startLevel = stopLevel
@@ -399,9 +417,6 @@ func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
 
 func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 	pLen := prefixLen(k, tr.key[:])
-	if k!= nil && pLen == len(k) || pLen == len(tr.key[:]) {
-		//fmt.Printf("k %x, tr.key %x\n", k, tr.key[:])
-	}
 	stopLevel := 2*pLen
 	if k != nil && (k[pLen]^tr.key[pLen])&0xf0 == 0 {
 		stopLevel++
@@ -417,7 +432,7 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 	hex := keybytesToHex(tr.key[:])
 	tr.nodeStack[startLevel+1].Key = hexToCompact(hex[startLevel+1:])
 	tr.nodeStack[startLevel+1].Val = valueNode(tr.value)
-	tr.nodeStack[startLevel+1].setcache(nil)
+	tr.nodeStack[startLevel+1].hashTrue = false
 	tr.fillCount[startLevel+1] = 1
 	// Adjust rhIndices if needed
 	if tr.rhIndexGt < tr.resolveHexes.Len() {
@@ -443,7 +458,6 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 	for level := startLevel; level >= stopLevel; level-- {
 		keynibble := hex[level]
 		onResolvingPath := level <= rhPrefixLen // <= instead of < to be able to resolve deletes in one go
-		//onResolvingPath := true
 		var hashIdx uint32
 		if tr.hashes && level <= 4 {
 			hashIdx = binary.BigEndian.Uint32(tr.key[:4]) >> 12
@@ -454,13 +468,18 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 			if short.Key == nil {
 				short = nil
 			}
-			var hn node
-			var err error
-			if short != nil && (!onResolvingPath || tr.hashes && level <= 4 && compactLen(short.Key) + level >= 4) {
-				short.setcache(nil)
-				hn, err = tr.h.hash(short, false)
-				if err != nil {
-					return err
+			if short != nil && tr.vertical[level].childHashes[keynibble] == nil {
+				tr.vertical[level].childHashes[keynibble] = make([]byte, common.HashLength)
+			}
+			hn, err := tr.h.hash(short, false, tr.vertical[level].childHashes[keynibble])
+			if err != nil {
+				return err
+			}
+			if short != nil {
+				if _, ok := hn.(hashNode); ok {
+					tr.vertical[level].hashTrueMask |= (uint32(1)<<keynibble)
+				} else {
+					tr.vertical[level].hashTrueMask &^= (uint32(1)<<keynibble)
 				}
 			}
 			if onResolvingPath {
@@ -476,7 +495,7 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 			if short != nil {
 				tr.nodeStack[level].Key = hexToCompact(append([]byte{keynibble}, compactToHex(short.Key)...))
 				tr.nodeStack[level].Val = short.Val
-				tr.nodeStack[level].setcache(nil)
+				tr.nodeStack[level].hashTrue = false
 			}
 			tr.fillCount[level]++
 			if short != nil && tr.hashes && level <= 4 && compactLen(short.Key) + level >= 4 {
@@ -489,17 +508,33 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 			if level >= tc.resolvePos {
 				tr.nodeStack[level+1].Key = nil
 				tr.nodeStack[level+1].Val = nil
+				tr.nodeStack[level+1].hashTrue = false
 				tr.fillCount[level+1] = 0
 				for i := 0; i < 17; i++ {
 					tr.vertical[level+1].Children[i] = nil
 				}
+				tr.vertical[level+1].hashTrueMask = 0
 			}
 			continue
 		}
-		tr.vertical[level+1].setcache(nil)
-		hn, err := tr.h.hash(&tr.vertical[level+1], false)
+		full := &tr.vertical[level+1]
+		if tr.vertical[level].childHashes[keynibble] == nil {
+			tr.vertical[level].childHashes[keynibble] = make([]byte, common.HashLength)
+		}
+		hn, err := tr.h.hash(full, false, tr.vertical[level].childHashes[keynibble])
 		if err != nil {
 			return err
+		}
+		if _, ok := hn.(hashNode); ok {
+			tr.vertical[level].hashTrueMask |= (uint32(1)<<keynibble)
+			if tr.nodeStack[level].valHash == nil {
+				tr.nodeStack[level].valHash = make([]byte, common.HashLength)
+			}
+			copy(tr.nodeStack[level].valHash, tr.vertical[level].childHashes[keynibble])
+			tr.nodeStack[level].hashTrue = true
+		} else {
+			tr.vertical[level].hashTrueMask &^= (uint32(1)<<keynibble)
+			tr.nodeStack[level].hashTrue = false
 		}
 		if tr.hashes && level == 4 {
 			hash, ok := hn.(hashNode)
@@ -509,10 +544,8 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 			tr.dbw.PutHash(hashIdx, hash)
 		}
 		tr.nodeStack[level].Key = hexToCompact([]byte{keynibble})
-		tr.nodeStack[level].setcache(nil)
 		if onResolvingPath {
-			c := tr.vertical[level+1].copy()
-			c.setcache(nil)
+			c := full.copy()
 			tr.vertical[level].Children[keynibble] = c
 			tr.nodeStack[level].Val = c
 		} else {
@@ -523,34 +556,37 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 		if level >= tc.resolvePos {
 			tr.nodeStack[level+1].Key = nil
 			tr.nodeStack[level+1].Val = nil
-			tr.nodeStack[level+1].setcache(nil)
+			tr.nodeStack[level+1].hashTrue = false
 			tr.fillCount[level+1] = 0
-			tr.vertical[level+1].setcache(nil)
 			for i := 0; i < 17; i++ {
 				tr.vertical[level+1].Children[i] = nil
 			}
+			tr.vertical[level+1].hashTrueMask = 0
 		}
 	}
 	tr.startLevel = stopLevel
 	if k == nil {
 		var root node
 		if tr.fillCount[tc.resolvePos] == 1 {
-			root = tr.nodeStack[tc.resolvePos].copy()
+			c := tr.nodeStack[tc.resolvePos].copy()
+			root = c
 		} else if tr.fillCount[tc.resolvePos] > 1 {
-			root = tr.vertical[tc.resolvePos].copy()
+			c := tr.vertical[tc.resolvePos].copy()
+			root = c
 		}
 		if root == nil {
 			return fmt.Errorf("Resolve returned nil root")
 		}
-		hash, err := tr.h.hash(root, tc.resolvePos == 0)
+		var gotHash common.Hash
+		hash, err := tr.h.hash(root, tc.resolvePos == 0, gotHash[:])
 		if err != nil {
 			return err
 		}
-		gotHash, ok := hash.(hashNode)
-		if ok {
-			if !bytes.Equal(tc.resolveHash, gotHash) {
+		tr.t.flush(root)
+		if _, ok := hash.(hashNode); ok {
+			if !bytes.Equal(tc.resolveHash, gotHash[:]) {
 				return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got %s\n",
-					tc.resolveKey[:tc.resolvePos], tc.t.prefix, tc.resolveHash, gotHash)
+					tc.resolveKey[:tc.resolvePos], tc.t.prefix, tc.resolveHash, hashNode(gotHash[:]))
 			}
 		} else {
 			if tc.resolveHash != nil {
@@ -562,11 +598,11 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 		for i := 0; i <= Levels; i++ {
 			tr.nodeStack[i].Key = nil
 			tr.nodeStack[i].Val = nil
-			tr.nodeStack[i].setcache(nil)
-			tr.vertical[i].setcache(nil)
+			tr.nodeStack[i].hashTrue = false
 			for j := 0; j<17; j++ {
 				tr.vertical[i].Children[j] = nil
 			}
+			tr.vertical[i].hashTrueMask = 0
 			tr.fillCount[i] = 0
 		}
 	}
@@ -599,6 +635,7 @@ func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
 }
 
 func (tr *TrieResolver) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
+	defer returnHasherToPool(tr.h)
 	startkeys, fixedbits := tr.PrepareResolveParams()
 	if err := db.MultiWalkAsOf(tr.t.prefix, startkeys, fixedbits, blockNr, tr.Walker); err != nil {
 		return err
@@ -611,6 +648,7 @@ func (tc *TrieContinuation) ResolveWithDb(db ethdb.Database, blockNr uint64) err
 	decodeNibbles(tc.resolveKey[:tc.resolvePos], start[:])
 	r := rebuidData{dbw: nil, pos: tc.resolvePos, resolveHex: tc.resolveKey, hashes: false, startLevel: tc.resolvePos}
 	h := newHasher(tc.t.encodeToBytes)
+	defer returnHasherToPool(h)
 	err := db.WalkAsOf(tc.t.prefix, start[:], uint(4*tc.resolvePos), blockNr, func(k, v []byte) (bool, error) {
 		if len(v) > 0 {
 			if err := r.rebuildInsert(k, v, h); err != nil {
@@ -634,15 +672,15 @@ func (tc *TrieContinuation) ResolveWithDb(db ethdb.Database, blockNr uint64) err
 	if root == nil {
 		return fmt.Errorf("Resolve returned nil root")
 	}
-	hash, err := h.hash(root, tc.resolvePos == 0)
+	var gotHash common.Hash
+	hash, err := h.hash(root, tc.resolvePos == 0, gotHash[:])
 	if err != nil {
 		return err
 	}
-	gotHash, ok := hash.(hashNode)
-	if ok {
-		if !bytes.Equal(tc.resolveHash, gotHash) {
+	if _, ok := hash.(hashNode); ok {
+		if !bytes.Equal(tc.resolveHash, gotHash[:]) {
 			return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got %s\n",
-				tc.resolveKey[:tc.resolvePos], tc.t.prefix, tc.resolveHash, gotHash)
+				tc.resolveKey[:tc.resolvePos], tc.t.prefix, tc.resolveHash, hashNode(gotHash[:]))
 		}
 	} else {
 		if tc.resolveHash != nil {
@@ -679,13 +717,12 @@ func (t *Trie) rebuildHashes(db ethdb.Database, key []byte, pos int, blockNr uin
 		root = &r.vertical[pos]
 	}
 	if err == nil {
-		var gotHash hashNode
+		var gotHash common.Hash
 		if root != nil {
-			hash, _ := h.hash(root, pos == 0)
-			gotHash = hash.(hashNode)
-			return root, gotHash, nil
+			h.hash(root, pos == 0, gotHash[:])
+			return root, gotHash[:], nil
 		}
-		return root, gotHash, nil
+		return root, gotHash[:], nil
 	} else {
 		fmt.Printf("Error resolving hash: %s\n", err)
 	}

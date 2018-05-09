@@ -414,7 +414,7 @@ func (tds *TrieDbState) ReadAccountData(address *common.Address) (*Account, erro
 		return nil, err
 	}
 	if !gotValue {
-		fmt.Printf("DBREAD %x\n", address[:])
+		//fmt.Printf("DBREAD %x\n", address[:])
 		//fmt.Printf("%s\n", debug.Stack())
 	}
 	if enc == nil || len(enc) == 0 {
@@ -614,7 +614,9 @@ func (dsw *DbStateWriter) WriteAccountStorage(address *common.Address, key, valu
 		return err
 	}
 	v := bytes.TrimLeft(value[:], "\x00")
-	return dsw.tds.db.TrieDB().PutS(address[:], seckey, v, dsw.tds.blockNr)
+	vv := make([]byte, len(v))
+	copy(vv, v)
+	return dsw.tds.db.TrieDB().PutS(address[:], seckey, vv, dsw.tds.blockNr)
 }
 
 // Database wraps access to tries and contract code.

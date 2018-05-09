@@ -70,8 +70,8 @@ func (t *Trie) Prove(db ethdb.Database, key []byte, fromLevel uint, proofDb ethd
 	for i, n := range nodes {
 		// Don't bother checking for errors here since hasher panics
 		// if encoding doesn't work and we're not writing to any database.
-		n, _ = hasher.hashChildren(n)
-		hn, _ := hasher.store(n, false) // Since the second argument is nil, no database write will occur
+		n, _ = hasher.hashChildren(n, 0)
+		hn, _ := hasher.store(n, false, nil) // Since the second argument is nil, no database write will occur
 		if hash, ok := hn.(hashNode); ok || i == 0 {
 			// If the node's database encoding is a hash (or is the
 			// root node), it becomes a proof element.
