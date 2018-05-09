@@ -374,7 +374,7 @@ func (self *StateDB) GetOrNewStateObject(addr common.Address) *stateObject {
 // createObject creates a new state object. If there is an existing account with
 // the given address, it is overwritten and returned as the second return value.
 func (self *StateDB) createObject(addr common.Address, previous *stateObject) (newobj, prev *stateObject) {
-	//fmt.Printf("CREATE %x\n", addr[:])
+	fmt.Printf("CREATE %x\n", addr[:])
 	prev = previous
 	newobj = newObject(self, addr, Account{})
 	newobj.setNonce(0) // sets the object to dirty
