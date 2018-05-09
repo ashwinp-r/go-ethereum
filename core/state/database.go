@@ -51,6 +51,7 @@ type StateReader interface {
 	ReadAccountData(address *common.Address) (*Account, error)
 	ReadAccountStorage(address *common.Address, key *common.Hash) ([]byte, error)
 	ReadAccountCode(addres *common.Address) ([]byte, error)
+	ReadAccountCodeSize(addres *common.Address) (int, error)
 }
 
 type StateWriter interface {
@@ -130,6 +131,14 @@ func (dbs *DbState) ReadAccountCode(address *common.Address) ([]byte, error) {
 	return dbs.db.Get(CodeBucket, account.CodeHash[:])
 }
 
+func (dbs *DbState) ReadAccountCodeSize(address *common.Address) (int, error) {
+	code, err := dbs.ReadAccountCode(address)
+	if err != nil {
+		return 0, err
+	}
+	return len(code), nil
+}
+
 func (dbs *DbState) UpdateAccountData(address *common.Address, account *Account) error {
 	data, err := rlp.EncodeToBytes(account)
 	if err != nil {
@@ -165,10 +174,15 @@ type TrieDbState struct {
 	storageUpdates   map[common.Address]map[common.Hash][]byte
 	accountUpdates   map[common.Address]*Account
 	deleted          map[common.Address]struct{}
+	codeSizeCache    *lru.Cache
 }
 
 func NewTrieDbState(root common.Hash, db Database, blockNr uint64) (*TrieDbState, error) {
 	hashKeyCache, err := lru.New(1024*1024)
+	if err != nil {
+		return nil, err
+	}
+	csc, err := lru.New(100000)
 	if err != nil {
 		return nil, err
 	}
@@ -183,6 +197,7 @@ func NewTrieDbState(root common.Hash, db Database, blockNr uint64) (*TrieDbState
 		storageUpdates: make(map[common.Address]map[common.Hash][]byte),
 		accountUpdates: make(map[common.Address]*Account),
 		deleted: make(map[common.Address]struct{}),
+		codeSizeCache: csc,
 	}
 	t.MakeListed(tds.nodeList)
 	return &tds, nil
@@ -480,6 +495,17 @@ func (tds *TrieDbState) ReadAccountCode(address *common.Address) ([]byte, error)
 		return nil, nil
 	}
 	return tds.db.TrieDB().Get(CodeBucket, account.CodeHash[:])
+}
+
+func (tds *TrieDbState) ReadAccountCodeSize(address *common.Address) (int, error) {
+	if cached, ok := tds.codeSizeCache.Get(*address); ok {
+		return cached.(int), nil
+	}
+	code, err := tds.ReadAccountCode(address)
+	if err != nil {
+		return 0, err
+	}
+	return len(code), nil
 }
 
 var prevMemStats runtime.MemStats
