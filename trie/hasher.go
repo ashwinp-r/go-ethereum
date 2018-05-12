@@ -90,7 +90,7 @@ func (h *hasher) hashChildren(original node, level int) (node, error) {
 	switch n := original.(type) {
 	case *shortNode:
 		// Hash the short node's child, caching the newly hashed subtree
-		collapsed := &h.shortCollapsed[level]
+		collapsed := &shortNode{}
 		collapsed.Key = n.Key
 
 		if child, ok := n.Val.(valueNode); !ok {
@@ -121,7 +121,7 @@ func (h *hasher) hashChildren(original node, level int) (node, error) {
 
 	case *duoNode:
 		i1, i2 := n.childrenIdx()
-		collapsed := &h.fullCollapsed[level]
+		collapsed := &fullNode{}
 		for i := 0; i < 17; i++ {
 			if i == int(i1) {
 				if (n.hashTrueMask & (uint32(1)<<i1)) == 0 {
@@ -161,7 +161,7 @@ func (h *hasher) hashChildren(original node, level int) (node, error) {
 
 	case *fullNode:
 		// Hash the full node's children, caching the newly hashed subtrees
-		collapsed := &h.fullCollapsed[level]
+		collapsed := &fullNode{}
 
 		for i := 0; i < 16; i++ {
 			if n.Children[i] != nil {
