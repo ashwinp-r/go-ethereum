@@ -476,6 +476,10 @@ type TrieContinuation struct {
 	touched []Touch      // Nodes touched during the operation, by level
 }
 
+func NewContinuation(key []byte, pos int, resolveHash []byte) *TrieContinuation {
+	return &TrieContinuation{key: key, resolveKey: key, resolvePos: pos, resolveHash: hashNode(resolveHash)}
+}
+
 func (tc *TrieContinuation) Trie() *Trie {
 	return tc.t
 }

@@ -677,10 +677,10 @@ func hashFile() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "ResolveWithDb") || strings.HasPrefix(line, "Error") ||
 			strings.HasPrefix(line, "0000000000000000000000000000000000000000000000000000000000000000") || 
-			strings.HasPrefix(line, "ERROR") {
+			strings.HasPrefix(line, "ERROR") || strings.HasPrefix(line, "tc{") {
 			fmt.Printf("%d %s\n", count, line)
 			count++
-		} else if count == 30 {
+		} else if count == 15 {
 			w.WriteString(line)
 			w.WriteString("\n")
 		}
@@ -689,9 +689,37 @@ func hashFile() {
 }
 
 func buildHashFromFile() {
-	t := trie.New(common.Hash{}, []byte{}, false)
-	r := r.NewResolver(nil)
-	r.AddContinuation()
+	treePrefix := common.FromHex("e63dc0b48fd13c888661bfb30d7069823f967f03")
+	t := trie.New(common.Hash{}, treePrefix, false)
+	r := t.NewResolver(nil)
+	key := common.FromHex("0304020e0c08000d00060005080209080c0a0d0009080e0f040d0e0c09030709030a0c030e00080d050e0405020801030806070e0c050e05000d0809040f060710")
+	resolveHash := common.FromHex("7752d21089645d5f4a25594aa1c6ee225f9bef607ac10f07d128df194c9263cd")
+	tc := trie.NewContinuation(key, 0, resolveHash)
+	r.AddContinuation(tc)
+	f, err := os.Open("/Users/alexeyakhunov/mygit/go-ethereum/geth_read.log")
+	check(err)
+	defer f.Close()
+	r.PrepareResolveParams()
+	scanner := bufio.NewScanner(f)
+	count := 0
+	for scanner.Scan() {
+		terms := strings.Split(scanner.Text(), " ")
+		idx, _ := strconv.Atoi(terms[0])
+		key := common.FromHex(terms[1])
+		if len(key) == 0 {
+			key = nil
+		}
+		value := common.FromHex(terms[2])
+		if len(value) == 0 {
+			value = nil
+		}
+		_, err := r.Walker(idx, key, value)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+		}
+		count++
+	}
+	fmt.Printf("%d lines scanned\n", count)
 }
 
 func main() {
@@ -714,6 +742,7 @@ func main() {
  	//mychart()
  	//testRebuild()
  	//testRewind()
- 	hashFile()
+ 	//hashFile()
+ 	buildHashFromFile()
 }
 

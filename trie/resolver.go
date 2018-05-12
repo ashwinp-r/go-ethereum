@@ -409,7 +409,7 @@ func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
 			startkeys = append(startkeys, key)
 			fixedbits = append(fixedbits, uint(4*c.resolvePos))
 			prevC = c
-			c.Print()
+			//c.Print()
 		}
 	}
 	tr.startLevel = tr.continuations[0].resolvePos
@@ -575,12 +575,16 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 		if _, ok := hash.(hashNode); ok {
 			if !bytes.Equal(tc.resolveHash, gotHash[:]) {
 				return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got %s\n",
-					tc.resolveKey[:tc.resolvePos], tc.t.prefix, tc.resolveHash, hashNode(gotHash[:]))
+					tc.resolveKey[:tc.resolvePos],
+					tr.t.prefix,
+					tc.resolveHash,
+					hashNode(gotHash[:]),
+				)
 			}
 		} else {
 			if tc.resolveHash != nil {
 				return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got embedded node\n",
-					tc.resolveKey[:tc.resolvePos], tc.t.prefix, tc.resolveHash)
+					tc.resolveKey[:tc.resolvePos], tr.t.prefix, tc.resolveHash)
 			}
 		}
 		tc.resolved = root
