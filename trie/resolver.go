@@ -568,11 +568,9 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 	if k == nil {
 		var root node
 		if tr.fillCount[tc.resolvePos] == 1 {
-			c := tr.nodeStack[tc.resolvePos].copy()
-			root = c
+			root = tr.nodeStack[tc.resolvePos].copy()
 		} else if tr.fillCount[tc.resolvePos] > 1 {
-			c := tr.vertical[tc.resolvePos].copy()
-			root = c
+			root = tr.vertical[tc.resolvePos].copy()
 		}
 		if root == nil {
 			return fmt.Errorf("Resolve returned nil root")
@@ -582,7 +580,7 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 		if err != nil {
 			return err
 		}
-		tr.t.flush(root)
+		//tr.t.flush(root)
 		if _, ok := hash.(hashNode); ok {
 			if !bytes.Equal(tc.resolveHash, gotHash[:]) {
 				return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got %s\n",
