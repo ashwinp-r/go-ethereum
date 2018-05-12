@@ -60,7 +60,11 @@ func returnHasherToPool(h *hasher) {
 // hash collapses a node down into a hash node, also returning a copy of the
 // original node initialized with the computed hash to replace the original one.
 func (h *hasher) hash(n node, force bool, storeTo []byte) (node, error) {
-	return h.hashInternal(n, force, storeTo, 0)
+	n, err := h.hashInternal(n, force, storeTo, 0)
+	if short, ok := n.(*shortNode); ok {
+		n = short.copy()
+	}
+	return n, err
 }
 
 // hash collapses a node down into a hash node, also returning a copy of the
