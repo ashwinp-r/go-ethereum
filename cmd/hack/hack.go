@@ -10,6 +10,7 @@ import (
 	"os"
 	"log"
 	"io/ioutil"
+	"bufio"
 
 	"github.com/boltdb/bolt"
 	"github.com/wcharczuk/go-chart"
@@ -663,6 +664,36 @@ func testRewind() {
 	fmt.Printf("Calculated rewound root hash: %x\n", rewoundRoot)
 }
 
+func hashFile() {
+	f, err := os.Open("/Users/alexeyakhunov/mygit/go-ethereum/geth.log")
+	check(err)
+	defer f.Close()
+	w, err := os.Create("/Users/alexeyakhunov/mygit/go-ethereum/geth_read.log")
+	check(err)
+	defer w.Close()
+	scanner := bufio.NewScanner(f)
+	count := 0
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "ResolveWithDb") || strings.HasPrefix(line, "Error") ||
+			strings.HasPrefix(line, "0000000000000000000000000000000000000000000000000000000000000000") || 
+			strings.HasPrefix(line, "ERROR") {
+			fmt.Printf("%d %s\n", count, line)
+			count++
+		} else if count == 30 {
+			w.WriteString(line)
+			w.WriteString("\n")
+		}
+	}
+	fmt.Printf("%d lines scanned\n", count)
+}
+
+func buildHashFromFile() {
+	t := trie.New(common.Hash{}, []byte{}, false)
+	r := r.NewResolver(nil)
+	r.AddContinuation()
+}
+
 func main() {
 	flag.Parse()
     if *cpuprofile != "" {
@@ -682,6 +713,7 @@ func main() {
  	//defer db.Close()
  	//mychart()
  	//testRebuild()
- 	testRewind()
+ 	//testRewind()
+ 	hashFile()
 }
 
