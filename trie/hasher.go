@@ -110,7 +110,7 @@ func (h *hasher) hashChildren(original node, level int) (node, error) {
 			enc, _ := rlp.EncodeToBytes(child)
 			collapsed.Val = valueNode(enc)
 		} else {
-			collapsed.Val = valueNode(common.CopyBytes(child))
+			collapsed.Val = child
 		}
 		if collapsed.Val == nil {
 			collapsed.Val = valueNode(nil) // Ensure that nil children are encoded as empty strings.
@@ -233,7 +233,11 @@ func (h *hasher) store(n node, force bool, storeTo []byte) (node, error) {
 	}
 	if h.tmp.Len() < 32 && !force {
 		if short, ok := n.(*shortNode); ok {
-			return short.copy(), nil
+			c := short.copy()
+			if v, ok := c.Val.(valueNode); ok {
+				c.Val = valueNode(common.CopyBytes(v))
+			}
+			return c, nil
 		}
 		return n, nil // Nodes smaller than 32 bytes are stored inside their parent
 	}
