@@ -90,7 +90,7 @@ func (h *hasher) hashChildren(original node, level int) (node, error) {
 	switch n := original.(type) {
 	case *shortNode:
 		// Hash the short node's child, caching the newly hashed subtree
-		collapsed := &shortNode{}
+		collapsed := &h.shortCollapsed[level]
 		collapsed.Key = n.Key
 
 		if child, ok := n.Val.(valueNode); !ok {
@@ -104,6 +104,8 @@ func (h *hasher) hashChildren(original node, level int) (node, error) {
 				}
 				if _, ok := collapsed.Val.(hashNode); ok {
 					n.hashTrue = true
+				} else {
+					n.hashTrue = false
 				}
 			} else {
 				collapsed.Val = n.valHash
@@ -121,7 +123,7 @@ func (h *hasher) hashChildren(original node, level int) (node, error) {
 
 	case *duoNode:
 		i1, i2 := n.childrenIdx()
-		collapsed := &fullNode{}
+		collapsed := &h.fullCollapsed[level]
 		for i := 0; i < 17; i++ {
 			if i == int(i1) {
 				if (n.hashTrueMask & (uint32(1)<<i1)) == 0 {
@@ -134,6 +136,8 @@ func (h *hasher) hashChildren(original node, level int) (node, error) {
 					}
 					if _, ok := collapsed.Children[i].(hashNode); ok {
 						n.hashTrueMask |= (uint32(1)<<i1)
+					} else {
+						n.hashTrueMask &^= (uint32(1)<<i1)
 					}
 				} else {
 					collapsed.Children[i] = n.child1Hash
@@ -149,6 +153,8 @@ func (h *hasher) hashChildren(original node, level int) (node, error) {
 					}
 					if _, ok := collapsed.Children[i].(hashNode); ok {
 						n.hashTrueMask |= (uint32(1)<<i2)
+					} else {
+						n.hashTrueMask &^= (uint32(1)<<i2)
 					}
 				} else {
 					collapsed.Children[i] = n.child2Hash
@@ -161,7 +167,7 @@ func (h *hasher) hashChildren(original node, level int) (node, error) {
 
 	case *fullNode:
 		// Hash the full node's children, caching the newly hashed subtrees
-		collapsed := &fullNode{}
+		collapsed := &h.fullCollapsed[level]
 
 		for i := 0; i < 16; i++ {
 			if n.Children[i] != nil {
@@ -175,6 +181,8 @@ func (h *hasher) hashChildren(original node, level int) (node, error) {
 					}
 					if _, ok := collapsed.Children[i].(hashNode); ok {
 						n.hashTrueMask |= (uint32(1)<<uint(i))
+					} else {
+						n.hashTrueMask &^= (uint32(1)<<uint(i))
 					}
 				} else {
 					collapsed.Children[i] = n.childHashes[i]
