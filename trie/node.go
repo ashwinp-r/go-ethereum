@@ -169,14 +169,23 @@ func (n *duoNode) copy() *duoNode {
 	copy := *n
 	copy.flags.next = nil
 	copy.flags.prev = nil
-	if hash, ok := copy.child1.(hashNode); ok {
-		copy.child1 = hashNode(common.CopyBytes(hash))
-	}
-	if hash, ok := copy.child2.(hashNode); ok {
-		copy.child2 = hashNode(common.CopyBytes(hash))
-	}
 	copy.child1Hash = common.CopyBytes(copy.child1Hash)
 	copy.child2Hash = common.CopyBytes(copy.child2Hash)
+	i1, i2 := copy.childrenIdx()
+	if hash, ok := copy.child1.(hashNode); ok {
+		if (copy.hashTrueMask & (uint32(1)<<uint(i1))) != 0 {
+			copy.child1 = copy.child1Hash
+		} else {
+			copy.child1 = hashNode(common.CopyBytes(hash))
+		}
+	}
+	if hash, ok := copy.child2.(hashNode); ok {
+		if (copy.hashTrueMask & (uint32(1)<<uint(i2))) != 0 {
+			copy.child2 = copy.child1Hash
+		} else {
+			copy.child2 = hashNode(common.CopyBytes(hash))
+		}
+	}
 	return &copy
 }
 func (n *shortNode) copy() *shortNode {

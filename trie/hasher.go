@@ -110,7 +110,7 @@ func (h *hasher) hashChildren(original node, level int) (node, error) {
 			enc, _ := rlp.EncodeToBytes(child)
 			collapsed.Val = valueNode(enc)
 		} else {
-			collapsed.Val = n.Val
+			collapsed.Val = valueNode(common.CopyBytes(child))
 		}
 		if collapsed.Val == nil {
 			collapsed.Val = valueNode(nil) // Ensure that nil children are encoded as empty strings.
