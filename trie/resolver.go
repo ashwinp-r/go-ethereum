@@ -405,7 +405,12 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 		}
 		tr.nodeStack[level].Key = hexToCompact([]byte{keynibble})
 		if onResolvingPath {
-			c := full.copy()
+			var c node
+			if tr.fillCount[level+1] == 2 {
+				c = full.duoCopy()
+			} else {
+				c = full.copy()
+			}
 			tr.vertical[level].Children[keynibble] = c
 			tr.nodeStack[level].Val = c
 			//fmt.Printf("Promoting copy of full\n")

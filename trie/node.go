@@ -120,7 +120,52 @@ func (n *fullNode) copy() *fullNode   {
 	}
 	return &copy
 }
-func (n *duoNode) copy() *duoNode     {
+
+func (n *fullNode) duoCopy() *duoNode {
+	copy := duoNode{}
+	first := true
+	for i, child := range n.Children {
+		if child == nil {
+			continue
+		}
+		if first {
+			first = false
+			copy.mask |= (uint32(1)<<uint(i))
+			if (n.hashTrueMask & (uint32(1)<<uint(i))) != 0 {
+				copy.child1Hash = common.CopyBytes(n.childHashes[i])
+				copy.hashTrueMask |= (uint32(1)<<uint(i))
+			}
+			if hash, ok := child.(hashNode); ok {
+				if (copy.hashTrueMask & (uint32(1)<<uint(i))) != 0 {
+					copy.child1 = copy.child1Hash
+				} else {
+					copy.child1 = hashNode(common.CopyBytes(hash))
+				}
+			} else {
+				copy.child1 = child
+			}
+		} else {
+			copy.mask |= (uint32(1)<<uint(i))
+			if (n.hashTrueMask & (uint32(1)<<uint(i))) != 0 {
+				copy.child2Hash = common.CopyBytes(n.childHashes[i])
+				copy.hashTrueMask |= (uint32(1)<<uint(i))
+			}
+			if hash, ok := child.(hashNode); ok {
+				if (copy.hashTrueMask & (uint32(1)<<uint(i))) != 0 {
+					copy.child2 = copy.child2Hash
+				} else {
+					copy.child2 = hashNode(common.CopyBytes(hash))
+				}
+			} else {
+				copy.child2 = child
+			}
+			break
+		}
+	}
+	return &copy
+}
+
+func (n *duoNode) copy() *duoNode {
 	copy := *n
 	copy.flags.next = nil
 	copy.flags.prev = nil
