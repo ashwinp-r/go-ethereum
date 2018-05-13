@@ -122,7 +122,7 @@ func (t *Trie) Rebuild(db ethdb.Database, blockNr uint64) hashNode {
 		t.root = root
 		log.Info("Successfuly loaded from hashfile", "nodes", t.nodeList.Len(), "root hash", roothash)
 	} else {
-		_, hn, err := t.rebuildHashes(db, nil, 0, blockNr, true)
+		_, hn, err := t.rebuildHashes(db, nil, 0, blockNr, true, n)
 		if err != nil {
 			panic(err)
 		}
@@ -142,158 +142,6 @@ func (t *Trie) Rebuild(db ethdb.Database, blockNr uint64) hashNode {
 }
 
 const Levels = 64
-
-type rebuidData struct {
-	dbw ethdb.Putter
-	key [32]byte
-	value []byte
-	resolveHex []byte
-	pos int
-	hashes bool
-	key_set bool
-	startLevel int
-	nodeStack [Levels+1]shortNode
-	vertical [Levels+1]fullNode
-	fillCount [Levels+1]int
-}
-
-func (r *rebuidData) rebuildInsert(k, v []byte, h *hasher) error {
-	if k == nil || len(v) > 0 {
-		// First, finish off the previous key
-		if r.key_set {
-			pLen := prefixLen(k, r.key[:])
-			stopLevel := 2*pLen
-			if k != nil && (k[pLen]^r.key[pLen])&0xf0 == 0 {
-				stopLevel++
-			}
-			startLevel := r.startLevel
-			if startLevel < stopLevel {
-				startLevel = stopLevel
-			}
-			hex := keybytesToHex(r.key[:])
-			r.nodeStack[startLevel+1].Key = hexToCompact(hex[startLevel+1:])
-			r.nodeStack[startLevel+1].Val = valueNode(r.value)
-			r.nodeStack[startLevel+1].hashTrue = false
-			r.fillCount[startLevel+1] = 1
-			rhIndex := prefixLen(hex, r.resolveHex)
-			for level := startLevel; level >= stopLevel; level-- {
-				keynibble := hex[level]
-				onResolvingPath := level < rhIndex
-				var hashIdx uint32
-				if r.hashes && level <= 4 {
-					hashIdx = binary.BigEndian.Uint32(r.key[:4]) >> 12
-				}
-				if r.fillCount[level+1] == 1 {
-					// Short node, needs to be promoted to the level above
-					short := &r.nodeStack[level+1]
-					if short.Key == nil {
-						short = nil
-					}
-					if short != nil && r.vertical[level].childHashes[keynibble] == nil {
-						r.vertical[level].childHashes[keynibble] = make([]byte, common.HashLength)
-					}
-					hn, err := h.hash(short, false, r.vertical[level].childHashes[keynibble])
-					if err != nil {
-						return err
-					}
-					if short != nil {
-						if _, ok := hn.(hashNode); ok {
-							r.vertical[level].hashTrueMask |= (uint32(1)<<keynibble)
-						} else {
-							r.vertical[level].hashTrueMask &^= (uint32(1)<<keynibble)	
-						}
-					}
-					if onResolvingPath {
-						if short != nil {
-							c := short.copy()
-							r.vertical[level].Children[keynibble] = c
-						} else {
-							r.vertical[level].Children[keynibble] = nil
-						}
-					} else {
-						r.vertical[level].Children[keynibble] = hn
-					}
-					r.nodeStack[level].Key = hexToCompact(append([]byte{keynibble}, compactToHex(short.Key)...))
-					r.nodeStack[level].Val = short.Val
-					r.nodeStack[level].hashTrue = false
-					r.fillCount[level]++
-					if short != nil && r.hashes && level <= 4 && compactLen(short.Key) + level >= 4 {
-						hash, ok := hn.(hashNode)
-						if !ok {
-							return fmt.Errorf("trie.rebuildInsert: Expected hashNode")
-						}
-						r.dbw.PutHash(hashIdx, hash)
-					}
-					if level >= r.pos {
-						r.nodeStack[level+1].Key = nil
-						r.nodeStack[level+1].Val = nil
-						r.nodeStack[level+1].hashTrue = false
-						r.fillCount[level+1] = 0
-						for i := 0; i < 17; i++ {
-							r.vertical[level+1].Children[i] = nil
-						}
-						r.vertical[level+1].hashTrueMask = 0
-					}
-					continue
-				}
-				full := &r.vertical[level+1]
-				if r.vertical[level].childHashes[keynibble] == nil {
-					r.vertical[level].childHashes[keynibble] = make([]byte, common.HashLength)
-				}
-				hn, err := h.hash(full, false, r.vertical[level].childHashes[keynibble])
-				if err != nil {
-					return err
-				}
-				if _, ok := hn.(hashNode); ok {
-					r.vertical[level].hashTrueMask |= (uint32(1)<<keynibble)
-					r.nodeStack[level].hashTrue = true
-				} else {
-					r.vertical[level].hashTrueMask &^= (uint32(1)<<keynibble)
-					r.nodeStack[level].hashTrue = false
-				}
-				if r.hashes && level == 4 {
-					hash, ok := hn.(hashNode)
-					if !ok {
-						return fmt.Errorf("trie.rebuildInsert: hashNode expected")
-					}
-					r.dbw.PutHash(hashIdx, hash)
-				}
-				r.nodeStack[level].Key = hexToCompact([]byte{keynibble})
-				r.nodeStack[level].valHash = common.CopyBytes(r.vertical[level].childHashes[keynibble])
-				if onResolvingPath {
-					c := r.vertical[level+1].copy()
-					r.vertical[level].Children[keynibble] = c
-					r.nodeStack[level].Val = c
-				} else {
-					r.vertical[level].Children[keynibble] = hn
-					r.nodeStack[level].Val = hn
-				}
-				r.fillCount[level]++
-				if level >= r.pos {
-					r.nodeStack[level+1].Key = nil
-					r.nodeStack[level+1].Val = nil
-					r.nodeStack[level+1].hashTrue = false
-					r.fillCount[level+1] = 0
-					for i := 0; i < 17; i++ {
-						r.vertical[level+1].Children[i] = nil
-					}
-					r.vertical[level+1].hashTrueMask = 0
-				}
-			}
-			r.startLevel = stopLevel
-			//if r.startLevel < r.pos {
-			//	r.startLevel = r.pos
-			//}
-		}
-		if k != nil {
-			// Remember the current key and value
-			copy(r.key[:], k[:32])
-			r.value = common.CopyBytes(v)
-			r.key_set = true
-		}
-	}
-	return nil
-}
 
 type ResolveHexes [][]byte
 
@@ -333,10 +181,11 @@ type TrieResolver struct {
 	h *hasher
 }
 
-func (t *Trie) NewResolver(dbw ethdb.Putter) *TrieResolver {
+func (t *Trie) NewResolver(dbw ethdb.Putter, hashes bool) *TrieResolver {
 	tr := TrieResolver{
 		t: t,
 		dbw: dbw,
+		hashes: hashes,
 		continuations: []*TrieContinuation{},
 		resolveHexes: [][]byte{},
 		rhIndexLte: -1,
@@ -668,88 +517,13 @@ func (tr *TrieResolver) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
 	return nil
 }
 
-func (tc *TrieContinuation) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
-	var start [32]byte
-	decodeNibbles(tc.resolveKey[:tc.resolvePos], start[:])
-	r := rebuidData{dbw: nil, pos: tc.resolvePos, resolveHex: tc.resolveKey, hashes: false, startLevel: tc.resolvePos}
-	h := newHasher(tc.t.encodeToBytes)
-	defer returnHasherToPool(h)
-	err := db.WalkAsOf(tc.t.prefix, start[:], uint(4*tc.resolvePos), blockNr, func(k, v []byte) (bool, error) {
-		if len(v) > 0 {
-			if err := r.rebuildInsert(k, v, h); err != nil {
-				return false, err
-			}
-		}
-		return true, nil
-	})
-	if err != nil {
-		return err
+func (t *Trie) rebuildHashes(db ethdb.Database, key []byte, pos int, blockNr uint64, hashes bool, expected hashNode) (node, hashNode, error) {
+	tc := t.NewContinuation(key, pos, expected)
+	r := t.NewResolver(db, true)
+	r.AddContinuation(tc)
+	if err := r.ResolveWithDb(db, blockNr); err != nil {
+		return nil, nil, err
 	}
-	if err := r.rebuildInsert(nil, nil, h); err != nil {
-		return err
-	}
-	var root node
-	if r.fillCount[tc.resolvePos] == 1 {
-		root = &r.nodeStack[tc.resolvePos]
-	} else if r.fillCount[tc.resolvePos] > 1 {
-		root = &r.vertical[tc.resolvePos]
-	}
-	if root == nil {
-		return fmt.Errorf("Resolve returned nil root")
-	}
-	var gotHash common.Hash
-	hash, err := h.hash(root, tc.resolvePos == 0, gotHash[:])
-	if err != nil {
-		return err
-	}
-	if _, ok := hash.(hashNode); ok {
-		if !bytes.Equal(tc.resolveHash, gotHash[:]) {
-			return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got %s\n",
-				tc.resolveKey[:tc.resolvePos], tc.t.prefix, tc.resolveHash, hashNode(gotHash[:]))
-		}
-	} else {
-		if tc.resolveHash != nil {
-			return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got embedded node\n",
-				tc.resolveKey[:tc.resolvePos], tc.t.prefix, tc.resolveHash)
-		}
-	}
-	tc.resolved = root
-	return nil
+	return tc.resolved, expected, nil
 }
 
-func (t *Trie) rebuildHashes(db ethdb.Database, key []byte, pos int, blockNr uint64, hashes bool) (node, hashNode, error) {
-	var start [32]byte
-	decodeNibbles(key[:pos], start[:])
-	r := rebuidData{dbw: db, pos:pos, resolveHex: key, hashes: hashes}
-	h := newHasher(t.encodeToBytes)
-	defer returnHasherToPool(h)
-	err := db.WalkAsOf(t.prefix, start[:], uint(4*pos), blockNr, func(k, v []byte) (bool, error) {
-		if len(v) > 0 {
-			return true, r.rebuildInsert(k, v, h)
-		}
-		return true, nil
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	if err :=r.rebuildInsert(nil, nil, h); err != nil {
-		return nil, nil, err
-	}
-	var root node
-	if r.fillCount[pos] == 1 {
-		root = &r.nodeStack[pos]
-	} else if r.fillCount[pos] > 1 {
-		root = &r.vertical[pos]
-	}
-	if err == nil {
-		var gotHash common.Hash
-		if root != nil {
-			h.hash(root, pos == 0, gotHash[:])
-			return root, gotHash[:], nil
-		}
-		return root, gotHash[:], nil
-	} else {
-		fmt.Printf("Error resolving hash: %s\n", err)
-	}
-	return root, nil, err
-}

@@ -397,7 +397,9 @@ func (t *Trie) Update(db ethdb.Database, key, value []byte, blockNr uint64) {
 func (t *Trie) TryUpdate(db ethdb.Database, key, value []byte, blockNr uint64) error {
 	tc := t.UpdateAction(key, value)
 	for !tc.RunWithDb(db) {
-		if err := tc.ResolveWithDb(db, blockNr); err != nil {
+		r := t.NewResolver(db, false)
+		r.AddContinuation(tc)
+		if err := r.ResolveWithDb(db, blockNr); err != nil {
 			return err
 		}
 	}
@@ -677,7 +679,9 @@ func (t *Trie) Delete(db ethdb.Database, key []byte, blockNr uint64) {
 func (t *Trie) TryDelete(db ethdb.Database, key []byte, blockNr uint64) error {
 	tc := t.DeleteAction(key)
 	for !tc.RunWithDb(db) {
-		if err := tc.ResolveWithDb(db, blockNr); err != nil {
+		r := t.NewResolver(db, false)
+		r.AddContinuation(tc)
+		if err := r.ResolveWithDb(db, blockNr); err != nil {
 			return err
 		}
 	}
@@ -1001,7 +1005,7 @@ func concat(s1 []byte, s2 ...byte) []byte {
 }
 
 func (t *Trie) resolveHash(db ethdb.Database, n hashNode, key []byte, pos int, blockNr uint64) (node, error) {
-	root, gotHash, err := t.rebuildHashes(db, key, pos, blockNr, false)
+	root, gotHash, err := t.rebuildHashes(db, key, pos, blockNr, false, n)
 	if err != nil {
 		return nil, err
 	}
@@ -1011,41 +1015,6 @@ func (t *Trie) resolveHash(db ethdb.Database, n hashNode, key []byte, pos int, b
 		fmt.Printf("Got hash %s\n", hashNode(gotHash))
 		fmt.Printf("Stack: %s\n", debug.Stack())
 		return nil, &MissingNodeError{NodeHash: common.BytesToHash(n), Path: key[:pos]}
-	}
-	return root, err
-}
-
-func (t *Trie) resolveHashOld(db ethdb.Database, n hashNode, key []byte, pos int, blockNr uint64) (node, error) {
-	var start [32]byte
-	decodeNibbles(key[:pos], start[:])
-	var root node
-	var tc TrieContinuation
-	err := db.WalkAsOf(t.prefix, start[:], uint(pos*4), blockNr, func(k, v []byte) (bool, error) {
-		if len(v) > 0 {
-			tc.action = TrieActionInsert
-			tc.key = keybytesToHex(k)
-			tc.value = valueNode(common.CopyBytes(v))
-			t.insert(root, tc.key, pos, tc.value, &tc)
-			root = tc.n
-		}
-		return true, nil
-	})
-	if err == nil && n != nil {
-		h := newHasher(t.encodeToBytes)
-		defer returnHasherToPool(h)
-		var gotHash common.Hash
-		if root != nil {
-			h.hash(root, pos == 0, gotHash[:])
-		}
-		if !bytes.Equal(n, gotHash[:]) {
-			fmt.Printf("Resolving wrong hash for prefix %x, trie prefix %x block %d\n", key[:pos], t.prefix, blockNr)
-			fmt.Printf("Expected hash %s\n", n)
-			fmt.Printf("Got hash %s\n", hashNode(gotHash[:]))
-			fmt.Printf("Stack: %s\n", debug.Stack())
-			return nil, &MissingNodeError{NodeHash: common.BytesToHash(n), Path: key[:pos]}
-		}
-	} else {
-		fmt.Printf("Error resolving hash: %s\n", err)
 	}
 	return root, err
 }
@@ -1194,7 +1163,7 @@ func (t *Trie) tryPrune(n node, depth int) (newnode node, livecount int, unloade
 
 func (t *Trie) CountOccupancies(db ethdb.Database, blockNr uint64, o map[int]map[int]int) {
 	if hn, ok := t.root.(hashNode); ok {
-		n, err := t.resolveHashOld(db, hn, []byte{}, 0, blockNr)
+		n, err := t.resolveHash(db, hn, []byte{}, 0, blockNr)
 		if err != nil {
 			panic(err)
 		}

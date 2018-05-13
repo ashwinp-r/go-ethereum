@@ -278,7 +278,7 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 				if !c.RunWithDb(tds.db.TrieDB()) {
 					newContinuations = append(newContinuations, c)
 					if resolver == nil {
-						resolver = c.Trie().NewResolver(tds.db.TrieDB())
+						resolver = c.Trie().NewResolver(tds.db.TrieDB(), false)
 					}
 					resolver.AddContinuation(c)
 				}
@@ -340,7 +340,7 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 	tds.deleted = make(map[common.Address]struct{})
 	it = 0
 	for len(oldContinuations) > 0 {
-		resolver := tds.t.NewResolver(tds.db.TrieDB())
+		resolver := tds.t.NewResolver(tds.db.TrieDB(), false)
 		for _, c := range oldContinuations {
 			if !c.RunWithDb(tds.db.TrieDB()) {
 				newContinuations = append(newContinuations, c)
