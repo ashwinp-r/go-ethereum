@@ -17,9 +17,9 @@
 package core
 
 import (
-	"os"
-	"encoding/json"
-	"bytes"
+	//"os"
+	//"encoding/json"
+	//"bytes"
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -127,15 +127,18 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tds
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
 		statedb.Prepare(tx.Hash(), block.Hash(), i)
+		/*
 		var h common.Hash = tx.Hash()
 		if bytes.Equal(h[:], common.FromHex("0x48cf98cc871300c4f95e32273feb27f29720f76e09428464e8a4112eff57b00d")) {
 			cfg.Tracer = vm.NewStructLogger(&vm.LogConfig{})
 			cfg.Debug = true
 		}
+		*/
 		receipt, _, err := ApplyTransaction(p.config, p.bc, nil, gp, statedb, tds, header, tx, usedGas, cfg)
 		if err != nil {
 			return nil, nil, 0, err
 		}
+		/*
 		if cfg.Tracer != nil {
 			w, err := os.Create("structlogs.txt")
 			if err != nil {
@@ -152,6 +155,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tds
 			cfg.Debug = false
 			cfg.Tracer = nil
 		}
+		*/
 		receipts = append(receipts, receipt)
 		allLogs = append(allLogs, receipt.Logs...)
 	}
