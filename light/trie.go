@@ -152,13 +152,6 @@ func (t *odrTrie) HashKey(key []byte) []byte {
 	return nil
 }
 
-func (t *odrTrie) TryPrune() (int, bool, error) {
-	if t.trie == nil {
-		return 0, false, nil
-	}
-	return t.trie.TryPrune()
-}
-
 func (t *odrTrie) MakeListed(nodeList *trie.List) {
 	t.trie.MakeListed(nodeList)
 }

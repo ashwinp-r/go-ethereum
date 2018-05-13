@@ -512,13 +512,13 @@ func (tds *TrieDbState) PruneTries() {
 		tds.nodeList.ShrinkTo(int(MaxTrieCacheGen))
 		nodeCount := 0
 		for address, storageTrie := range tds.storageTries {
-			count, empty, _ := storageTrie.TryPrune()
+			count, empty := storageTrie.TryPrune()
 			nodeCount += count
 			if empty {
 				delete(tds.storageTries, address)
 			}
 		}
-		count, _, _ := tds.t.TryPrune()
+		count, _ := tds.t.TryPrune()
 		nodeCount += count
 		log.Info("Nodes", "trie", nodeCount, "list", tds.nodeList.Len(), "list before pruning", listLen)
 	} else {
@@ -651,7 +651,6 @@ type Trie interface {
 	HashKey([]byte) []byte
 	GetKey(trie.DatabaseReader, []byte) []byte // TODO(fjl): remove this when SecureTrie is removed
 	PrintTrie()
-	TryPrune() (int, bool, error)
 	MakeListed(*trie.List)
 	Unlink()
 }

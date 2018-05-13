@@ -180,10 +180,6 @@ func (t *SecureTrie) PrintTrie() {
 	t.trie.PrintTrie()
 }
 
-func (t *SecureTrie) TryPrune() (int, bool, error) {
-	return t.trie.TryPrune()
-}
-
 func (t *SecureTrie) GetTrie() *Trie {
 	return &t.trie
 }

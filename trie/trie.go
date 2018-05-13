@@ -1055,110 +1055,65 @@ func (t *Trie) unlink(n node) {
 
 // Return number of live nodes (not pruned)
 // Returns true if the root became hash node
-func (t *Trie) TryPrune() (int, bool, error) {
-	newRoot, count, unloaded, err := t.tryPrune(t.root, 0)
-	if err == nil && unloaded {
-		t.root = newRoot
-	}
-	if t.nodeList != nil {
-		t.relistNodes(t.root)
-	}
+func (t *Trie) TryPrune() (int, bool) {
+	count, _ := t.tryPrune(t.root, 0)
 	if _, ok := t.root.(hashNode); ok {
-		return count, true, err
+		return count, true
 	} else {
-		return count, false, err
+		return count, false
 	}
 }
 
-func (t *Trie) tryPrune(n node, depth int) (newnode node, livecount int, unloaded bool, err error) {
+func (t *Trie) tryPrune(n node, depth int) (livecount int, unloaded bool) {
 	if n == nil {
-		return nil, 0, false, nil
+		return 0, false
 	}
 	if _, ok := n.(nodep); !ok {
-		return n, 0, false, nil
+		return 0, false
 	}
 	if n.unlisted() {
 		// Unload the node from cache. All of its subnodes will have a lower or equal
 		// cache generation number.
-		return nil, 0, true, nil
+		return 0, true
 	}
 	switch n := (n).(type) {
 	case *shortNode:
-		newnode, livecount, unloaded, err = t.tryPrune(n.Val, depth+compactLen(n.Key))
-		nn := n
-		if err == nil && unloaded {
-			t.touch(nil, n, nil, 0)
-			nn = n.copy()
-			if newnode == nil {
-				nn.Val = nn.valHash
-			} else {
-				nn.Val = newnode
-			}
+		livecount, unloaded = t.tryPrune(n.Val, depth+compactLen(n.Key))
+		if unloaded && n.hashTrue {
+			n.Val = n.valHash
 		}
-		return nn, livecount+1, unloaded, err
+		return livecount+1, false
 
 	case *duoNode:
-		var nc *duoNode
+		i1, i2 := n.childrenIdx()
 		sumcount := 0
-		newnode, livecount, unloaded, err = t.tryPrune(n.child1, depth+1)
-		if err == nil && unloaded {
-			if nc == nil {
-				nc = n.copy()
-			}
-			if newnode == nil {
-				nc.child1 = nc.child1Hash
-			} else {
-				nc.child1 = newnode
-			}
+		livecount, unloaded = t.tryPrune(n.child1, depth+1)
+		if unloaded && (n.hashTrueMask & (uint32(1)<<i1)) != 0 {
+			n.child1 = n.child1Hash
 		}
 		sumcount += livecount
-		newnode, livecount, unloaded, err = t.tryPrune(n.child2, depth+1)
-		if err == nil && unloaded {
-			if nc == nil {
-				nc = n.copy()
-			}
-			if newnode == nil {
-				nc.child2 = nc.child2Hash
-			} else {
-				nc.child2 = newnode
-			}
+		livecount, unloaded = t.tryPrune(n.child2, depth+1)
+		if unloaded && (n.hashTrueMask & (uint32(1)<<i2)) != 0 {
+			n.child2 = n.child2Hash
 		}
 		sumcount += livecount
-		if nc != nil {
-			t.touch(nil, n, nil, 0)
-			return nc, sumcount+1, true, err
-		} else {
-			return n, sumcount+1, false, err
-		}
+		return sumcount+1, false
 
 	case *fullNode:
-		var nc *fullNode
 		sumcount := 0
-		for i := 0; i<=16; i++ {
-			if n.Children[i] != nil {
-				newnode, livecount, unloaded, err = t.tryPrune(n.Children[i], depth+1)
-				if err == nil && unloaded {
-					if nc == nil {
-						nc = n.copy()
-					}
-					if newnode == nil {
-						nc.Children[i] = nc.childHashes[i]
-					} else {
-						nc.Children[i] = newnode
-					}
+		for i, child := range n.Children {
+			if child != nil {
+				livecount, unloaded = t.tryPrune(n.Children[i], depth+1)
+				if unloaded && (n.hashTrueMask & (uint32(1)<<uint(i))) != 0 {
+					n.Children[i] = n.childHashes[i]
 				}
 				sumcount += livecount
 			}
 		}
-		if nc != nil {
-			t.touch(nil, n, nil, 0)
-			return nc, sumcount+1, true, err
-		} else {
-			return n, sumcount+1, false, err
-		}
+		return sumcount+1, false
 	}
 	// Don't count hashNodes and valueNodes
-	return n, 0, false, nil
+	return 0, false
 }
 
 func (t *Trie) CountOccupancies(db ethdb.Database, blockNr uint64, o map[int]map[int]int) {
