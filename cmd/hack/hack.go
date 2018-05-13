@@ -680,7 +680,7 @@ func hashFile() {
 			strings.HasPrefix(line, "ERROR") || strings.HasPrefix(line, "tc{") {
 			fmt.Printf("%d %s\n", count, line)
 			count++
-		} else if count == 15 {
+		} else if count == 66 {
 			w.WriteString(line)
 			w.WriteString("\n")
 		}
@@ -689,12 +689,12 @@ func hashFile() {
 }
 
 func buildHashFromFile() {
-	treePrefix := common.FromHex("e63dc0b48fd13c888661bfb30d7069823f967f03")
+	treePrefix := common.FromHex("2a0c0dbecc7e4d658f48e01e3fa353f44050c208")
 	t := trie.New(common.Hash{}, treePrefix, false)
 	r := t.NewResolver(nil)
-	key := common.FromHex("0304020e0c08000d00060005080209080c0a0d0009080e0f040d0e0c09030709030a0c030e00080d050e0405020801030806070e0c050e05000d0809040f060710")
-	resolveHash := common.FromHex("7752d21089645d5f4a25594aa1c6ee225f9bef607ac10f07d128df194c9263cd")
-	tc := trie.NewContinuation(key, 0, resolveHash)
+	key := common.FromHex("010d04080f0e060e08000d09040800040f0f0f020c04060109090d0c020c090a010d0609070a0905020e0904000808030c020f060c0709060107080f0209020210")
+	resolveHash := common.FromHex("9edde1605e84902c450fdf275a6c9ef00fc67691d2ed62b4de35ef8c8bf1b20")
+	tc := t.NewContinuation(key, 0, resolveHash)
 	r.AddContinuation(tc)
 	f, err := os.Open("/Users/alexeyakhunov/mygit/go-ethereum/geth_read.log")
 	check(err)
