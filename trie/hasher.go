@@ -60,11 +60,7 @@ func returnHasherToPool(h *hasher) {
 // hash collapses a node down into a hash node, also returning a copy of the
 // original node initialized with the computed hash to replace the original one.
 func (h *hasher) hash(n node, force bool, storeTo []byte) (node, error) {
-	n, err := h.hashInternal(n, force, storeTo, 0)
-	if short, ok := n.(*shortNode); ok {
-		n = short.copy()
-	}
-	return n, err
+	return h.hashInternal(n, force, storeTo, 0)
 }
 
 // hash collapses a node down into a hash node, also returning a copy of the
@@ -236,6 +232,9 @@ func (h *hasher) store(n node, force bool, storeTo []byte) (node, error) {
 		panic("encode error: " + err.Error())
 	}
 	if h.tmp.Len() < 32 && !force {
+		if short, ok := n.(*shortNode); ok {
+			return short.copy(), nil
+		}
 		return n, nil // Nodes smaller than 32 bytes are stored inside their parent
 	}
 

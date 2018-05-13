@@ -409,7 +409,7 @@ func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
 			startkeys = append(startkeys, key)
 			fixedbits = append(fixedbits, uint(4*c.resolvePos))
 			prevC = c
-			c.Print()
+			//c.Print()
 		}
 	}
 	tr.startLevel = tr.continuations[0].resolvePos
@@ -538,14 +538,15 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 		}
 		if _, ok := hn.(hashNode); ok {
 			tr.vertical[level].hashTrueMask |= (uint32(1)<<keynibble)
+			tr.nodeStack[level].hashTrue = true
 		} else {
 			tr.vertical[level].hashTrueMask &^= (uint32(1)<<keynibble)
+			tr.nodeStack[level].hashTrue = false
 		}
 		if tr.nodeStack[level].valHash == nil {
 			tr.nodeStack[level].valHash = make([]byte, common.HashLength)
 		}
 		copy(tr.nodeStack[level].valHash, tr.vertical[level].childHashes[keynibble])
-		tr.nodeStack[level].hashTrue = true
 		if tr.hashes && level == 4 {
 			hash, ok := hn.(hashNode)
 			if !ok {
@@ -629,7 +630,7 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 }
 
 func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
-	fmt.Printf("%d %x %x\n", keyIdx, k, v)
+	//fmt.Printf("%d %x %x\n", keyIdx, k, v)
 	if keyIdx != tr.keyIdx {
 		if tr.key_set {
 			if err := tr.finishPreviousKey(nil); err != nil {
@@ -657,10 +658,10 @@ func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
 func (tr *TrieResolver) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
 	defer returnHasherToPool(tr.h)
 	startkeys, fixedbits := tr.PrepareResolveParams()
-	fmt.Printf("ResolveWithDb with %d startkeys\n", len(startkeys))
-	for i, startkey := range startkeys {
-		fmt.Printf("%x %d\n", startkey, fixedbits[i])
-	}
+	//fmt.Printf("ResolveWithDb with %d startkeys\n", len(startkeys))
+	//for i, startkey := range startkeys {
+	//	fmt.Printf("%x %d\n", startkey, fixedbits[i])
+	//}
 	if err := db.MultiWalkAsOf(tr.t.prefix, startkeys, fixedbits, blockNr, tr.Walker); err != nil {
 		return err
 	}
