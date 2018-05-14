@@ -371,6 +371,7 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 		if err != nil {
 			return err
 		}
+		var hn1 node
 		if _, ok := hn.(hashNode); ok {
 			tr.vertical[level].hashTrueMask |= (uint32(1)<<keynibble)
 			tr.nodeStack[level].hashTrue = true
@@ -378,9 +379,11 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 				tr.nodeStack[level].valHash = make([]byte, common.HashLength)
 			}
 			copy(tr.nodeStack[level].valHash, tr.vertical[level].childHashes[keynibble])
+			hn1 = tr.nodeStack[level].valHash
 		} else {
 			tr.vertical[level].hashTrueMask &^= (uint32(1)<<keynibble)
 			tr.nodeStack[level].hashTrue = false
+			hn1 = hn
 		}
 		if tr.hashes && level == 4 {
 			hash, ok := hn.(hashNode)
@@ -402,7 +405,7 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 			//fmt.Printf("Promoting copy of full\n")
 		} else {
 			tr.vertical[level].Children[keynibble] = hn
-			tr.nodeStack[level].Val = hn
+			tr.nodeStack[level].Val = hn1
 			//if hash, ok := hn.(hashNode); ok {
 			//	fmt.Printf("Promoting hash %s\n", hash)
 			//} else {
