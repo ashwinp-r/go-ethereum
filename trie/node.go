@@ -181,7 +181,7 @@ func (n *duoNode) copy() *duoNode {
 	}
 	if hash, ok := copy.child2.(hashNode); ok {
 		if (copy.hashTrueMask & (uint32(1)<<uint(i2))) != 0 {
-			copy.child2 = copy.child1Hash
+			copy.child2 = copy.child2Hash
 		} else {
 			copy.child2 = hashNode(common.CopyBytes(hash))
 		}

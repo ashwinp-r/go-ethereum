@@ -673,7 +673,7 @@ func testResolve() {
 	r := t.NewResolver(ethDb, false)
 	key := common.FromHex("0a07080a04030006060602")
 	resolveHash := common.FromHex("e13060badd8994ab0ed36a4c3ecd050c0016c83c69df6d23940ea5645effacf9")
-	tc := t.NewContinuation(key, 0, resolveHash)
+	tc := t.NewContinuation(key, 11, resolveHash)
 	r.AddContinuation(tc)
 	err = r.ResolveWithDb(ethDb, 2426106)
 	if err != nil {

@@ -566,6 +566,12 @@ func (m *mutation) MultiPut(tuples ...[]byte) error {
 	return nil
 }
 
+func (m *mutation) BatchSize() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.puts.Len()
+}
+
 func (m *mutation) getAsOfMem(bucket, key []byte, timestamp uint64) ([]byte, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

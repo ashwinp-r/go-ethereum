@@ -75,4 +75,5 @@ type Mutation interface {
 	Commit() error
 	Rollback()
 	Keys() [][]byte
+	BatchSize() int
 }
