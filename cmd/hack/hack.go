@@ -671,7 +671,7 @@ func testResolve() {
 	treePrefix := common.FromHex("71bfa06a67ba8bd888d37df09e02b9de7cea6186")
 	t := trie.New(common.Hash{}, treePrefix, false)
 	r := t.NewResolver(ethDb, false)
-	key := common.FromHex("05020801")
+	key := common.FromHex("050208010506")
 	resolveHash := common.FromHex("1762ffd5a65542edaa6f632562f16189324c68eb9906e526ded9d55e96998abf")
 	tc := t.NewContinuation(key, 4, resolveHash)
 	r.AddContinuation(tc)
