@@ -665,17 +665,17 @@ func testRewind() {
 }
 
 func testResolve() {
-	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/mygit/chaindata", 16)
+	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata", 16)
 	check(err)
 	defer ethDb.Close()
-	treePrefix := common.FromHex("4154")
+	treePrefix := common.FromHex("71bfa06a67ba8bd888d37df09e02b9de7cea6186")
 	t := trie.New(common.Hash{}, treePrefix, false)
 	r := t.NewResolver(ethDb, false)
-	key := common.FromHex("0a07080a04030006060602")
-	resolveHash := common.FromHex("e13060badd8994ab0ed36a4c3ecd050c0016c83c69df6d23940ea5645effacf9")
-	tc := t.NewContinuation(key, 11, resolveHash)
+	key := common.FromHex("05020801")
+	resolveHash := common.FromHex("1762ffd5a65542edaa6f632562f16189324c68eb9906e526ded9d55e96998abf")
+	tc := t.NewContinuation(key, 4, resolveHash)
 	r.AddContinuation(tc)
-	err = r.ResolveWithDb(ethDb, 2426106)
+	err = r.ResolveWithDb(ethDb, 5434422)
 	if err != nil {
 		fmt.Printf("%v\n", err)
 	}
