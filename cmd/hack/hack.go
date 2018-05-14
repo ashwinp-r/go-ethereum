@@ -664,6 +664,23 @@ func testRewind() {
 	fmt.Printf("Calculated rewound root hash: %x\n", rewoundRoot)
 }
 
+func testResolve() {
+	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/mygit/chaindata", 16)
+	check(err)
+	defer ethDb.Close()
+	treePrefix := common.FromHex("4154")
+	t := trie.New(common.Hash{}, treePrefix, false)
+	r := t.NewResolver(ethDb, false)
+	key := common.FromHex("0a07080a04030006060602")
+	resolveHash := common.FromHex("e13060badd8994ab0ed36a4c3ecd050c0016c83c69df6d23940ea5645effacf9")
+	tc := t.NewContinuation(key, 0, resolveHash)
+	r.AddContinuation(tc)
+	err = r.ResolveWithDb(ethDb, 2426106)
+	if err != nil {
+		fmt.Printf("%v\n", err)
+	}
+}
+
 func hashFile() {
 	f, err := os.Open("/Users/alexeyakhunov/mygit/go-ethereum/geth.log")
 	check(err)
@@ -735,14 +752,15 @@ func main() {
         defer pprof.StopCPUProfile()
     }
 	//db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
- 	//if err != nil {
- 	//	panic(fmt.Sprintf("Could not open file: %s", err))
- 	//}
+	//db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+ 	//check(err)
  	//defer db.Close()
+ 	//bucketStats(db)
  	//mychart()
  	//testRebuild()
  	//testRewind()
  	//hashFile()
- 	buildHashFromFile()
+ 	//buildHashFromFile()
+ 	testResolve()
 }
 
