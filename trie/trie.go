@@ -641,7 +641,7 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 			c.resolved = nil
 			c.resolveKey = key
 			c.resolvePos = pos
-			c.resolveHash = n
+			c.resolveHash = common.CopyBytes(n)
 			c.updated = false
 			return false // Need resolution
 		}
@@ -728,7 +728,7 @@ func (t *Trie) convertToShortNode(key []byte, keyStart int, child node, pos uint
 				c.resolved = nil
 				c.resolveKey = rkey
 				c.resolvePos = keyStart+1
-				c.resolveHash = childHash
+				c.resolveHash = common.CopyBytes(childHash)
 				//c.updated = false
 				return false // Need resolution
 			}
@@ -976,7 +976,7 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 			c.resolved = nil
 			c.resolveKey = key
 			c.resolvePos = keyStart
-			c.resolveHash = n
+			c.resolveHash = common.CopyBytes(n)
 			c.updated = false
 			return false // Need resolution
 		}
