@@ -262,7 +262,7 @@ func (self *stateObject) Code() []byte {
 	if bytes.Equal(self.CodeHash(), emptyCodeHash) {
 		return nil
 	}
-	code, err := self.db.stateReader.ReadAccountCode(&self.address)
+	code, err := self.db.stateReader.ReadAccountCode(common.BytesToHash(self.CodeHash()))
 	if err != nil {
 		self.setError(fmt.Errorf("can't load code hash %x: %v", self.CodeHash(), err))
 	}

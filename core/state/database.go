@@ -50,8 +50,8 @@ const (
 type StateReader interface {
 	ReadAccountData(address *common.Address) (*Account, error)
 	ReadAccountStorage(address *common.Address, key *common.Hash) ([]byte, error)
-	ReadAccountCode(addres *common.Address) ([]byte, error)
-	ReadAccountCodeSize(addres *common.Address) (int, error)
+	ReadAccountCode(codeHash common.Hash) ([]byte, error)
+	ReadAccountCodeSize(codeHash common.Hash) (int, error)
 }
 
 type StateWriter interface {
@@ -117,22 +117,15 @@ func (dbs *DbState) ReadAccountStorage(address *common.Address, key *common.Hash
 	return enc, nil
 }
 
-func (dbs *DbState) ReadAccountCode(address *common.Address) ([]byte, error) {
-	account, err := dbs.ReadAccountData(address)
-	if err != nil {
-		return nil, err
-	}
-	if account == nil {
+func (dbs *DbState) ReadAccountCode(codeHash common.Hash) ([]byte, error) {
+	if bytes.Equal(codeHash[:], emptyCodeHash) {
 		return nil, nil
 	}
-	if bytes.Equal(account.CodeHash[:], emptyCodeHash) {
-		return nil, nil
-	}
-	return dbs.db.Get(CodeBucket, account.CodeHash[:])
+	return dbs.db.Get(CodeBucket, codeHash[:])
 }
 
-func (dbs *DbState) ReadAccountCodeSize(address *common.Address) (int, error) {
-	code, err := dbs.ReadAccountCode(address)
+func (dbs *DbState) ReadAccountCodeSize(codeHash common.Hash) (int, error) {
+	code, err := dbs.ReadAccountCode(codeHash)
 	if err != nil {
 		return 0, err
 	}
@@ -479,25 +472,22 @@ func (tds *TrieDbState) ReadAccountStorage(address *common.Address, key *common.
 	return enc, nil
 }
 
-func (tds *TrieDbState) ReadAccountCode(address *common.Address) ([]byte, error) {
-	account, err := tds.ReadAccountData(address)
-	if err != nil {
-		return nil, err
-	}
-	if account == nil {
+func (tds *TrieDbState) ReadAccountCode(codeHash common.Hash) ([]byte, error) {
+	if bytes.Equal(codeHash[:], emptyCodeHash) {
 		return nil, nil
 	}
-	if bytes.Equal(account.CodeHash[:], emptyCodeHash) {
-		return nil, nil
+	code, err := tds.db.TrieDB().Get(CodeBucket, codeHash[:])
+	if err == nil {
+		tds.codeSizeCache.Add(codeHash, len(code))
 	}
-	return tds.db.TrieDB().Get(CodeBucket, account.CodeHash[:])
+	return code, err
 }
 
-func (tds *TrieDbState) ReadAccountCodeSize(address *common.Address) (int, error) {
-	if cached, ok := tds.codeSizeCache.Get(*address); ok {
+func (tds *TrieDbState) ReadAccountCodeSize(codeHash common.Hash) (int, error) {
+	if cached, ok := tds.codeSizeCache.Get(codeHash); ok {
 		return cached.(int), nil
 	}
-	code, err := tds.ReadAccountCode(address)
+	code, err := tds.ReadAccountCode(codeHash)
 	if err != nil {
 		return 0, err
 	}

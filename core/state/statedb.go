@@ -214,7 +214,7 @@ func (self *StateDB) GetCodeSize(addr common.Address) int {
 	if stateObject.code != nil {
 		return len(stateObject.code)
 	}
-	len, err := self.stateReader.ReadAccountCodeSize(&addr)
+	len, err := self.stateReader.ReadAccountCodeSize(common.BytesToHash(stateObject.CodeHash()))
 	if err != nil {
 		self.setError(err)
 	}
