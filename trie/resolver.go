@@ -341,15 +341,18 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 				//}
 			}
 			tr.nodeStack[level].Key = hexToCompact(append([]byte{keynibble}, compactToHex(short.Key)...))
+			if hash, ok := short.Val.(hashNode); ok {
+				if tr.nodeStack[level].valHash == nil {
+					tr.nodeStack[level].valHash = make([]byte, common.HashLength)
+				}
+				copy(tr.nodeStack[level].valHash, hash)
+				tr.nodeStack[level].Val = tr.nodeStack[level].valHash
+			}
 			tr.nodeStack[level].Val = short.Val
 			tr.nodeStack[level].hashTrue = false
 			tr.fillCount[level]++
-			if short != nil && tr.hashes && level <= 4 && compactLen(short.Key) + level >= 4 {
-				hash, ok := hn.(hashNode)
-				if !ok {
-					return fmt.Errorf("resolver.Walker: Expected hashNode")
-				}
-				tr.dbw.PutHash(hashIdx, hash)
+			if tr.hashes && level <= 4 && compactLen(short.Key) + level >= 4 {
+				tr.dbw.PutHash(hashIdx, hn.(hashNode))
 			}
 			if level >= tc.resolvePos {
 				tr.nodeStack[level+1].Key = nil
@@ -371,26 +374,15 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 		if err != nil {
 			return err
 		}
-		var hn1 node
-		if _, ok := hn.(hashNode); ok {
-			tr.vertical[level].hashTrueMask |= (uint32(1)<<keynibble)
-			tr.nodeStack[level].hashTrue = true
-			if tr.nodeStack[level].valHash == nil {
-				tr.nodeStack[level].valHash = make([]byte, common.HashLength)
-			}
-			copy(tr.nodeStack[level].valHash, tr.vertical[level].childHashes[keynibble])
-			hn1 = tr.nodeStack[level].valHash
-		} else {
-			tr.vertical[level].hashTrueMask &^= (uint32(1)<<keynibble)
-			tr.nodeStack[level].hashTrue = false
-			hn1 = hn
+		tr.vertical[level].hashTrueMask |= (uint32(1)<<keynibble)
+		tr.nodeStack[level].hashTrue = true
+		if tr.nodeStack[level].valHash == nil {
+			tr.nodeStack[level].valHash = make([]byte, common.HashLength)
 		}
+		copy(tr.nodeStack[level].valHash, tr.vertical[level].childHashes[keynibble])
+		hn1 := tr.nodeStack[level].valHash
 		if tr.hashes && level == 4 {
-			hash, ok := hn.(hashNode)
-			if !ok {
-				return fmt.Errorf("resolver.Walker: hashNode expected")
-			}
-			tr.dbw.PutHash(hashIdx, hash)
+			tr.dbw.PutHash(hashIdx, hn.(hashNode))
 		}
 		tr.nodeStack[level].Key = hexToCompact([]byte{keynibble})
 		if onResolvingPath {
@@ -445,8 +437,9 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 		}
 		if _, ok := hash.(hashNode); ok {
 			if !bytes.Equal(tc.resolveHash, gotHash[:]) {
-				return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got %s\n",
-					tc.resolveKey[:tc.resolvePos],
+				return fmt.Errorf("Resolving wrong hash for key %x, pos %d, trie prefix %x\nexpected %s, got %s\n",
+					tc.resolveKey,
+					tc.resolvePos,
 					tr.t.prefix,
 					tc.resolveHash,
 					hashNode(gotHash[:]),
@@ -454,8 +447,11 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 			}
 		} else {
 			if tc.resolveHash != nil {
-				return fmt.Errorf("Resolving wrong hash for prefix %x, trie prefix %x\nexpected %s, got embedded node\n",
-					tc.resolveKey[:tc.resolvePos], tr.t.prefix, tc.resolveHash)
+				return fmt.Errorf("Resolving wrong hash for key %x, pos %d, trie prefix %x\nexpected %s, got embedded node\n",
+					tc.resolveKey,
+					tc.resolvePos,
+					tr.t.prefix,
+					tc.resolveHash)
 			}
 		}
 		tc.resolved = root

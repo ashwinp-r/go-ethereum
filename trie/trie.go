@@ -1056,7 +1056,7 @@ func (t *Trie) unlink(n node) {
 // Return number of live nodes (not pruned)
 // Returns true if the root became hash node
 func (t *Trie) TryPrune() (int, bool) {
-	count, _ := t.tryPrune(t.root, 0)
+	count, _ := t.tryPrune(t.root)
 	if _, ok := t.root.(hashNode); ok {
 		return count, true
 	} else {
@@ -1064,7 +1064,7 @@ func (t *Trie) TryPrune() (int, bool) {
 	}
 }
 
-func (t *Trie) tryPrune(n node, depth int) (livecount int, unloaded bool) {
+func (t *Trie) tryPrune(n node) (livecount int, unloaded bool) {
 	if n == nil {
 		return 0, false
 	}
@@ -1078,7 +1078,7 @@ func (t *Trie) tryPrune(n node, depth int) (livecount int, unloaded bool) {
 	}
 	switch n := (n).(type) {
 	case *shortNode:
-		livecount, unloaded = t.tryPrune(n.Val, depth+compactLen(n.Key))
+		livecount, unloaded = t.tryPrune(n.Val)
 		if unloaded && n.hashTrue {
 			n.Val = n.valHash
 		}
@@ -1087,12 +1087,12 @@ func (t *Trie) tryPrune(n node, depth int) (livecount int, unloaded bool) {
 	case *duoNode:
 		i1, i2 := n.childrenIdx()
 		sumcount := 0
-		livecount, unloaded = t.tryPrune(n.child1, depth+1)
+		livecount, unloaded = t.tryPrune(n.child1)
 		if unloaded && (n.hashTrueMask & (uint32(1)<<i1)) != 0 {
 			n.child1 = n.child1Hash
 		}
 		sumcount += livecount
-		livecount, unloaded = t.tryPrune(n.child2, depth+1)
+		livecount, unloaded = t.tryPrune(n.child2)
 		if unloaded && (n.hashTrueMask & (uint32(1)<<i2)) != 0 {
 			n.child2 = n.child2Hash
 		}
@@ -1103,7 +1103,7 @@ func (t *Trie) tryPrune(n node, depth int) (livecount int, unloaded bool) {
 		sumcount := 0
 		for i, child := range n.Children {
 			if child != nil {
-				livecount, unloaded = t.tryPrune(n.Children[i], depth+1)
+				livecount, unloaded = t.tryPrune(n.Children[i])
 				if unloaded && (n.hashTrueMask & (uint32(1)<<uint(i))) != 0 {
 					n.Children[i] = n.childHashes[i]
 				}
