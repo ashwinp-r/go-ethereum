@@ -167,6 +167,7 @@ type TrieDbState struct {
 	storageUpdates   map[common.Address]map[common.Hash][]byte
 	accountUpdates   map[common.Address]*Account
 	deleted          map[common.Address]struct{}
+	codeCache        *lru.Cache
 	codeSizeCache    *lru.Cache
 }
 
@@ -176,6 +177,10 @@ func NewTrieDbState(root common.Hash, db Database, blockNr uint64) (*TrieDbState
 		return nil, err
 	}
 	csc, err := lru.New(100000)
+	if err != nil {
+		return nil, err
+	}
+	cc, err := lru.New(10000)
 	if err != nil {
 		return nil, err
 	}
@@ -190,6 +195,7 @@ func NewTrieDbState(root common.Hash, db Database, blockNr uint64) (*TrieDbState
 		storageUpdates: make(map[common.Address]map[common.Hash][]byte),
 		accountUpdates: make(map[common.Address]*Account),
 		deleted: make(map[common.Address]struct{}),
+		codeCache: cc,
 		codeSizeCache: csc,
 	}
 	t.MakeListed(tds.nodeList)
@@ -476,9 +482,13 @@ func (tds *TrieDbState) ReadAccountCode(codeHash common.Hash) ([]byte, error) {
 	if bytes.Equal(codeHash[:], emptyCodeHash) {
 		return nil, nil
 	}
+	if cached, ok := tds.codeCache.Get(codeHash); ok {
+		return cached.([]byte), nil
+	}
 	code, err := tds.db.TrieDB().Get(CodeBucket, codeHash[:])
 	if err == nil {
 		tds.codeSizeCache.Add(codeHash, len(code))
+		tds.codeCache.Add(codeHash, code)
 	}
 	return code, err
 }
