@@ -347,9 +347,11 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 				}
 				copy(tr.nodeStack[level].valHash, hash)
 				tr.nodeStack[level].Val = tr.nodeStack[level].valHash
+				tr.nodeStack[level].hashTrue = true
+			} else {
+				tr.nodeStack[level].Val = short.Val
+				tr.nodeStack[level].hashTrue = false
 			}
-			tr.nodeStack[level].Val = short.Val
-			tr.nodeStack[level].hashTrue = false
 			tr.fillCount[level]++
 			if tr.hashes && level <= 4 && compactLen(short.Key) + level >= 4 {
 				tr.dbw.PutHash(hashIdx, hn.(hashNode))
