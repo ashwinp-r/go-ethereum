@@ -176,3 +176,7 @@ func (fd *FakeDatabase) Rollback() {
 func (fd *FakeDatabase) Keys() [][]byte {
 	panic("")
 }
+
+func (fd *FakeDatabase) BatchSize() int {
+	panic("")
+}

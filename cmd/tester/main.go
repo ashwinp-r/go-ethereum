@@ -96,6 +96,7 @@ func tester(ctx *cli.Context) error {
 		return err
 	}
 	pm.Start(1)
-	fmt.Printf("Hello, world!\n")
+	fmt.Printf("%s %s\n", ctx.Args()[0], ctx.Args()[1])
+	rewriteChain(ctx.Args()[0], ctx.Args()[1])
 	return nil
 }
