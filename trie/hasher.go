@@ -221,11 +221,7 @@ func (h *hasher) store(n node, force bool, storeTo []byte) (node, error) {
 	}
 	if h.tmp.Len() < 32 && !force {
 		if short, ok := n.(*shortNode); ok {
-			c := short.copy()
-			if v, ok := c.Val.(valueNode); ok {
-				c.Val = valueNode(common.CopyBytes(v))
-			}
-			return c, nil
+			return short.copy(), nil
 		}
 		return n, nil // Nodes smaller than 32 bytes are stored inside their parent
 	}
