@@ -314,13 +314,14 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 		if tr.hashes && level <= 4 {
 			hashIdx = binary.BigEndian.Uint32(tr.key[:4]) >> 12
 		}
+		if tr.vertical[level].childHashes[keynibble] == nil {
+			tr.vertical[level].childHashes[keynibble] = make([]byte, common.HashLength)
+		}
+		storeHashTo := tr.vertical[level].childHashes[keynibble]
 		if tr.fillCount[level+1] == 1 {
 			// Short node, needs to be promoted to the level above
 			short := &tr.nodeStack[level+1]
-			if tr.vertical[level].childHashes[keynibble] == nil {
-				tr.vertical[level].childHashes[keynibble] = make([]byte, common.HashLength)
-			}
-			hn, err := tr.h.hash(short, false, tr.vertical[level].childHashes[keynibble])
+			hn, err := tr.h.hash(short, false, storeHashTo)
 			if err != nil {
 				return err
 			}
@@ -331,18 +332,14 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 			}
 			if onResolvingPath {
 				tr.vertical[level].Children[keynibble] = short.copy()
-				//fmt.Printf("Promoting copy of short\n")
 			} else {
 				tr.vertical[level].Children[keynibble] = hn
-				//if hash, ok := hn.(hashNode); ok {
-				//	fmt.Printf("Promoting hash %s\n", hash)
-				//} else {
-				//	fmt.Printf("Promoting embedded node %s\n", hn.fstring(""))
-				//}
 			}
-			tr.nodeStack[level].Key = hexToCompact(append([]byte{keynibble}, compactToHex(short.Key)...))
-			tr.nodeStack[level].setVal(short.Val)
-			_, tr.nodeStack[level].hashTrue = short.Val.(hashNode)
+			if tr.fillCount[level] == 0 {
+				tr.nodeStack[level].Key = hexToCompact(append([]byte{keynibble}, compactToHex(short.Key)...))
+				tr.nodeStack[level].setVal(short.Val)
+				_, tr.nodeStack[level].hashTrue = short.Val.(hashNode)
+			}
 			tr.fillCount[level]++
 			if tr.hashes && level <= 4 && compactLen(short.Key) + level >= 4 {
 				tr.dbw.PutHash(hashIdx, hn.(hashNode))
@@ -360,24 +357,22 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 			continue
 		}
 		full := &tr.vertical[level+1]
-		if tr.vertical[level].childHashes[keynibble] == nil {
-			tr.vertical[level].childHashes[keynibble] = make([]byte, common.HashLength)
-		}
-		hn, err := tr.h.hash(full, false, tr.vertical[level].childHashes[keynibble])
+		hn, err := tr.h.hash(full, false, storeHashTo)
 		if err != nil {
 			return err
 		}
 		tr.vertical[level].hashTrueMask |= (uint32(1)<<keynibble)
-		tr.nodeStack[level].hashTrue = true
-		if tr.nodeStack[level].valHash == nil {
-			tr.nodeStack[level].valHash = make([]byte, common.HashLength)
+		if tr.fillCount[level] == 0 {
+			tr.nodeStack[level].hashTrue = true
+			if tr.nodeStack[level].valHash == nil {
+				tr.nodeStack[level].valHash = make([]byte, common.HashLength)
+			}
+			copy(tr.nodeStack[level].valHash, storeHashTo)
+			tr.nodeStack[level].Key = hexToCompact([]byte{keynibble})
 		}
-		copy(tr.nodeStack[level].valHash, tr.vertical[level].childHashes[keynibble])
-		hn1 := tr.nodeStack[level].valHash
 		if tr.hashes && level == 4 {
 			tr.dbw.PutHash(hashIdx, hn.(hashNode))
 		}
-		tr.nodeStack[level].Key = hexToCompact([]byte{keynibble})
 		if onResolvingPath {
 			var c node
 			if tr.fillCount[level+1] == 2 {
@@ -386,16 +381,14 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 				c = full.copy()
 			}
 			tr.vertical[level].Children[keynibble] = c
-			tr.nodeStack[level].Val = c
-			//fmt.Printf("Promoting copy of full\n")
+			if tr.fillCount[level] == 0 {
+				tr.nodeStack[level].Val = c
+			}
 		} else {
-			tr.vertical[level].Children[keynibble] = hn
-			tr.nodeStack[level].Val = hn1
-			//if hash, ok := hn.(hashNode); ok {
-			//	fmt.Printf("Promoting hash %s\n", hash)
-			//} else {
-			//	fmt.Printf("Promoting embedded node %s\n", hn.fstring(""))
-			//}
+			tr.vertical[level].Children[keynibble] = storeHashTo
+			if tr.fillCount[level] == 0 {
+				tr.nodeStack[level].Val = tr.nodeStack[level].valHash
+			}
 		}
 		tr.fillCount[level]++
 		if level >= tc.resolvePos {
