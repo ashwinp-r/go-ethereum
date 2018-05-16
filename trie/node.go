@@ -110,12 +110,8 @@ func (n *fullNode) copy() *fullNode   {
 		copy.childHashes[i] = common.CopyBytes(childHash)
 	}
 	for i, child := range copy.Children {
-		if hash, ok := child.(hashNode); ok {
-			if (copy.hashTrueMask & (uint32(1)<<uint(i))) != 0 {
-				copy.Children[i] = copy.childHashes[i]
-			} else {
-				copy.Children[i] = hashNode(common.CopyBytes(hash))
-			}
+		if _, ok := child.(hashNode); ok {
+			copy.Children[i] = copy.childHashes[i]
 		}
 	}
 	return &copy
@@ -123,6 +119,7 @@ func (n *fullNode) copy() *fullNode   {
 
 func (n *fullNode) duoCopy() *duoNode {
 	copy := duoNode{}
+	copy.hashTrueMask = n.hashTrueMask
 	first := true
 	for i, child := range n.Children {
 		if child == nil {
@@ -131,31 +128,17 @@ func (n *fullNode) duoCopy() *duoNode {
 		if first {
 			first = false
 			copy.mask |= (uint32(1)<<uint(i))
-			if (n.hashTrueMask & (uint32(1)<<uint(i))) != 0 {
-				copy.child1Hash = common.CopyBytes(n.childHashes[i])
-				copy.hashTrueMask |= (uint32(1)<<uint(i))
-			}
-			if hash, ok := child.(hashNode); ok {
-				if (copy.hashTrueMask & (uint32(1)<<uint(i))) != 0 {
-					copy.child1 = copy.child1Hash
-				} else {
-					copy.child1 = hashNode(common.CopyBytes(hash))
-				}
+			copy.child1Hash = common.CopyBytes(n.childHashes[i])
+			if _, ok := child.(hashNode); ok {
+				copy.child1 = copy.child1Hash
 			} else {
 				copy.child1 = child
 			}
 		} else {
 			copy.mask |= (uint32(1)<<uint(i))
-			if (n.hashTrueMask & (uint32(1)<<uint(i))) != 0 {
-				copy.child2Hash = common.CopyBytes(n.childHashes[i])
-				copy.hashTrueMask |= (uint32(1)<<uint(i))
-			}
-			if hash, ok := child.(hashNode); ok {
-				if (copy.hashTrueMask & (uint32(1)<<uint(i))) != 0 {
-					copy.child2 = copy.child2Hash
-				} else {
-					copy.child2 = hashNode(common.CopyBytes(hash))
-				}
+			copy.child2Hash = common.CopyBytes(n.childHashes[i])
+			if _, ok := child.(hashNode); ok {
+				copy.child2 = copy.child2Hash
 			} else {
 				copy.child2 = child
 			}
@@ -171,20 +154,11 @@ func (n *duoNode) copy() *duoNode {
 	copy.flags.prev = nil
 	copy.child1Hash = common.CopyBytes(copy.child1Hash)
 	copy.child2Hash = common.CopyBytes(copy.child2Hash)
-	i1, i2 := copy.childrenIdx()
-	if hash, ok := copy.child1.(hashNode); ok {
-		if (copy.hashTrueMask & (uint32(1)<<uint(i1))) != 0 {
-			copy.child1 = copy.child1Hash
-		} else {
-			copy.child1 = hashNode(common.CopyBytes(hash))
-		}
+	if _, ok := copy.child1.(hashNode); ok {
+		copy.child1 = copy.child1Hash
 	}
-	if hash, ok := copy.child2.(hashNode); ok {
-		if (copy.hashTrueMask & (uint32(1)<<uint(i2))) != 0 {
-			copy.child2 = copy.child2Hash
-		} else {
-			copy.child2 = hashNode(common.CopyBytes(hash))
-		}
+	if _, ok := copy.child2.(hashNode); ok {
+		copy.child2 = copy.child2Hash
 	}
 	return &copy
 }
@@ -193,12 +167,8 @@ func (n *shortNode) copy() *shortNode {
 	copy.flags.next = nil
 	copy.flags.prev = nil
 	copy.valHash = common.CopyBytes(copy.valHash)
-	if hash, ok := copy.Val.(hashNode); ok {
-		if copy.hashTrue {
-			copy.Val = copy.valHash
-		} else {
-			copy.Val = hashNode(common.CopyBytes(hash))
-		}
+	if _, ok := copy.Val.(hashNode); ok {
+		copy.Val = copy.valHash
 	}
 	return &copy
 }
