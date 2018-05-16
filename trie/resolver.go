@@ -373,7 +373,7 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 			tr.nodeStack[level].valHash = make([]byte, common.HashLength)
 		}
 		copy(tr.nodeStack[level].valHash, tr.vertical[level].childHashes[keynibble])
-		//hn1 := tr.nodeStack[level].valHash
+		hn1 := tr.nodeStack[level].valHash
 		if tr.hashes && level == 4 {
 			tr.dbw.PutHash(hashIdx, hn.(hashNode))
 		}
@@ -385,12 +385,12 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 			} else {
 				c = full.copy()
 			}
-			tr.vertical[level].setChild(keynibble, c)
-			tr.nodeStack[level].setVal(c)
+			tr.vertical[level].Children[keynibble] = c
+			tr.nodeStack[level].Val = c
 			//fmt.Printf("Promoting copy of full\n")
 		} else {
-			tr.vertical[level].setChild(keynibble, hn)
-			tr.nodeStack[level].setVal(hn)
+			tr.vertical[level].Children[keynibble] = hn
+			tr.nodeStack[level].Val = hn1
 			//if hash, ok := hn.(hashNode); ok {
 			//	fmt.Printf("Promoting hash %s\n", hash)
 			//} else {
