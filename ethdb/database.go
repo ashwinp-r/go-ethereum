@@ -652,7 +652,7 @@ func (m *mutation) walkMem(bucket, startkey []byte, fixedbits uint, walker Walke
 	return nil
 }
 
-func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFunc) error {
+func (m *mutation) Walk1(bucket, startkey []byte, fixedbits uint, walker WalkerFunc) error {
 	if m.db == nil {
 		return m.walkMem(bucket, startkey, fixedbits, walker)
 	} else {
@@ -660,7 +660,7 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 	}
 }
 
-func (m *mutation) Walk1(bucket, startkey []byte, fixedbits uint, walker WalkerFunc) error {
+func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFunc) error {
 	if m.db == nil {
 		return m.walkMem(bucket, startkey, fixedbits, walker)
 	} else {
