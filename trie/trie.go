@@ -526,7 +526,7 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 				c.n = n
 				return done
 			}
-			n.Val = c.n
+			n.setVal(c.n)
 			n.hashTrue = false
 			c.updated = true
 			c.n = n
@@ -540,11 +540,11 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 		c2 = c.n
 		branch := &duoNode{}
 		if nKey[matchlen] < key[pos+matchlen] {
-			branch.child1 = c1
-			branch.child2 = c2
+			branch.setChild1(c1)
+			branch.setChild2(c2)
 		} else {
-			branch.child1 = c2
-			branch.child2 = c1
+			branch.setChild1(c2)
+			branch.setChild2(c1)
 		}
 		branch.mask = (1 << (nKey[matchlen])) | (1 << (key[pos+matchlen]))
 
@@ -556,7 +556,7 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 		}
 		// Otherwise, replace it with a short node leading up to the branch.
 		n.Key = hexToCompact(key[pos:pos+matchlen])
-		n.Val = branch
+		n.setVal(branch)
 		n.hashTrue = false
 		c.updated = true
 		c.n = n
@@ -572,8 +572,8 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 				c.n = n
 				return done
 			}
-			n.child1 = c.n
-			n.hashTrueMask &^= (uint32(1)<<i1)
+			n.setChild1(c.n)
+			n.hashTrue1 = false
 			c.updated = true
 			c.n = n
 			return done
@@ -583,8 +583,8 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 				c.n = n
 				return done
 			}
-			n.child2 = c.n
-			n.hashTrueMask &^= (uint32(1)<<i2)
+			n.setChild2(c.n)
+			n.hashTrue2 = false
 			c.updated = true
 			c.n = n
 			return done
@@ -597,10 +597,15 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 			newnode := &fullNode{}
 			newnode.Children[i1] = n.child1
 			newnode.Children[i2] = n.child2
-			newnode.hashTrueMask = n.hashTrueMask
+			if n.hashTrue1 {
+				newnode.hashTrueMask |= (uint32(1) << i1)
+			}
+			if n.hashTrue2 {
+				newnode.hashTrueMask |= (uint32(1) << i2)
+			}
 			newnode.childHashes[i1] = n.child1Hash
 			newnode.childHashes[i2] = n.child2Hash
-			newnode.Children[key[pos]] = c.n
+			newnode.setChild(key[pos], c.n)
 			c.updated = true
 			c.n = newnode
 			return done
@@ -613,7 +618,7 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 			c.n = n
 			return done
 		}
-		n.Children[key[pos]] = c.n
+		n.setChild(key[pos], c.n)
 		n.hashTrueMask &^= (uint32(1)<<key[pos])
 		c.updated = true
 		c.n = n
@@ -744,7 +749,8 @@ func (t *Trie) convertToShortNode(key []byte, keyStart int, child node, pos uint
 		if cnode, ok := cnode.(*shortNode); ok {
 			c.touched = append(c.touched, Touch{np: cnode, key: rkey, pos: keyStart+1})
 			k := append([]byte{byte(pos)}, compactToHex(cnode.Key)...)
-			newshort := &shortNode{Key: hexToCompact(k), Val: cnode.Val}
+			newshort := &shortNode{Key: hexToCompact(k)}
+			newshort.setVal(cnode.Val)
 			c.updated = true
 			c.n = newshort
 			return done
@@ -753,7 +759,8 @@ func (t *Trie) convertToShortNode(key []byte, keyStart int, child node, pos uint
 	}
 	// Otherwise, n is replaced by a one-nibble short node
 	// containing the child.
-	newshort := &shortNode{Key: hexToCompact([]byte{byte(pos)}), Val: cnode}
+	newshort := &shortNode{Key: hexToCompact([]byte{byte(pos)})}
+	newshort.setVal(cnode)
 	c.updated = true
 	c.n = newshort
 	return done
@@ -803,13 +810,14 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 			// avoid modifying n.Key since it might be shared with
 			// other nodes.
 			childKey := compactToHex(shortChild.Key)
-			newnode := &shortNode{Key: hexToCompact(concat(nKey, childKey...)), Val: shortChild.Val}
+			newnode := &shortNode{Key: hexToCompact(concat(nKey, childKey...))}
+			newnode.setVal(shortChild.Val)
 			c.touched = append(c.touched, Touch{np: shortChild, key: key, pos: keyStart+len(nKey)})
 			c.updated = true
 			c.n = newnode
 			return done
 		}
-		n.Val = child
+		n.setVal(child)
 		n.hashTrue = false
 		c.updated = true
 		c.n = n
@@ -840,8 +848,8 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 				c.n = n
 				return done
 			}
-			n.child1 = nn
-			n.hashTrueMask &^= (uint32(1)<<i1)
+			n.setChild1(nn)
+			n.hashTrue1 = false
 			c.updated = true
 			c.n = n
 			return done
@@ -867,8 +875,8 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 				c.n = n
 				return done
 			}
-			n.child2 = nn
-			n.hashTrueMask &^= (uint32(1)<<i2)
+			n.setChild2(nn)
+			n.hashTrue2 = false
 			c.updated = true
 			c.n = n
 			return done
@@ -932,14 +940,14 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 			} else {
 				duo.child1 = n.Children[pos1]
 				duo.child1Hash = n.childHashes[pos1]
-				duo.hashTrueMask |= (n.hashTrueMask & (uint32(1)<<uint(pos1)))
+				duo.hashTrue1 = (n.hashTrueMask & (uint32(1)<<uint(pos1))) != 0
 			}
 			if pos2 == int(key[keyStart]) {
 				duo.child2 = nn
 			} else {
 				duo.child2 = n.Children[pos2]
 				duo.child2Hash = n.childHashes[pos2]
-				duo.hashTrueMask |= (n.hashTrueMask & (uint32(1)<<uint(pos2)))
+				duo.hashTrue2 = (n.hashTrueMask & (uint32(1)<<uint(pos2))) != 0
 			}
 			duo.mask = (1 << uint(pos1)) | (uint32(1) << uint(pos2))
 			c.updated = true
@@ -951,7 +959,7 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 			return done
 		}
 		// n still contains at least three values and cannot be reduced.
-		n.Children[key[keyStart]] = nn
+		n.setChild(key[keyStart], nn)
 		n.hashTrueMask &^= (uint32(1)<<key[keyStart])
 		c.updated = true
 		c.n = n
@@ -1085,15 +1093,14 @@ func (t *Trie) tryPrune(n node) (livecount int, unloaded bool) {
 		return livecount+1, false
 
 	case *duoNode:
-		i1, i2 := n.childrenIdx()
 		sumcount := 0
 		livecount, unloaded = t.tryPrune(n.child1)
-		if unloaded && (n.hashTrueMask & (uint32(1)<<i1)) != 0 {
+		if unloaded && n.hashTrue1 {
 			n.child1 = n.child1Hash
 		}
 		sumcount += livecount
 		livecount, unloaded = t.tryPrune(n.child2)
-		if unloaded && (n.hashTrueMask & (uint32(1)<<i2)) != 0 {
+		if unloaded && n.hashTrue2 {
 			n.child2 = n.child2Hash
 		}
 		sumcount += livecount
@@ -1170,7 +1177,8 @@ func (t *Trie) flush(n node) {
 		n.hashTrue = false
 		t.flush(n.Val)
 	case *duoNode:
-		n.hashTrueMask = 0
+		n.hashTrue1 = false
+		n.hashTrue2 = false
 		t.flush(n.child1)
 		t.flush(n.child2)
 	case *fullNode:

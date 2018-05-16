@@ -98,11 +98,7 @@ func (h *hasher) hashChildren(original node, level int) (node, error) {
 				if err != nil {
 					return original, err
 				}
-				if _, ok := collapsed.Val.(hashNode); ok {
-					n.hashTrue = true
-				} else {
-					n.hashTrue = false
-				}
+				_, n.hashTrue = collapsed.Val.(hashNode)
 			} else {
 				collapsed.Val = n.valHash
 			}
@@ -122,7 +118,7 @@ func (h *hasher) hashChildren(original node, level int) (node, error) {
 		collapsed := &h.fullCollapsed[level]
 		for i := 0; i < 17; i++ {
 			if i == int(i1) {
-				if (n.hashTrueMask & (uint32(1)<<i1)) == 0 {
+				if !n.hashTrue1 {
 					if n.child1Hash == nil {
 						n.child1Hash = make([]byte, common.HashLength)
 					}
@@ -130,16 +126,12 @@ func (h *hasher) hashChildren(original node, level int) (node, error) {
 					if err != nil {
 						return original, err
 					}
-					if _, ok := collapsed.Children[i].(hashNode); ok {
-						n.hashTrueMask |= (uint32(1)<<i1)
-					} else {
-						n.hashTrueMask &^= (uint32(1)<<i1)
-					}
+					_, n.hashTrue1 = collapsed.Children[i].(hashNode)
 				} else {
 					collapsed.Children[i] = n.child1Hash
 				}
 			} else if i == int(i2) {
-				if (n.hashTrueMask & (uint32(1)<<i2)) == 0 {
+				if !n.hashTrue2 {
 					if n.child2Hash == nil {
 						n.child2Hash = make([]byte, common.HashLength)
 					}
@@ -147,11 +139,7 @@ func (h *hasher) hashChildren(original node, level int) (node, error) {
 					if err != nil {
 						return original, err
 					}
-					if _, ok := collapsed.Children[i].(hashNode); ok {
-						n.hashTrueMask |= (uint32(1)<<i2)
-					} else {
-						n.hashTrueMask &^= (uint32(1)<<i2)
-					}
+					_, n.hashTrue2 = collapsed.Children[i].(hashNode)
 				} else {
 					collapsed.Children[i] = n.child2Hash
 				}

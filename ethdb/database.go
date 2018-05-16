@@ -656,6 +656,14 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 	if m.db == nil {
 		return m.walkMem(bucket, startkey, fixedbits, walker)
 	} else {
+		return m.db.Walk(bucket, startkey, fixedbits, walker)
+	}
+}
+
+func (m *mutation) Walk1(bucket, startkey []byte, fixedbits uint, walker WalkerFunc) error {
+	if m.db == nil {
+		return m.walkMem(bucket, startkey, fixedbits, walker)
+	} else {
 		fixedbytes, mask := bytesmask(fixedbits)
 		m.mu.RLock()
 		defer m.mu.RUnlock()

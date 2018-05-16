@@ -281,7 +281,7 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 	}
 	hex := keybytesToHex(tr.key[:])
 	tr.nodeStack[startLevel+1].Key = hexToCompact(hex[startLevel+1:])
-	tr.nodeStack[startLevel+1].Val = valueNode(tr.value)
+	tr.nodeStack[startLevel+1].setVal(valueNode(tr.value))
 	tr.nodeStack[startLevel+1].hashTrue = false
 	tr.fillCount[startLevel+1] = 1
 	// Adjust rhIndices if needed
@@ -341,17 +341,8 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 				//}
 			}
 			tr.nodeStack[level].Key = hexToCompact(append([]byte{keynibble}, compactToHex(short.Key)...))
-			if hash, ok := short.Val.(hashNode); ok {
-				if tr.nodeStack[level].valHash == nil {
-					tr.nodeStack[level].valHash = make([]byte, common.HashLength)
-				}
-				copy(tr.nodeStack[level].valHash, hash)
-				tr.nodeStack[level].Val = tr.nodeStack[level].valHash
-				tr.nodeStack[level].hashTrue = true
-			} else {
-				tr.nodeStack[level].Val = short.Val
-				tr.nodeStack[level].hashTrue = false
-			}
+			tr.nodeStack[level].setVal(short.Val)
+			_, tr.nodeStack[level].hashTrue = short.Val.(hashNode)
 			tr.fillCount[level]++
 			if tr.hashes && level <= 4 && compactLen(short.Key) + level >= 4 {
 				tr.dbw.PutHash(hashIdx, hn.(hashNode))
@@ -382,7 +373,7 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 			tr.nodeStack[level].valHash = make([]byte, common.HashLength)
 		}
 		copy(tr.nodeStack[level].valHash, tr.vertical[level].childHashes[keynibble])
-		hn1 := tr.nodeStack[level].valHash
+		//hn1 := tr.nodeStack[level].valHash
 		if tr.hashes && level == 4 {
 			tr.dbw.PutHash(hashIdx, hn.(hashNode))
 		}
@@ -394,12 +385,12 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 			} else {
 				c = full.copy()
 			}
-			tr.vertical[level].Children[keynibble] = c
-			tr.nodeStack[level].Val = c
+			tr.vertical[level].setChild(keynibble, c)
+			tr.nodeStack[level].setVal(c)
 			//fmt.Printf("Promoting copy of full\n")
 		} else {
-			tr.vertical[level].Children[keynibble] = hn
-			tr.nodeStack[level].Val = hn1
+			tr.vertical[level].setChild(keynibble, hn)
+			tr.nodeStack[level].setVal(hn)
 			//if hash, ok := hn.(hashNode); ok {
 			//	fmt.Printf("Promoting hash %s\n", hash)
 			//} else {

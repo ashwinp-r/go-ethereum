@@ -51,7 +51,8 @@ type (
 		child1  node
 		child2  node
 		flags   nodeFlag
-		hashTrueMask uint32
+		hashTrue1 bool
+		hashTrue2 bool
 		child1Hash hashNode
 		child2Hash hashNode
 	}
@@ -119,7 +120,6 @@ func (n *fullNode) copy() *fullNode   {
 
 func (n *fullNode) duoCopy() *duoNode {
 	copy := duoNode{}
-	copy.hashTrueMask = n.hashTrueMask
 	first := true
 	for i, child := range n.Children {
 		if child == nil {
@@ -128,6 +128,7 @@ func (n *fullNode) duoCopy() *duoNode {
 		if first {
 			first = false
 			copy.mask |= (uint32(1)<<uint(i))
+			copy.hashTrue1 = n.hashTrueMask & (uint32(1)<<uint(i)) != 0
 			copy.child1Hash = common.CopyBytes(n.childHashes[i])
 			if _, ok := child.(hashNode); ok {
 				copy.child1 = copy.child1Hash
@@ -136,6 +137,7 @@ func (n *fullNode) duoCopy() *duoNode {
 			}
 		} else {
 			copy.mask |= (uint32(1)<<uint(i))
+			copy.hashTrue2 = n.hashTrueMask & (uint32(1)<<uint(i)) != 0
 			copy.child2Hash = common.CopyBytes(n.childHashes[i])
 			if _, ok := child.(hashNode); ok {
 				copy.child2 = copy.child2Hash
@@ -173,14 +175,62 @@ func (n *shortNode) copy() *shortNode {
 	return &copy
 }
 
+func (n *shortNode) setVal(val node) {
+	if hash, ok := val.(hashNode); ok {
+		if n.valHash == nil {
+			n.valHash = make([]byte, common.HashLength)
+		}
+		copy(n.valHash, hash)
+		n.Val = n.valHash
+	} else {
+		n.Val = val
+	}
+}
+
+func (n *duoNode) setChild1(child node) {
+	if hash, ok := child.(hashNode); ok {
+		if n.child1Hash == nil {
+			n.child1Hash = make([]byte, common.HashLength)
+		}
+		copy(n.child1Hash, hash)
+		n.child1 = n.child1Hash
+	} else {
+		n.child1 = child
+	}
+}
+
+func (n *duoNode) setChild2(child node) {
+	if hash, ok := child.(hashNode); ok {
+		if n.child2Hash == nil {
+			n.child2Hash = make([]byte, common.HashLength)
+		}
+		copy(n.child2Hash, hash)
+		n.child2 = n.child1Hash
+	} else {
+		n.child2 = child
+	}
+}
+
+func (n *fullNode) setChild(i byte, child node) {
+	if hash, ok := child.(hashNode); ok {
+		if n.childHashes[i] == nil {
+			n.childHashes[i] = make([]byte, common.HashLength)
+		}
+		copy(n.childHashes[i], hash)
+		n.Children[i] = n.childHashes[i]
+	} else {
+		n.Children[i] = child
+	}
+}
+
 // nodeFlag contains caching-related metadata about a node.
 type nodeFlag struct {
 	next, prev  nodep      // list element for efficient disposing of nodes
 }
 
-func (n *fullNode) unlisted() bool  { return n.flags.next == nil && n.flags.prev == nil }
-func (n *duoNode) unlisted() bool   { return n.flags.next == nil && n.flags.prev == nil }
-func (n *shortNode) unlisted() bool { return n.flags.next == nil && n.flags.prev == nil }
+func (n *fullNode) unlisted() bool  { return n.flags.next == nil }
+func (n *duoNode) unlisted() bool   { return n.flags.next == nil }
+func (n *shortNode) unlisted() bool { return n.flags.next == nil }
 func (n hashNode) unlisted() bool   { return false }
 func (n valueNode) unlisted() bool  { return false }
 
