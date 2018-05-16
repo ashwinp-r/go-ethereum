@@ -205,7 +205,7 @@ func (n *duoNode) setChild2(child node) {
 			n.child2Hash = make([]byte, common.HashLength)
 		}
 		copy(n.child2Hash, hash)
-		n.child2 = n.child1Hash
+		n.child2 = n.child2Hash
 	} else {
 		n.child2 = child
 	}
