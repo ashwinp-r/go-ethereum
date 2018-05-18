@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 var emptyCodeHash = crypto.Keccak256(nil)
@@ -740,6 +741,15 @@ func buildHashFromFile() {
 	fmt.Printf("%d lines scanned\n", count)
 }
 
+func rlpIndices() {
+	keybuf := new(bytes.Buffer)
+	for i := 0; i < 512; i ++ {
+		keybuf.Reset()
+		rlp.Encode(keybuf, uint(i))
+		fmt.Printf("Encoding of %d is %x\n", i, keybuf.Bytes())
+	}
+}
+
 func main() {
 	flag.Parse()
     if *cpuprofile != "" {
@@ -752,16 +762,17 @@ func main() {
         }
         defer pprof.StopCPUProfile()
     }
-	//db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
 	//db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
- 	//check(err)
+ 	check(err)
  	//defer db.Close()
- 	//bucketStats(db)
+ 	bucketStats(db)
  	//mychart()
  	//testRebuild()
  	//testRewind()
  	//hashFile()
  	//buildHashFromFile()
- 	testResolve()
+ 	//testResolve()
+ 	//rlpIndices()
 }
 
