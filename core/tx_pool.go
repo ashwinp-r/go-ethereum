@@ -409,6 +409,7 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 	pool.currentState = statedb
 	pool.currentTds = tds
 	pool.pendingState = state.ManageState(statedb)
+	fmt.Printf("pendingState reset\n")
 	pool.currentMaxGas = newHead.GasLimit
 
 	// Inject any transactions discarded due to reorgs
@@ -424,6 +425,7 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 	// Update all accounts to the latest known pending nonce
 	for addr, list := range pool.pending {
 		txs := list.Flatten() // Heavy but will be cached and is needed by the miner anyway
+		fmt.Printf("pendingState.SetNonce\n")
 		pool.pendingState.SetNonce(addr, txs[len(txs)-1].Nonce()+1)
 	}
 	// Check the queue and move transactions over to the pending if possible
@@ -747,6 +749,7 @@ func (pool *TxPool) promoteTx(addr common.Address, hash common.Hash, tx *types.T
 	}
 	// Set the potentially new pending nonce and notify any subsystems of the new tx
 	pool.beats[addr] = time.Now()
+	fmt.Printf("pendingState.SetNonce\n")
 	pool.pendingState.SetNonce(addr, tx.Nonce()+1)
 
 	go pool.txFeed.Send(TxPreEvent{tx})
@@ -891,6 +894,7 @@ func (pool *TxPool) removeTx(hash common.Hash, outofbound bool) {
 			}
 			// Update the account nonce if needed
 			if nonce := tx.Nonce(); pool.pendingState.GetNonce(addr) > nonce {
+				fmt.Printf("pendingState.SetNonce\n")
 				pool.pendingState.SetNonce(addr, nonce)
 			}
 			return
@@ -998,6 +1002,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 
 							// Update the account nonce to the dropped transaction
 							if nonce := tx.Nonce(); pool.pendingState.GetNonce(offenders[i]) > nonce {
+								fmt.Printf("pendingState.SetNonce\n")
 								pool.pendingState.SetNonce(offenders[i], nonce)
 							}
 							log.Trace("Removed fairness-exceeding pending transaction", "hash", hash)
@@ -1020,6 +1025,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 
 						// Update the account nonce to the dropped transaction
 						if nonce := tx.Nonce(); pool.pendingState.GetNonce(addr) > nonce {
+							fmt.Printf("pendingState.SetNonce\n")
 							pool.pendingState.SetNonce(addr, nonce)
 						}
 						log.Trace("Removed fairness-exceeding pending transaction", "hash", hash)
