@@ -1135,7 +1135,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 				return 0, events, coalescedLogs, err
 			}
 			bc.trieDbState.PruneTries()
-			log.Info("Database", "size", bc.db.Size())
+			log.Info("Database", "size", bc.db.Size())	
 		}
 	}
 	// Append a single chain head event if we've progressed the chain
