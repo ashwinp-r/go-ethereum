@@ -427,12 +427,12 @@ func (tds *TrieDbState) ReadAccountData(address *common.Address) (*Account, erro
 }
 
 func (tds *TrieDbState) HashKey(key []byte) ([]byte, error) {
-	keyStr := string(key)
-	if cached, ok := tds.hashKeyCache.Get(keyStr); ok {
-		return cached.([]byte), nil
-	}
+	//keyStr := string(key)
+	//if cached, ok := tds.hashKeyCache.Get(keyStr); ok {
+	//	return cached.([]byte), nil
+	//}
 	hash := crypto.Keccak256Hash(key)
-	tds.hashKeyCache.Add(string(common.CopyBytes(key)), hash[:])
+	//tds.hashKeyCache.Add(string(common.CopyBytes(key)), hash[:])
 	if err := tds.db.TrieDB().Put(trie.SecureKeyPrefix, hash[:], key); err != nil {
 		return nil, err
 	}
