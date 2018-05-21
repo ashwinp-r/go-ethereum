@@ -525,7 +525,6 @@ func (tds *TrieDbState) PruneTries() {
 	} else {
 		log.Info("Nodes", "list", tds.nodeList.Len())
 	}
-	runtime.GC()
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	churn := (m.TotalAlloc - prevMemStats.TotalAlloc) - (prevMemStats.Alloc - m.Alloc)

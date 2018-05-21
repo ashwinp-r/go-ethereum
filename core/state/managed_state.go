@@ -17,7 +17,6 @@
 package state
 
 import (
-	"fmt"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -140,6 +139,5 @@ func (ms *ManagedState) getAccount(addr common.Address) *account {
 }
 
 func newAccount(so *stateObject) *account {
-	fmt.Printf("newAccount\n")
 	return &account{so, so.Nonce(), nil}
 }
