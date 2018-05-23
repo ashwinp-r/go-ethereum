@@ -134,6 +134,9 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tds
 			cfg.Debug = true
 		}
 		*/
+		if cfg.Debug {
+			fmt.Printf("DEBUG!\n")
+		}
 		receipt, _, err := ApplyTransaction(p.config, p.bc, nil, gp, statedb, tds, header, tx, usedGas, cfg)
 		if err != nil {
 			return nil, nil, 0, err

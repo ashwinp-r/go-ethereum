@@ -131,6 +131,9 @@ func (self *StateDB) AddLog(log *types.Log) {
 	log.TxIndex = uint(self.txIndex)
 	log.Index = self.logSize
 	self.logs[self.thash] = append(self.logs[self.thash], log)
+	if len(self.logs) >= 1000 {
+		fmt.Printf("Log size is %d\n", len(self.logs))
+	}
 	self.logSize++
 }
 

@@ -609,8 +609,8 @@ func (env *Work) commitTransactions(mux *event.TypeMux, txs *types.TransactionsB
 }
 
 func (env *Work) commitTransaction(tx *types.Transaction, bc *core.BlockChain, coinbase common.Address, gp *core.GasPool) (error, []*types.Log) {
+	fmt.Printf("commitTransaction with state %p\n", env.state)
 	snap := env.state.Snapshot()
-
 	receipt, _, err := core.ApplyTransaction(env.config, bc, &coinbase, gp, env.state, env.tds, env.header, tx, &env.header.GasUsed, vm.Config{})
 	if err != nil {
 		env.state.RevertToSnapshot(snap)
