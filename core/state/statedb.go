@@ -424,7 +424,7 @@ func (tds *TrieDbState) ForEachStorage(s *StateDB, addr common.Address, cb func(
 	}
 
 	addrHash := crypto.Keccak256Hash(addr[:])
-	tds.db.TrieDB().WalkAsOf(addrHash[:], []byte{}, 0, tds.blockNr, func(ks, vs []byte) (bool, error) {
+	tds.db.WalkAsOf(addrHash[:], []byte{}, 0, tds.blockNr, func(ks, vs []byte) (bool, error) {
 		key := common.BytesToHash(tds.GetKey(ks))
 		if _, ok := so.cachedStorage[key]; !ok {
 			cb(key, common.BytesToHash(vs))

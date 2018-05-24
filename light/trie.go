@@ -30,7 +30,7 @@ import (
 )
 
 func NewState(ctx context.Context, head *types.Header, odr OdrBackend) *state.StateDB {
-	tds, _ := state.NewTrieDbState(head.Root, NewStateDatabase(ctx, head, odr), head.Number.Uint64())
+	tds, _ := state.NewTrieDbState(head.Root, NewStateDatabase(ctx, head, odr).TrieDB(), head.Number.Uint64())
 	state := state.New(tds)
 	return state
 }

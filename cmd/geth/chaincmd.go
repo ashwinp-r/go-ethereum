@@ -455,7 +455,7 @@ func dump(ctx *cli.Context) error {
 			fmt.Println("{}")
 			utils.Fatalf("block not found")
 		} else {
-			tds, err := state.NewTrieDbState(block.Root(), state.NewDatabase(chainDb), block.NumberU64())
+			tds, err := state.NewTrieDbState(block.Root(), chainDb, block.NumberU64())
 			if err != nil {
 				utils.Fatalf("could not create new state: %v", err)
 			}

@@ -234,7 +234,7 @@ func (g *Genesis) ToBlock(db ethdb.Database) (*types.Block, *state.StateDB, *sta
 	if db == nil {
 		db = ethdb.NewMemDatabase()
 	}
-	tds, err := state.NewTrieDbState(common.Hash{}, state.NewDatabase(db), 0)
+	tds, err := state.NewTrieDbState(common.Hash{}, db, 0)
 	if err != nil {
 		return nil, nil, nil, err
 	}

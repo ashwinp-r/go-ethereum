@@ -161,7 +161,7 @@ type TrieDbState struct {
 	t                *trie.Trie
 	addrHashCache    *lru.Cache
 	keyHashCache     *lru.Cache
-	db               Database
+	db               ethdb.Database
 	nodeList         *trie.List
 	blockNr          uint64
 	storageTries     map[common.Address]*trie.Trie
@@ -172,7 +172,7 @@ type TrieDbState struct {
 	codeSizeCache    *lru.Cache
 }
 
-func NewTrieDbState(root common.Hash, db Database, blockNr uint64) (*TrieDbState, error) {
+func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieDbState, error) {
 	addrHashCache, err := lru.New(128*1024)
 	if err != nil {
 		return nil, err
@@ -233,7 +233,7 @@ func (tds *TrieDbState) Copy() *TrieDbState {
 	return &cpy
 }
 
-func (tds *TrieDbState) Database() Database {
+func (tds *TrieDbState) Database() ethdb.Database {
 	return tds.db
 }
 
@@ -285,17 +285,17 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 			newContinuations := []*trie.TrieContinuation{}
 			var resolver *trie.TrieResolver
 			for _, c := range oldContinuations {
-				if !c.RunWithDb(tds.db.TrieDB()) {
+				if !c.RunWithDb(tds.db) {
 					newContinuations = append(newContinuations, c)
 					if resolver == nil {
-						resolver = c.Trie().NewResolver(tds.db.TrieDB(), false)
+						resolver = c.Trie().NewResolver(tds.db, false)
 					}
 					resolver.AddContinuation(c)
 				}
 			}
 			if len(newContinuations) > 0 {
 				newStorageC = append(newStorageC, newContinuations)
-				if err := resolver.ResolveWithDb(tds.db.TrieDB(), tds.blockNr); err != nil {
+				if err := resolver.ResolveWithDb(tds.db, tds.blockNr); err != nil {
 					return common.Hash{}, err
 				}
 			}
@@ -350,15 +350,15 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 	tds.deleted = make(map[common.Address]struct{})
 	it = 0
 	for len(oldContinuations) > 0 {
-		resolver := tds.t.NewResolver(tds.db.TrieDB(), false)
+		resolver := tds.t.NewResolver(tds.db, false)
 		for _, c := range oldContinuations {
-			if !c.RunWithDb(tds.db.TrieDB()) {
+			if !c.RunWithDb(tds.db) {
 				newContinuations = append(newContinuations, c)
 				resolver.AddContinuation(c)
 			}
 		}
 		if len(newContinuations) > 0 {
-			if err := resolver.ResolveWithDb(tds.db.TrieDB(), tds.blockNr); err != nil {
+			if err := resolver.ResolveWithDb(tds.db, tds.blockNr); err != nil {
 				return common.Hash{}, err
 			}
 		}
@@ -368,7 +368,7 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 	if it > 3 {
 		fmt.Printf("Resolved in %d iterations\n", it)
 	}
-	tds.t.SaveHashes(tds.db.TrieDB())
+	tds.t.SaveHashes(tds.db)
 	tds.t.Relist()
 	hash := tds.t.Hash()
 	return hash, nil
@@ -377,7 +377,7 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 
 func (tds *TrieDbState) Rebuild() error {
 	tr := tds.AccountTrie()
-	tr.Rebuild(tds.db.TrieDB(), tds.blockNr)
+	tr.Rebuild(tds.db, tds.blockNr)
 	return nil
 }
 
@@ -386,7 +386,7 @@ func (tds *TrieDbState) SetBlockNr(blockNr uint64) {
 }
 
 func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
-	if err := tds.db.TrieDB().RewindData(tds.blockNr, blockNr, func (bucket, key, value []byte) error {
+	if err := tds.db.RewindData(tds.blockNr, blockNr, func (bucket, key, value []byte) error {
 		//var c *trie.TrieContinuation
 		//var a *common.Address
 		if bytes.Equal(bucket, AccountsBucket) {
@@ -419,7 +419,7 @@ func (tds *TrieDbState) ReadAccountData(address *common.Address) (*Account, erro
 	if err != nil {
 		return nil, err
 	}
-	enc, gotValue, err := tds.t.TryGet(tds.db.TrieDB(), addrHash, tds.blockNr)
+	enc, gotValue, err := tds.t.TryGet(tds.db, addrHash, tds.blockNr)
 	if err != nil {
 		return nil, err
 	}
@@ -443,7 +443,7 @@ func (tds *TrieDbState) HashAddress(address common.Address) ([]byte, error) {
 	}
 	hash := crypto.Keccak256Hash(address[:])
 	tds.addrHashCache.Add(address, hash[:])
-	if err := tds.db.TrieDB().Put(trie.SecureKeyPrefix, hash[:], address[:]); err != nil {
+	if err := tds.db.Put(trie.SecureKeyPrefix, hash[:], address[:]); err != nil {
 		return nil, err
 	}
 	return hash[:], nil
@@ -455,14 +455,14 @@ func (tds *TrieDbState) HashKey(key common.Hash) ([]byte, error) {
 	}
 	hash := crypto.Keccak256Hash(key[:])
 	tds.keyHashCache.Add(key, hash[:])
-	if err := tds.db.TrieDB().Put(trie.SecureKeyPrefix, hash[:], key[:]); err != nil {
+	if err := tds.db.Put(trie.SecureKeyPrefix, hash[:], key[:]); err != nil {
 		return nil, err
 	}
 	return hash[:], nil
 }
 
 func (tds *TrieDbState) GetKey(shaKey []byte) []byte {
-	key, _ := tds.db.TrieDB().Get(trie.SecureKeyPrefix, shaKey)
+	key, _ := tds.db.Get(trie.SecureKeyPrefix, shaKey)
 	return key
 }
 
@@ -474,9 +474,9 @@ func (tds *TrieDbState) getStorageTrie(address *common.Address, create bool) (*t
 			return nil, err
 		}
 		if account == nil {
-			t = trie.New(common.Hash{}, address[:], true)
+			t = trie.New(common.Hash{}, common.CopyBytes(address[:]), true)
 		} else {
-			t = trie.New(account.Root, address[:], true)
+			t = trie.New(account.Root, common.CopyBytes(address[:]), true)
 		}
 		t.MakeListed(tds.nodeList)
 		tds.storageTries[*address] = t
@@ -493,7 +493,7 @@ func (tds *TrieDbState) ReadAccountStorage(address *common.Address, key *common.
 	if err != nil {
 		return nil, err
 	}
-	enc, _, err := t.TryGet(tds.db.TrieDB(), seckey, tds.blockNr)
+	enc, _, err := t.TryGet(tds.db, seckey, tds.blockNr)
 	if err != nil {
 		return nil, err
 	}
@@ -507,7 +507,7 @@ func (tds *TrieDbState) ReadAccountCode(codeHash common.Hash) ([]byte, error) {
 	if cached, ok := tds.codeCache.Get(codeHash); ok {
 		return cached.([]byte), nil
 	}
-	code, err := tds.db.TrieDB().Get(CodeBucket, codeHash[:])
+	code, err := tds.db.Get(CodeBucket, codeHash[:])
 	if err == nil {
 		tds.codeSizeCache.Add(codeHash, len(code))
 		tds.codeCache.Add(codeHash, code)
@@ -590,7 +590,7 @@ func (dsw *DbStateWriter) UpdateAccountData(address *common.Address, account *Ac
 	if err != nil {
 		return err
 	}
-	return dsw.tds.db.TrieDB().PutS(AccountsBucket, seckey, data, dsw.tds.blockNr)
+	return dsw.tds.db.PutS(AccountsBucket, seckey, data, dsw.tds.blockNr)
 }
 
 func (tsw *TrieStateWriter) DeleteAccount(address *common.Address) error {
@@ -604,7 +604,7 @@ func (dsw *DbStateWriter) DeleteAccount(address *common.Address) error {
 	if err != nil {
 		return err
 	}
-	return dsw.tds.db.TrieDB().PutS(AccountsBucket, seckey, []byte{}, dsw.tds.blockNr)
+	return dsw.tds.db.PutS(AccountsBucket, seckey, []byte{}, dsw.tds.blockNr)
 }
 
 func (tsw *TrieStateWriter) UpdateAccountCode(codeHash common.Hash, code []byte) error {
@@ -612,7 +612,7 @@ func (tsw *TrieStateWriter) UpdateAccountCode(codeHash common.Hash, code []byte)
 }
 
 func (dsw *DbStateWriter) UpdateAccountCode(codeHash common.Hash, code []byte) error {
-	return dsw.tds.db.TrieDB().Put(CodeBucket, codeHash[:], code)
+	return dsw.tds.db.Put(CodeBucket, codeHash[:], code)
 }
 
 func (tsw *TrieStateWriter) WriteAccountStorage(address *common.Address, key, value *common.Hash) error {
@@ -638,7 +638,7 @@ func (dsw *DbStateWriter) WriteAccountStorage(address *common.Address, key, valu
 	v := bytes.TrimLeft(value[:], "\x00")
 	vv := make([]byte, len(v))
 	copy(vv, v)
-	return dsw.tds.db.TrieDB().PutS(address[:], seckey, vv, dsw.tds.blockNr)
+	return dsw.tds.db.PutS(address[:], seckey, vv, dsw.tds.blockNr)
 }
 
 // Database wraps access to tries and contract code.

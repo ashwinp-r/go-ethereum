@@ -588,7 +588,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 				if err != nil {
 					continue
 				}
-				code, _ := tds.Database().TrieDB().Get(state.CodeBucket, account.CodeHash)
+				code, _ := tds.Database().Get(state.CodeBucket, account.CodeHash)
 
 				data = append(data, code)
 				if bytes += len(code); bytes >= softResponseLimit {
@@ -716,13 +716,13 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 					if err != nil {
 						continue
 					}
-					trie, _ = tds.Database().OpenStorageTrie(common.BytesToHash(req.AccKey), account.Root)
+					trie, _ = state.NewDatabase(tds.Database()).OpenStorageTrie(common.BytesToHash(req.AccKey), account.Root)
 				} else {
-					trie, _ = tds.Database().OpenTrie(header.Root)
+					trie, _ = state.NewDatabase(tds.Database()).OpenTrie(header.Root)
 				}
 				if trie != nil {
 					var proof light.NodeList
-					trie.Prove(tds.Database().TrieDB(), req.Key, 0, &proof, header.Number.Uint64())
+					trie.Prove(tds.Database(), req.Key, 0, &proof, header.Number.Uint64())
 
 					proofs = append(proofs, proof)
 					if bytes += proof.DataSize(); bytes >= softResponseLimit {
@@ -781,15 +781,15 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 				if err != nil {
 					continue
 				}
-				trie, _ = tds.Database().OpenStorageTrie(common.BytesToHash(req.AccKey), account.Root)
+				trie, _ = state.NewDatabase(tds.Database()).OpenStorageTrie(common.BytesToHash(req.AccKey), account.Root)
 			} else {
-				trie, _ = tds.Database().OpenTrie(root)
+				trie, _ = state.NewDatabase(tds.Database()).OpenTrie(root)
 			}
 			if trie == nil {
 				continue
 			}
 			// Prove the user's request from the account or stroage trie
-			trie.Prove(tds.Database().TrieDB(), req.Key, req.FromLevel, nodes, readBlockNr)
+			trie.Prove(tds.Database(), req.Key, req.FromLevel, nodes, readBlockNr)
 			if nodes.DataSize() >= softResponseLimit {
 				break
 			}
@@ -1096,7 +1096,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 // getAccount retrieves an account from the state based at root.
 func (pm *ProtocolManager) getAccount(tds *state.TrieDbState, root, hash common.Hash) (state.Account, error) {
 	trie := trie.New(root, state.AccountsBucket, false)
-	blob, _, err := trie.TryGet(tds.Database().TrieDB(), hash[:], 0 /* Replace with correct blockNr */)
+	blob, _, err := trie.TryGet(tds.Database(), hash[:], 0 /* Replace with correct blockNr */)
 	if err != nil {
 		return state.Account{}, err
 	}

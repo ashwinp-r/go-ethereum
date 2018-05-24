@@ -382,7 +382,7 @@ func (bc *BlockChain) State() (*state.StateDB, *state.TrieDbState, error) {
 
 // StateAt returns a new mutable state based on a particular point in time.
 func (bc *BlockChain) StateAt(root common.Hash, blockNr uint64) (*state.StateDB, *state.TrieDbState, error) {
-	tds, err := state.NewTrieDbState(root, bc.stateCache, blockNr)
+	tds, err := state.NewTrieDbState(root, bc.db, blockNr)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1075,7 +1075,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		if bc.trieDbState == nil || readBlockNr == 0 || !bytes.Equal(root[:], parentRoot[:]) {
 			//fmt.Printf("New StateDB created for %d block\n", readBlockNr)
 			log.Info("New StateDB created", "block", readBlockNr)
-			bc.trieDbState, err = state.NewTrieDbState(parent.Root(), bc.stateCache, readBlockNr)
+			bc.trieDbState, err = state.NewTrieDbState(parent.Root(), bc.db, readBlockNr)
 			if err != nil {
 				return i, events, coalescedLogs, err
 			}

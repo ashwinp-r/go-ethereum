@@ -215,7 +215,7 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 		return nil, nil
 	}
 	for i := 0; i < n; i++ {
-		tds, err := state.NewTrieDbState(parent.Root(), state.NewDatabase(db), parent.Number().Uint64())
+		tds, err := state.NewTrieDbState(parent.Root(), db, parent.Number().Uint64())
 		if err != nil {
 			panic(err)
 		}

@@ -76,7 +76,7 @@ func (it *NodeIterator) step() error {
 	}
 	// Initialize the iterator if we've just started
 	if it.stateIt == nil {
-		it.stateIt = it.state.t.NodeIterator(it.state.db.TrieDB(), nil, it.state.blockNr)
+		it.stateIt = it.state.t.NodeIterator(it.state.db, nil, it.state.blockNr)
 	}
 	// If we had data nodes previously, we surely have at least state nodes
 	if it.dataIt != nil {
@@ -110,18 +110,18 @@ func (it *NodeIterator) step() error {
 	if err := rlp.Decode(bytes.NewReader(it.stateIt.LeafBlob()), &account); err != nil {
 		return err
 	}
-	dataTrie, err := it.state.db.OpenStorageTrie(common.BytesToHash(it.stateIt.LeafKey()), account.Root)
+	dataTrie, err := NewDatabase(it.state.db).OpenStorageTrie(common.BytesToHash(it.stateIt.LeafKey()), account.Root)
 	if err != nil {
 		return err
 	}
-	it.dataIt = dataTrie.NodeIterator(it.state.db.TrieDB(), nil, it.blockNr)
+	it.dataIt = dataTrie.NodeIterator(it.state.db, nil, it.blockNr)
 	if !it.dataIt.Next(true) {
 		it.dataIt = nil
 	}
 	if !bytes.Equal(account.CodeHash, emptyCodeHash) {
 		it.codeHash = common.BytesToHash(account.CodeHash)
 		addrHash := common.BytesToHash(it.stateIt.LeafKey())
-		it.code, err = it.state.db.ContractCode(addrHash, common.BytesToHash(account.CodeHash))
+		it.code, err = NewDatabase(it.state.db).ContractCode(addrHash, common.BytesToHash(account.CodeHash))
 		if err != nil {
 			return fmt.Errorf("code %x: %v", account.CodeHash, err)
 		}

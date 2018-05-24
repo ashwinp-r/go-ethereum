@@ -46,7 +46,7 @@ func (self *TrieDbState) RawDump() Dump {
 		Accounts: make(map[string]DumpAccount),
 	}
 	var prefix [32]byte
-	err := self.db.TrieDB().WalkAsOf(AccountsBucket, prefix[:], 0, self.blockNr, func(k, v []byte) (bool, error) {
+	err := self.db.WalkAsOf(AccountsBucket, prefix[:], 0, self.blockNr, func(k, v []byte) (bool, error) {
 		addr := self.GetKey(k)
 		var data Account
 		var err error
@@ -55,7 +55,7 @@ func (self *TrieDbState) RawDump() Dump {
 		}
 		var code []byte
 		if !bytes.Equal(data.CodeHash[:], emptyCodeHash) {
-			if code, err = self.db.TrieDB().Get(CodeBucket, data.CodeHash[:]); err != nil {
+			if code, err = self.db.Get(CodeBucket, data.CodeHash[:]); err != nil {
 				return false, err
 			}
 		}
@@ -68,7 +68,7 @@ func (self *TrieDbState) RawDump() Dump {
 			Storage:  make(map[string]string),
 		}
 		addrHash := crypto.Keccak256Hash(addr)
-		err = self.db.TrieDB().WalkAsOf(addrHash[:], []byte{}, 0, self.blockNr, func(ks, vs []byte) (bool, error) {
+		err = self.db.WalkAsOf(addrHash[:], []byte{}, 0, self.blockNr, func(ks, vs []byte) (bool, error) {
 			account.Storage[common.Bytes2Hex(self.GetKey(ks))] = common.Bytes2Hex(vs)
 			return true, nil
 		})
