@@ -590,7 +590,7 @@ func (tr *TrieResolver) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
 	//for i, startkey := range startkeys {
 	//	fmt.Printf("%x %d\n", startkey, fixedbits[i])
 	//}
-	if err := db.MultiWalkAsOf(tr.t.prefix, startkeys, fixedbits, blockNr, tr.Walker); err != nil {
+	if err := db.MultiWalk(tr.t.prefix, startkeys, fixedbits, tr.Walker); err != nil {
 		return err
 	}
 	return nil

@@ -37,6 +37,7 @@ import (
 var MaxTrieCacheGen = uint32(4*1024*1024)
 
 var AccountsBucket = []byte("AT")
+var AccountsHistoryBucket = []byte("hAT")
 var CodeBucket = []byte("CODE")
 
 const (
@@ -171,12 +172,12 @@ func (dbs *DbState) UpdateAccountData(address *common.Address, account *Account)
 		}
 	}
 	seckey := crypto.Keccak256Hash(address[:])
-	return dbs.db.PutS(AccountsBucket, seckey[:], data, dbs.blockNr)
+	return dbs.db.PutS(AccountsBucket, AccountsHistoryBucket, seckey[:], data, dbs.blockNr)
 }
 
 func (dbs *DbState) DeleteAccount(address *common.Address) error {
 	seckey := crypto.Keccak256Hash(address[:])
-	return dbs.db.PutS(AccountsBucket, seckey[:], []byte{}, dbs.blockNr)
+	return dbs.db.PutS(AccountsBucket, AccountsHistoryBucket, seckey[:], []byte{}, dbs.blockNr)
 }
 
 func (dbs *DbState) UpdateAccountCode(codeHash common.Hash, code []byte) error {
@@ -186,7 +187,7 @@ func (dbs *DbState) UpdateAccountCode(codeHash common.Hash, code []byte) error {
 func (dbs *DbState) WriteAccountStorage(address *common.Address, key, value *common.Hash) error {
 	seckey := crypto.Keccak256Hash(key[:])
 	v := bytes.TrimLeft(value[:], "\x00")
-	return dbs.db.PutS(address[:], seckey[:], v, dbs.blockNr)
+	return dbs.db.PutS(address[:], append([]byte("h"), address[:]...), seckey[:], v, dbs.blockNr)
 }
 
 // Implements StateReader by wrapping a trie and a database, where trie acts as a cache for the database
@@ -653,7 +654,7 @@ func (dsw *DbStateWriter) UpdateAccountData(address *common.Address, account *Ac
 	if err != nil {
 		return err
 	}
-	return dsw.tds.db.PutS(AccountsBucket, seckey, data, dsw.tds.blockNr)
+	return dsw.tds.db.PutS(AccountsBucket, AccountsHistoryBucket, seckey, data, dsw.tds.blockNr)
 }
 
 func (tsw *TrieStateWriter) DeleteAccount(address *common.Address) error {
@@ -667,7 +668,7 @@ func (dsw *DbStateWriter) DeleteAccount(address *common.Address) error {
 	if err != nil {
 		return err
 	}
-	return dsw.tds.db.PutS(AccountsBucket, seckey, []byte{}, dsw.tds.blockNr)
+	return dsw.tds.db.PutS(AccountsBucket, AccountsHistoryBucket, seckey, []byte{}, dsw.tds.blockNr)
 }
 
 func (tsw *TrieStateWriter) UpdateAccountCode(codeHash common.Hash, code []byte) error {
@@ -701,7 +702,7 @@ func (dsw *DbStateWriter) WriteAccountStorage(address *common.Address, key, valu
 	v := bytes.TrimLeft(value[:], "\x00")
 	vv := make([]byte, len(v))
 	copy(vv, v)
-	return dsw.tds.db.PutS(address[:], seckey, vv, dsw.tds.blockNr)
+	return dsw.tds.db.PutS(address[:], append([]byte("h"), address[:]...), seckey, vv, dsw.tds.blockNr)
 }
 
 // Database wraps access to tries and contract code.

@@ -62,7 +62,7 @@ func (db *NodeSet) Put(bucket, key []byte, value []byte) error {
 	return nil
 }
 
-func (db *NodeSet) PutS(bucket, key, value []byte, timestamp uint64) error {
+func (db *NodeSet) PutS(bucket, hBucket, key, value []byte, timestamp uint64) error {
 	return nil
 }
 
@@ -164,7 +164,7 @@ func (n *NodeList) Put(bucket, key []byte, value []byte) error {
 }
 
 // Put stores a new node at the end of the list
-func (n *NodeList) PutS(bucket, key, value []byte, timestamp uint64) error {
+func (n *NodeList) PutS(bucket, hBucket, key, value []byte, timestamp uint64) error {
 	*n = append(*n, value)
 	return nil
 }

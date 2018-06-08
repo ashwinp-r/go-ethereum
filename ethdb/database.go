@@ -142,18 +142,36 @@ func compositeKeySuffix(key []byte, timestamp uint64) (composite, suffix []byte)
 	return composite, suffix
 }
 
+func historyBucket(bucket []byte) []byte {
+	hb := make([]byte, len(bucket)+1)
+	hb[0] = byte('h')
+	copy(hb[1:], bucket)
+	return hb
+}
+
 // Put puts the given key / value to the queue
-func (db *LDBDatabase) PutS(bucket, key, value []byte, timestamp uint64) error {
+func (db *LDBDatabase) PutS(bucket, hBucket, key, value []byte, timestamp uint64) error {
 	composite, suffix := compositeKeySuffix(key, timestamp)
-	suffixkey := make([]byte, len(suffix) + len(bucket))
+	suffixkey := make([]byte, len(suffix) + len(hBucket))
 	copy(suffixkey, suffix)
-	copy(suffixkey[len(suffix):], bucket)
 	err := db.db.Update(func(tx *bolt.Tx) error {
+		hb, err := tx.CreateBucketIfNotExists(hBucket)
+		if err != nil {
+			return err
+		}
+		if err = hb.Put(composite, value); err != nil {
+			return err
+		}
 		b, err := tx.CreateBucketIfNotExists(bucket)
 		if err != nil {
 			return err
 		}
-		if err = b.Put(composite, value); err != nil {
+		if len(value) == 0 {
+			err = b.Delete(key)
+		} else {
+			err = b.Put(key, value)
+		}
+		if err != nil {
 			return err
 		}
 		sb, err := tx.CreateBucketIfNotExists(SuffixBucket)
@@ -244,13 +262,13 @@ func (db *LDBDatabase) Get(bucket, key []byte) ([]byte, error) {
 
 // GetAsOf returns the first pair (k, v) where key is a prefix of key, or nil
 // if there are not such (k, v)
-func (db *LDBDatabase) GetAsOf(bucket, key []byte, timestamp uint64) ([]byte, error) {
+func (db *LDBDatabase) GetAsOf(hBucket, key []byte, timestamp uint64) ([]byte, error) {
 	composite, _ := compositeKeySuffix(key, timestamp)
 	var dat []byte
 	err := db.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucket)
-		if b != nil {
-			c := b.Cursor()
+		hb := tx.Bucket(hBucket)
+		if hb != nil {
+			c := hb.Cursor()
 			k, v := c.Seek(composite)
 			if k != nil && bytes.HasPrefix(k, key) {
 				dat = make([]byte, len(v))
@@ -305,15 +323,77 @@ func (db *LDBDatabase) Walk(bucket, startkey []byte, fixedbits uint, walker Walk
 	return err
 }
 
-func (db *LDBDatabase) WalkAsOf(bucket, startkey []byte, fixedbits uint, timestamp uint64, walker func([]byte, []byte) (bool, error)) error {
-	return walkAsOf(db, bucket, startkey, fixedbits, timestamp, walker)
+func (db *LDBDatabase) MultiWalk(bucket []byte, startkeys [][]byte, fixedbits []uint, walker func(int, []byte, []byte) (bool, error)) error {
+	if len(startkeys) == 0 {
+		return nil
+	}
+	keyIdx := 0 // What is the current key we are extracting
+	fixedbytes, mask := bytesmask(fixedbits[keyIdx])
+	startkey := startkeys[keyIdx]
+	err := db.db.View(func (tx *bolt.Tx) error {
+		b := tx.Bucket(bucket)
+		if b == nil {
+			return nil
+		}
+		c := b.Cursor()
+		var k, v []byte
+		if fixedbits[keyIdx] == 0 {
+			k, v = c.First()
+		} else {
+			k, v = c.Seek(startkey)
+		}
+		for k != nil && (fixedbits[keyIdx] == 0 || bytes.Equal(k[:fixedbytes-1], startkey[:fixedbytes-1]) && (k[fixedbytes-1]&mask)==(startkey[fixedbytes-1]&mask)) {
+			// Adjust keyIdx if needed
+			cmp := int(-1)
+			for cmp != 0 {
+				cmp = bytes.Compare(k[:fixedbytes-1], startkey[:fixedbytes-1])
+				if cmp == 0 {
+					k1 := k[fixedbytes-1]&mask
+					k2 := startkey[fixedbytes-1]&mask
+					if k1 < k2 {
+						cmp = -1
+					} else if k1 > k2 {
+						cmp = 1
+					}
+				}
+				if cmp < 0 {
+					k, v = c.Seek(startkey)
+				} else if cmp > 0 {
+					keyIdx++
+					if _, err := walker(keyIdx, nil, nil); err != nil {
+						return err
+					}					
+					if keyIdx == len(startkeys) {
+						return nil
+					}
+					fixedbytes, mask = bytesmask(fixedbits[keyIdx])
+					startkey = startkeys[keyIdx]
+				}
+			}
+			stop, err := walker(keyIdx, k, v)
+			if err != nil {
+				return err
+			}
+			if stop {
+				return nil
+			} else {
+				k, v = c.Next()
+			}
+		}
+		return nil
+	})
+	return err
 }
 
-func (db *LDBDatabase) MultiWalkAsOf(bucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
-	return multiWalkAsOf(db, bucket, startkeys, fixedbits, timestamp, walker)
+func (db *LDBDatabase) WalkAsOf(hBucket, startkey []byte, fixedbits uint, timestamp uint64, walker func([]byte, []byte) (bool, error)) error {
+	return walkAsOf(db, hBucket, startkey, fixedbits, timestamp, walker)
 }
 
-func (db *LDBDatabase) RewindData(timestampSrc, timestampDst uint64, df func(bucket, key, value []byte) error) error {
+func (db *LDBDatabase) MultiWalkAsOf(hBucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
+	return multiWalkAsOf(db, hBucket, startkeys, fixedbits, timestamp, walker)
+}
+
+func (db *LDBDatabase) RewindData(timestampSrc, timestampDst uint64, df func(hBucket, key, value []byte) error) error {
 	return rewindData(db, timestampSrc, timestampDst, df)
 }
 
@@ -341,7 +421,7 @@ func (db *LDBDatabase) DeleteTimestamp(timestamp uint64) error {
 		}
 		c := sb.Cursor()
 		for k, v := c.Seek(suffix); k != nil && bytes.HasPrefix(k, suffix); k, v = c.Next() {
-			b := tx.Bucket(k[len(suffix):])
+			hb := tx.Bucket(k[len(suffix):])
 			keycount := int(binary.BigEndian.Uint32(v))
 			for i, ki := 4, 0; ki < keycount; ki++ {
 				l := int(v[i])
@@ -349,7 +429,7 @@ func (db *LDBDatabase) DeleteTimestamp(timestamp uint64) error {
 				kk := make([]byte, l+len(suffix))
 				copy(kk, v[i:i+l])
 				copy(kk[l:], suffix)
-				if err := b.Delete(kk); err != nil {
+				if err := hb.Delete(kk); err != nil {
 					return err
 				}
 				i += l
@@ -536,7 +616,7 @@ func (m *mutation) Put(bucket, key []byte, value []byte) error {
 }
 
 // Assumes that bucket, key, and value won't be modified
-func (m *mutation) PutS(bucket, key, value []byte, timestamp uint64) error {
+func (m *mutation) PutS(bucket, hBucket, key, value []byte, timestamp uint64) error {
 	//fmt.Printf("PutS bucket %x key %x value %x timestamp %d\n", bucket, key, value, timestamp)
 	composite, _ := compositeKeySuffix(key, timestamp)
 	suffix_m, ok := m.suffixkeys[timestamp]
@@ -544,15 +624,20 @@ func (m *mutation) PutS(bucket, key, value []byte, timestamp uint64) error {
 		suffix_m = make(map[string][][]byte)
 		m.suffixkeys[timestamp] = suffix_m
 	}
-	suffix_l, ok := suffix_m[string(bucket)]
+	suffix_l, ok := suffix_m[string(hBucket)]
 	if !ok {
 		suffix_l = [][]byte{}
 	}
 	suffix_l = append(suffix_l, key)
-	suffix_m[string(bucket)] = suffix_l
+	suffix_m[string(hBucket)] = suffix_l
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.puts.ReplaceOrInsert(&PutItem{bucket: bucket, key: composite, value: value})
+	m.puts.ReplaceOrInsert(&PutItem{bucket: hBucket, key: composite, value: value})
+	if len(value) == 0 {
+		m.puts.ReplaceOrInsert(&PutItem{bucket: bucket, key: key, value: nil})
+	} else {
+		m.puts.ReplaceOrInsert(&PutItem{bucket: bucket, key: key, value: value})
+	}
 	return nil
 }
 
@@ -572,14 +657,14 @@ func (m *mutation) BatchSize() int {
 	return m.puts.Len()
 }
 
-func (m *mutation) getAsOfMem(bucket, key []byte, timestamp uint64) ([]byte, bool) {
+func (m *mutation) getAsOfMem(hBucket, key []byte, timestamp uint64) ([]byte, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	composite, _ := compositeKeySuffix(key, timestamp)
 	var dat []byte
-	m.puts.AscendGreaterOrEqual1(&PutItem{bucket: bucket, key: composite}, func(i llrb.Item) bool {
+	m.puts.AscendGreaterOrEqual1(&PutItem{bucket: hBucket, key: composite}, func(i llrb.Item) bool {
 		item := i.(*PutItem)
-		if !bytes.Equal(item.bucket, bucket) {
+		if !bytes.Equal(item.bucket, hBucket) {
 			return false
 		}
 		if !bytes.HasPrefix(item.key, key) {
@@ -598,12 +683,12 @@ func (m *mutation) getAsOfMem(bucket, key []byte, timestamp uint64) ([]byte, boo
 	return nil, false
 }
 
-func (m *mutation) GetAsOf(bucket, key []byte, timestamp uint64) ([]byte, error) {
-	if value, ok := m.getAsOfMem(bucket, key, timestamp); ok {
+func (m *mutation) GetAsOf(hBucket, key []byte, timestamp uint64) ([]byte, error) {
+	if value, ok := m.getAsOfMem(hBucket, key, timestamp); ok {
 		return value, nil
 	} else {
 		if m.db != nil {
-			return m.db.GetAsOf(bucket, key, timestamp)
+			return m.db.GetAsOf(hBucket, key, timestamp)
 		}
 	}
 	return nil, nil
@@ -657,6 +742,14 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 		return m.walkMem(bucket, startkey, fixedbits, walker)
 	} else {
 		return m.db.Walk(bucket, startkey, fixedbits, walker)
+	}
+}
+
+func (m *mutation) MultiWalk(bucket []byte, startkeys [][]byte, fixedbits []uint, walker func(int, []byte, []byte) (bool, error)) error {
+	if m.db == nil {
+		panic("Not implemented")
+	} else {
+		return m.db.MultiWalk(bucket, startkeys, fixedbits, walker)
 	}
 }
 
@@ -765,15 +858,15 @@ func (m *mutation) Walk1(bucket, startkey []byte, fixedbits uint, walker WalkerF
 	}
 }
 
-func (m *mutation) WalkAsOf(bucket, startkey []byte, fixedbits uint, timestamp uint64, walker func([]byte, []byte) (bool, error)) error {
-	return walkAsOf(m, bucket, startkey, fixedbits, timestamp, walker)
+func (m *mutation) WalkAsOf(hBucket, startkey []byte, fixedbits uint, timestamp uint64, walker func([]byte, []byte) (bool, error)) error {
+	return walkAsOf(m, hBucket, startkey, fixedbits, timestamp, walker)
 }
 
-func (m *mutation) MultiWalkAsOf(bucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
-	return multiWalkAsOf(m, bucket, startkeys, fixedbits, timestamp, walker)
+func (m *mutation) MultiWalkAsOf(hBucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
+	return multiWalkAsOf(m, hBucket, startkeys, fixedbits, timestamp, walker)
 }
 
-func (m *mutation) RewindData(timestampSrc, timestampDst uint64, df func(bucket, key, value []byte) error) error {
+func (m *mutation) RewindData(timestampSrc, timestampDst uint64, df func(hBucket, key, value []byte) error) error {
 	return rewindData(m, timestampSrc, timestampDst, df)
 }
 
@@ -793,7 +886,7 @@ func (m *mutation) DeleteTimestamp(timestamp uint64) error {
 	items := []*PutItem{}
 	suffix := encodeTimestamp(timestamp)
 	err := m.Walk(SuffixBucket, suffix, uint(8*len(suffix)), func(k, v []byte) ([]byte, WalkAction, error) {
-		bucket := k[len(suffix):]
+		hBucket := k[len(suffix):]
 		keycount := int(binary.BigEndian.Uint32(v))
 		for i, ki := 4, 0; ki < keycount; ki++ {
 			l := int(v[i])
@@ -801,7 +894,7 @@ func (m *mutation) DeleteTimestamp(timestamp uint64) error {
 			kk := make([]byte, l+len(suffix))
 			copy(kk, v[i:i+l])
 			copy(kk[l:], suffix)
-			items = append(items, &PutItem{bucket: common.CopyBytes(bucket), key: kk, value: nil})
+			items = append(items, &PutItem{bucket: common.CopyBytes(hBucket), key: kk, value: nil})
 			i += l
 		}
 		items = append(items, &PutItem{bucket: SuffixBucket, key: common.CopyBytes(k), value: nil})
@@ -824,10 +917,10 @@ func (m *mutation) Commit() error {
 	for timestamp, suffix_m := range m.suffixkeys {
 		suffix := encodeTimestamp(timestamp)
 		for bucketStr, suffix_l := range suffix_m {
-			bucket := []byte(bucketStr)
-			suffixkey := make([]byte, len(suffix) + len(bucket))
+			hBucket := []byte(bucketStr)
+			suffixkey := make([]byte, len(suffix) + len(hBucket))
 			copy(suffixkey, suffix)
-			copy(suffixkey[len(suffix):], bucket)
+			copy(suffixkey[len(suffix):], hBucket)
 			dat, err := m.getNoLock(SuffixBucket, suffixkey)
 			if err != nil && err != ErrKeyNotFound {
 				return err
@@ -953,8 +1046,8 @@ func (dt *table) Put(bucket, key []byte, value []byte) error {
 	return dt.db.Put(bucket, append([]byte(dt.prefix), key...), value)
 }
 
-func (dt *table) PutS(bucket, key, value []byte, timestamp uint64) error {
-	return dt.db.PutS(bucket, append([]byte(dt.prefix), key...), value, timestamp)
+func (dt *table) PutS(bucket, hBucket, key, value []byte, timestamp uint64) error {
+	return dt.db.PutS(bucket, hBucket, append([]byte(dt.prefix), key...), value, timestamp)
 }
 
 func (dt *table) MultiPut(tuples ...[]byte) error {
@@ -969,20 +1062,24 @@ func (dt *table) Get(bucket, key []byte) ([]byte, error) {
 	return dt.db.Get(bucket, append([]byte(dt.prefix), key...))
 }
 
-func (dt *table) GetAsOf(bucket, key []byte, timestamp uint64) ([]byte, error) {
-	return dt.db.GetAsOf(bucket, append([]byte(dt.prefix), key...), timestamp)
+func (dt *table) GetAsOf(hBucket, key []byte, timestamp uint64) ([]byte, error) {
+	return dt.db.GetAsOf(hBucket, append([]byte(dt.prefix), key...), timestamp)
 }
 
 func (dt *table) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFunc) error {
 	return dt.db.Walk(bucket, append([]byte(dt.prefix), startkey...), fixedbits+uint(8*len(dt.prefix)), walker)
 }
 
-func (dt *table) WalkAsOf(bucket, startkey []byte, fixedbits uint, timestamp uint64, walker func([]byte, []byte) (bool, error)) error {
-	return dt.db.WalkAsOf(bucket, append([]byte(dt.prefix), startkey...), fixedbits+uint(8*len(dt.prefix)), timestamp, walker)
+func (dt *table) MultiWalk(bucket []byte, startkeys [][]byte, fixedbits []uint, walker func(int, []byte, []byte) (bool, error)) error {
+	panic("Not implemented")
 }
 
-func (dt *table) MultiWalkAsOf(bucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
-	return dt.db.MultiWalkAsOf(bucket, startkeys, fixedbits, timestamp, walker)
+func (dt *table) WalkAsOf(hBucket, startkey []byte, fixedbits uint, timestamp uint64, walker func([]byte, []byte) (bool, error)) error {
+	return dt.db.WalkAsOf(hBucket, append([]byte(dt.prefix), startkey...), fixedbits+uint(8*len(dt.prefix)), timestamp, walker)
+}
+
+func (dt *table) MultiWalkAsOf(hBucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
+	return dt.db.MultiWalkAsOf(hBucket, startkeys, fixedbits, timestamp, walker)
 }
 
 func (dt *table) RewindData(timestampSrc, timestampDst uint64, df func(bucket, key, value []byte) error) error {

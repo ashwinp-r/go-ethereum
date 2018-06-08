@@ -23,7 +23,7 @@ const IdealBatchSize = 100 * 1024
 // Putter wraps the database write operation supported by both batches and regular databases.
 type Putter interface {
 	Put(bucket, key, value []byte) error
-	PutS(bucket, key, value []byte, timestamp uint64) error
+	PutS(bucket, hBucket, key, value []byte, timestamp uint64) error
 	DeleteTimestamp(timestamp uint64) error
 	PutHash(index uint32, hash []byte)
 }
@@ -40,11 +40,12 @@ type WalkerFunc = func(key, value []byte) ([]byte, WalkAction, error)
 
 type Getter interface {
 	Get(bucket, key []byte) ([]byte, error)
-	GetAsOf(bucket, key []byte, timestamp uint64) ([]byte, error)
+	GetAsOf(hBucket, key []byte, timestamp uint64) ([]byte, error)
 	Has(bucket, key []byte) (bool, error)
 	Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFunc) error
-	WalkAsOf(bucket, startkey []byte, fixedbits uint, timestamp uint64, walker func([]byte, []byte) (bool, error)) error
-	MultiWalkAsOf(bucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error
+	MultiWalk(bucket []byte, startkeys [][]byte, fixedbits []uint, walker func(int, []byte, []byte) (bool, error)) error
+	WalkAsOf(hBucket, startkey []byte, fixedbits uint, timestamp uint64, walker func([]byte, []byte) (bool, error)) error
+	MultiWalkAsOf(hBucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error
 	GetHash(index uint32) []byte
 }
 
