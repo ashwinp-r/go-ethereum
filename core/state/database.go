@@ -99,7 +99,7 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 
 func (dbs *DbState) ReadAccountData(address *common.Address) (*Account, error) {
 	seckey := crypto.Keccak256Hash(address[:])
-	enc, err := dbs.db.GetAsOf(AccountsBucket, seckey[:], dbs.blockNr)
+	enc, err := dbs.db.GetAsOf(AccountsHistoryBucket, seckey[:], dbs.blockNr)
 	if err != nil || enc == nil || len(enc) == 0 {
 		return nil, nil
 	}
@@ -128,7 +128,7 @@ func (dbs *DbState) ReadAccountData(address *common.Address) (*Account, error) {
 
 func (dbs *DbState) ReadAccountStorage(address *common.Address, key *common.Hash) ([]byte, error) {
 	seckey := crypto.Keccak256Hash(key[:])
-	enc, err := dbs.db.GetAsOf(address[:], seckey[:], dbs.blockNr)
+	enc, err := dbs.db.GetAsOf(append([]byte("h"), address[:]...), seckey[:], dbs.blockNr)
 	if err != nil || enc == nil {
 		return nil, nil
 	}

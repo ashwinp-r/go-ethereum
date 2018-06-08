@@ -330,7 +330,7 @@ func (db *LDBDatabase) MultiWalk(bucket []byte, startkeys [][]byte, fixedbits []
 	keyIdx := 0 // What is the current key we are extracting
 	fixedbytes, mask := bytesmask(fixedbits[keyIdx])
 	startkey := startkeys[keyIdx]
-	err := db.db.View(func (tx *bolt.Tx) error {
+	if err := db.db.View(func (tx *bolt.Tx) error {
 		b := tx.Bucket(bucket)
 		if b == nil {
 			return nil
@@ -342,47 +342,62 @@ func (db *LDBDatabase) MultiWalk(bucket []byte, startkeys [][]byte, fixedbits []
 		} else {
 			k, v = c.Seek(startkey)
 		}
-		for k != nil && (fixedbits[keyIdx] == 0 || bytes.Equal(k[:fixedbytes-1], startkey[:fixedbytes-1]) && (k[fixedbytes-1]&mask)==(startkey[fixedbytes-1]&mask)) {
+		for k != nil {
 			// Adjust keyIdx if needed
-			cmp := int(-1)
-			for cmp != 0 {
-				cmp = bytes.Compare(k[:fixedbytes-1], startkey[:fixedbytes-1])
-				if cmp == 0 {
-					k1 := k[fixedbytes-1]&mask
-					k2 := startkey[fixedbytes-1]&mask
-					if k1 < k2 {
-						cmp = -1
-					} else if k1 > k2 {
-						cmp = 1
+			if fixedbytes > 0 {
+				cmp := int(-1)
+				for cmp != 0 {
+					cmp = bytes.Compare(k[:fixedbytes-1], startkey[:fixedbytes-1])
+					if cmp == 0 {
+						k1 := k[fixedbytes-1]&mask
+						k2 := startkey[fixedbytes-1]&mask
+						if k1 < k2 {
+							cmp = -1
+						} else if k1 > k2 {
+							cmp = 1
+						}
+					}
+					if cmp < 0 {
+						k, v = c.SeekTo(startkey)
+						if k == nil {
+							return nil
+						}
+					} else if cmp > 0 {
+						keyIdx++
+						if _, err := walker(keyIdx, nil, nil); err != nil {
+							return err
+						}
+						if keyIdx == len(startkeys) {
+							return nil
+						}
+						fixedbytes, mask = bytesmask(fixedbits[keyIdx])
+						startkey = startkeys[keyIdx]
+						k, v = c.SeekTo(startkey)
+						if k == nil {
+							return nil
+						}
 					}
 				}
-				if cmp < 0 {
-					k, v = c.Seek(startkey)
-				} else if cmp > 0 {
-					keyIdx++
-					if _, err := walker(keyIdx, nil, nil); err != nil {
-						return err
-					}					
-					if keyIdx == len(startkeys) {
-						return nil
-					}
-					fixedbytes, mask = bytesmask(fixedbits[keyIdx])
-					startkey = startkeys[keyIdx]
+			}
+			if len(v) > 0 {
+				_, err := walker(keyIdx, k, v)
+				if err != nil {
+					return err
 				}
 			}
-			stop, err := walker(keyIdx, k, v)
-			if err != nil {
-				return err
-			}
-			if stop {
-				return nil
-			} else {
-				k, v = c.Next()
-			}
+			k, v = c.Next()
 		}
 		return nil
-	})
-	return err
+	}); err != nil {
+		return err
+	}
+	for keyIdx < len(startkeys) {
+		keyIdx++
+		if _, err := walker(keyIdx, nil, nil); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (db *LDBDatabase) WalkAsOf(hBucket, startkey []byte, fixedbits uint, timestamp uint64, walker func([]byte, []byte) (bool, error)) error {

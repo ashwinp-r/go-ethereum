@@ -201,7 +201,7 @@ func (c *Cursor) seekTo(seek []byte) (key []byte, value[]byte, flags uint32) {
 			if len(n.inodes) > 0 {
 				lastkey = n.inodes[len(n.inodes)-1].key
 			} else {
-				fmt.Printf("len(n.inodes) == 0 %x\n", seek)
+				//fmt.Printf("len(n.inodes) == 0 %x\n", seek)
 			}
 		} else {
 			p := elem.page

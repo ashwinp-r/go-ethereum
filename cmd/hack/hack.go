@@ -20,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -373,15 +374,15 @@ func trieStats() {
 		panic(err)
 	}
 	defer db.Close()
-	lastHash := core.GetHeadHeaderHash(db)
-	lastNumber := core.GetBlockNumber(db, lastHash)
-	lastHeader := core.GetHeader(db, lastHash, lastNumber)
-	tds, err := state.NewTrieDbState(lastHeader.Root, db, lastNumber)
+	lastHash := rawdb.ReadHeadHeaderHash(db)
+	lastNumber := rawdb.ReadHeaderNumber(db, lastHash)
+	lastHeader := rawdb.ReadHeader(db, lastHash, *lastNumber)
+	tds, err := state.NewTrieDbState(lastHeader.Root, db, *lastNumber)
 	if err != nil {
 		panic(err)
 	}
 	t := tds.AccountTrie()
-	printOccupancies(t, db, lastNumber)
+	printOccupancies(t, db, *lastNumber)
 	/*
 	statedb := state.New(triedbst)
 	t := statedb.GetTrie()
@@ -670,14 +671,14 @@ func testResolve() {
 	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 16)
 	check(err)
 	defer ethDb.Close()
-	treePrefix := common.FromHex("07315477a3f2887eeb4a1b6ac61e34850755d1ae")
+	treePrefix := common.FromHex("1194e966965418c7d73a42cceeb254d875860356")
 	t := trie.New(common.Hash{}, treePrefix, true)
 	r := t.NewResolver(ethDb, false)
-	key := common.FromHex("06010d0f0b05010e0506090507050a07030d0f0c0a0e0a00090f09020e0f000b0a06040507070b04040f0d000602070d0c050400040303090f0103050903050910")
-	resolveHash := common.FromHex("6bbc30d6931ebf7f6785ff5f6a0cf248e1717a139e3ff345c3a704c6668623d9")
+	key := common.FromHex("0d0c02060f0d09030a0a0000070808000c04080606090b070c060a0e020803030b030f040f0e080c090f0f020a0c06060b0402090e0b050007090d06010c0a0310")
+	resolveHash := common.FromHex("931f3dbc6b2e9c23cf9cd399504139efe208e33d3e3ce51a2f040aac0159b79e")
 	tc := t.NewContinuation(key, 0, resolveHash)
 	r.AddContinuation(tc)
-	err = r.ResolveWithDb(ethDb, 2712124)
+	err = r.ResolveWithDb(ethDb, 244574)
 	if err != nil {
 		fmt.Printf("%v\n", err)
 	}
@@ -788,8 +789,8 @@ func main() {
  	//testRewind()
  	//hashFile()
  	//buildHashFromFile()
- 	//testResolve()
+ 	testResolve()
  	//rlpIndices()
- 	printFullNodeRLPs()
+ 	//printFullNodeRLPs()
 }
 

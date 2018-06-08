@@ -115,7 +115,7 @@ func multiWalkAsOf(db Getter, bucket []byte, startkeys [][]byte, fixedbits []uin
 		keyIdx++
 		if _, err := walker(keyIdx, nil, nil); err != nil {
 			return err
-		}	
+		}
 	}
 	return nil
 }

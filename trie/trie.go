@@ -334,7 +334,7 @@ func (t *Trie) relistNodes(n node, level int) {
 }
 
 func (t *Trie) tryGet(dbr DatabaseReader, origNode node, key []byte, pos int, blockNr uint64) (value []byte, err error) {
-	val, err := dbr.GetAsOf(t.prefix, key, blockNr)
+	val, err := dbr.Get(t.prefix, key)
 	if err != nil || val == nil {
 		return nil, nil
 	}
