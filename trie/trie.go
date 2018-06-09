@@ -169,7 +169,7 @@ func (t *Trie) touch(db ethdb.Database, np nodep, key []byte, pos int) {
 		return
 	}
 	if np.next() != nil && np.prev() != nil {
-		if (!t.accounts || pos > 5) {
+		if np.next() != np.prev() {
 			t.nodeList.Remove(np)
 		} else {
 			np.setnext(nil)

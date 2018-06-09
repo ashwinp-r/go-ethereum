@@ -43,29 +43,6 @@ func (l *List) ShrinkTo(targetSize int) {
 	}
 }
 
-func (l *List) Append(other *List) {
-	prev := l.sentinel.prev()
-	prev.setnext(other.sentinel.next())
-	other.sentinel.next().setprev(prev)
-	other.sentinel.prev().setnext(&l.sentinel)
-	l.sentinel.setprev(other.sentinel.prev())
-	other.sentinel.setprev(&other.sentinel)
-	other.sentinel.setnext(&other.sentinel)
-	l.len += other.len
-	other.len = 0
-}
-
-func (l *List) Contains(n nodep) bool {
-	found := false
-	for p := l.sentinel.next(); p != &l.sentinel; p = p.next() {
-		if p == n {
-			found = true
-			break
-		}
-	}
-	return found	
-}
-
 func (l *List) Remove(n nodep) {
 	next := n.next()
 	prev := n.prev()
