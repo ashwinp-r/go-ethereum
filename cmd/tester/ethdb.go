@@ -100,7 +100,7 @@ func (fd *FakeDatabase) Get(bucket, key []byte) ([]byte, error) {
 	panic(fmt.Sprintf("Get %x %x", bucket, key))
 }
 
-func (fd *FakeDatabase) GetAsOf(bucket, key []byte, timestamp uint64) ([]byte, error) {
+func (fd *FakeDatabase) GetAsOf(hBucket, key []byte, timestamp uint64) ([]byte, error) {
 	panic("")
 }
 
@@ -112,11 +112,15 @@ func (fd *FakeDatabase) Walk(bucket, startkey []byte, fixedbits uint, walker eth
 	panic("")
 }
 
-func (fd *FakeDatabase) WalkAsOf(bucket, startkey []byte, fixedbits uint, timestamp uint64, walker func([]byte, []byte) (bool, error)) error {
+func (fd *FakeDatabase) MultiWalk(bucket []byte, startkeys [][]byte, fixedbits []uint, walker func(int, []byte, []byte) (bool, error)) error {
 	panic("")
 }
 
-func (fd *FakeDatabase) MultiWalkAsOf(bucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
+func (fd *FakeDatabase) WalkAsOf(hBucket, startkey []byte, fixedbits uint, timestamp uint64, walker func([]byte, []byte) (bool, error)) error {
+	panic("")
+}
+
+func (fd *FakeDatabase) MultiWalkAsOf(hBucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
 	panic("")
 }
 
@@ -129,7 +133,7 @@ func (fd *FakeDatabase) Put(bucket, key, value []byte) error {
 	return nil
 }
 
-func (fd *FakeDatabase) PutS(bucket, key, value []byte, timestamp uint64) error {
+func (fd *FakeDatabase) PutS(bucket, hBucket, key, value []byte, timestamp uint64) error {
 	panic("")
 }
 

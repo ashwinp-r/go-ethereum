@@ -63,6 +63,9 @@ func (api *PublicEthereumAPI) Coinbase() (common.Address, error) {
 
 // Hashrate returns the POW hashrate
 func (api *PublicEthereumAPI) Hashrate() hexutil.Uint64 {
+	if api.e.Miner() == nil {
+		return hexutil.Uint64(0)
+	}
 	return hexutil.Uint64(api.e.Miner().HashRate())
 }
 
