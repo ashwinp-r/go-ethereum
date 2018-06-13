@@ -23,8 +23,8 @@ type statusData struct {
 type TesterProtocol struct {
 	protocolVersion     uint32
 	networkId           uint64
-	lastBlockDifficulty *big.Int
-	lastBlockHash       common.Hash
+	lastBlock           *types.Block
+	totalDifficulty     *big.Int
 	genesisBlockHash    common.Hash
 	headersByHash       map[common.Hash]*types.Header
 	headersByNumber     map[uint64]*types.Header
@@ -36,8 +36,8 @@ func (tp *TesterProtocol) protocolRun (peer *p2p.Peer, rw p2p.MsgReadWriter) err
 	err := p2p.Send(rw, eth.StatusMsg, &statusData{
 			ProtocolVersion: tp.protocolVersion,
 			NetworkId:       tp.networkId,
-			TD:              tp.lastBlockDifficulty,
-			CurrentBlock:    tp.lastBlockHash,
+			TD:              tp.totalDifficulty,
+			CurrentBlock:    tp.lastBlock.Hash(),
 			GenesisBlock:    tp.genesisBlockHash,
 	})
 	if err != nil {
@@ -76,7 +76,7 @@ func (tp *TesterProtocol) protocolRun (peer *p2p.Peer, rw p2p.MsgReadWriter) err
 	}
 	fmt.Printf("eth handshake complete, block hash: %x, block difficulty: %s\n", statusResp.CurrentBlock, statusResp.TD)
 
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 7; i++ {
 		fmt.Printf("Message loop i %d\n", i)
 		// Read the next message
 		msg, err = rw.ReadMsg()
@@ -86,7 +86,13 @@ func (tp *TesterProtocol) protocolRun (peer *p2p.Peer, rw p2p.MsgReadWriter) err
 		}
 		switch {
 		case msg.Code == eth.GetBlockHeadersMsg:
-			return tp.handleGetBlockHeaderMsg(msg, rw)
+			if err = tp.handleGetBlockHeaderMsg(msg, rw); err != nil {
+				return err
+			}
+		case msg.Code == eth.GetBlockBodiesMsg:
+			if err = tp.handleGetBlockBodiesMsg(msg, rw); err != nil {
+				return err
+			}
 		default:
 			fmt.Printf("Next message: %v\n", msg)
 		}
@@ -146,8 +152,19 @@ func (tp *TesterProtocol) handleGetBlockHeaderMsg(msg p2p.Msg, rw p2p.MsgReadWri
 	}
 	fmt.Printf("GetBlockHeadersMsg: %v\n", query)
 	headers := []*types.Header{}
-	if query.Origin.Hash == (common.Hash{}) && query.Amount == 1 && query.Skip == 0 && !query.Reverse {
-		if header, ok := tp.headersByNumber[query.Origin.Number]; ok {
+	if query.Origin.Hash == (common.Hash{}) && !query.Reverse {
+		number := query.Origin.Number
+		for i := 0; i < int(query.Amount); i++ {
+			if header, ok := tp.headersByNumber[number]; ok {
+				//fmt.Printf("Going to send block %d\n", header.Number.Uint64())
+				headers = append(headers, header)
+			}
+			number += query.Skip+1
+		}
+	}
+	if query.Origin.Hash != (common.Hash{}) && query.Amount == 1 && query.Skip == 0 && !query.Reverse {
+		if header, ok := tp.headersByHash[query.Origin.Hash]; ok {
+			fmt.Printf("Going to send block %d\n", header.Number.Uint64())
 			headers = append(headers, header)
 		}
 	}
@@ -159,4 +176,12 @@ func (tp *TesterProtocol) handleGetBlockHeaderMsg(msg p2p.Msg, rw p2p.MsgReadWri
 		fmt.Printf("Sent %d headers\n", len(headers))
 	}
 	return nil
+}
+
+func (tp *TesterProtocol) handleGetBlockBodiesMsg(msg p2p.Msg, rw p2p.MsgReadWriter) error {
+	return nil
+}
+
+func (tp *TesterProtocol) sendLastBlock(rw p2p.MsgReadWriter) error {
+	return p2p.Send(rw, eth.NewBlockMsg, []interface{}{tp.lastBlock, tp.totalDifficulty})
 }

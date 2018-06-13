@@ -13,7 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
-func rewriteChain(inputFile/*, outputFile*/ string) (lastBlockHash common.Hash, lastBlockDifficulty *big.Int,
+func rewriteChain(inputFile/*, outputFile*/ string) (lastBlock *types.Block, td *big.Int,
 		headersByHash map[common.Hash]*types.Header, headersByNumber map[uint64]*types.Header, err error) {
 	input, err := os.Open(inputFile)
 	if err != nil {
@@ -39,6 +39,8 @@ func rewriteChain(inputFile/*, outputFile*/ string) (lastBlockHash common.Hash, 
 	headersByHash = make(map[common.Hash]*types.Header)
 	headersByNumber = make(map[uint64]*types.Header)
 	n := 0
+	td = new(big.Int)
+
 	for {
 		if err = stream.Decode(&b); err == io.EOF {
 			err = nil // Clear it
@@ -53,10 +55,10 @@ func rewriteChain(inputFile/*, outputFile*/ string) (lastBlockHash common.Hash, 
 		}
 		headersByHash[b.Hash()] = b.Header()
 		headersByNumber[b.NumberU64()] = b.Header()
+		td = new(big.Int).Add(td, b.Difficulty())
 		n++
 	}
 	fmt.Printf("%d blocks read\n", n)
-	lastBlockHash = b.Hash()
-	lastBlockDifficulty = b.Difficulty()
+	lastBlock = &b
 	return
 }
