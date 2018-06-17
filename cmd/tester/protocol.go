@@ -26,8 +26,7 @@ type TesterProtocol struct {
 	lastBlock           *types.Block
 	totalDifficulty     *big.Int
 	genesisBlockHash    common.Hash
-	headersByHash       map[common.Hash]*types.Header
-	headersByNumber     map[uint64]*types.Header
+	blockAccessor       *BlockAccessor
 }
 
 func (tp *TesterProtocol) protocolRun (peer *p2p.Peer, rw p2p.MsgReadWriter) error {
@@ -71,12 +70,12 @@ func (tp *TesterProtocol) protocolRun (peer *p2p.Peer, rw p2p.MsgReadWriter) err
 		return fmt.Errorf("Mismatched network id %d (!= %d)", statusResp.NetworkId, tp.networkId)
 	}
 	if statusResp.ProtocolVersion != tp.protocolVersion {
-		fmt.Printf("Mismatched protocol version %d (!= %d)", statusResp.ProtocolVersion, tp.protocolVersion)
+		fmt.Printf("Mismached protocol version %d (!= %d)", statusResp.ProtocolVersion, tp.protocolVersion)
 		return fmt.Errorf("Mismatched protocol version %d (!= %d)", statusResp.ProtocolVersion, tp.protocolVersion)
 	}
 	fmt.Printf("eth handshake complete, block hash: %x, block difficulty: %s\n", statusResp.CurrentBlock, statusResp.TD)
 
-	for i := 0; i < 7; i++ {
+	for i := 0; i < 10; i++ {
 		fmt.Printf("Message loop i %d\n", i)
 		// Read the next message
 		msg, err = rw.ReadMsg()
@@ -155,7 +154,7 @@ func (tp *TesterProtocol) handleGetBlockHeaderMsg(msg p2p.Msg, rw p2p.MsgReadWri
 	if query.Origin.Hash == (common.Hash{}) && !query.Reverse {
 		number := query.Origin.Number
 		for i := 0; i < int(query.Amount); i++ {
-			if header, ok := tp.headersByNumber[number]; ok {
+			if header := tp.blockAccessor.GetHeaderByNumber(number); header != nil {
 				//fmt.Printf("Going to send block %d\n", header.Number.Uint64())
 				headers = append(headers, header)
 			}
@@ -163,7 +162,7 @@ func (tp *TesterProtocol) handleGetBlockHeaderMsg(msg p2p.Msg, rw p2p.MsgReadWri
 		}
 	}
 	if query.Origin.Hash != (common.Hash{}) && query.Amount == 1 && query.Skip == 0 && !query.Reverse {
-		if header, ok := tp.headersByHash[query.Origin.Hash]; ok {
+		if header:= tp.blockAccessor.GetHeaderByHash(query.Origin.Hash); header != nil {
 			fmt.Printf("Going to send block %d\n", header.Number.Uint64())
 			headers = append(headers, header)
 		}
@@ -179,6 +178,39 @@ func (tp *TesterProtocol) handleGetBlockHeaderMsg(msg p2p.Msg, rw p2p.MsgReadWri
 }
 
 func (tp *TesterProtocol) handleGetBlockBodiesMsg(msg p2p.Msg, rw p2p.MsgReadWriter) error {
+	msgStream := rlp.NewStream(msg.Payload, uint64(msg.Size))
+	fmt.Printf("GetBlockBodiesMsg with size %d\n", msg.Size)
+	if _, err := msgStream.List(); err != nil {
+		return err
+	}
+	// Gather blocks until the fetch or network limits is reached
+	var (
+		hash   common.Hash
+		bodies []rlp.RawValue
+	)
+	for {
+		// Retrieve the hash of the next block
+		if err := msgStream.Decode(&hash); err == rlp.EOL {
+			break
+		} else if err != nil {
+			fmt.Printf("Failed to decode msg %v: %v", msg, err)
+			return fmt.Errorf("Failed to decode msg %v: %v", msg, err)
+		}
+		// Retrieve the requested block body, stopping if enough was found
+		if block, err := tp.blockAccessor.GetBlockByHash(hash); err != nil {
+			fmt.Printf("Failed to read block %v", err)
+			return fmt.Errorf("Failed to read block %v", err)
+		} else if block != nil {
+			data, err := rlp.EncodeToBytes(block.Body())
+			if err != nil {
+				fmt.Printf("Failed to encode body: %v", err)
+				return fmt.Errorf("Failed to encode body: %v", err)
+			}
+			bodies = append(bodies, data)
+		}
+	}
+	p2p.Send(rw, eth.BlockBodiesMsg, bodies)
+	fmt.Printf("Sent %d bodies\n", len(bodies))
 	return nil
 }
 

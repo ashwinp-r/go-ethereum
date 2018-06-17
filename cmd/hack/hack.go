@@ -23,7 +23,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/vm"
-	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie"
@@ -785,12 +784,12 @@ func main() {
  	//check(err)
  	//defer db.Close()
  	//bucketStats(db)
- 	//mychart()
+ 	mychart()
  	//testRebuild()
  	//testRewind()
  	//hashFile()
  	//buildHashFromFile()
- 	testResolve()
+ 	//testResolve()
  	//rlpIndices()
  	//printFullNodeRLPs()
 }

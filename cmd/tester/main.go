@@ -103,7 +103,8 @@ func tester(ctx *cli.Context) error {
 	pm.Start(1)
 	//fmt.Printf("%s %s\n", ctx.Args()[0], ctx.Args()[1])
 	tp := &TesterProtocol{}
-	tp.lastBlock, tp.totalDifficulty, tp.headersByHash, tp.headersByNumber, err = rewriteChain(ctx.Args()[0]/*, ctx.Args()[1]*/)
+	tp.lastBlock, tp.totalDifficulty, tp.blockAccessor, err = rewriteChain(ctx.Args()[0]/*, ctx.Args()[1]*/)
+	defer tp.blockAccessor.Close()
 	if err != nil {
 		panic(fmt.Sprintf("Failed to read blockchain file: %v", err))
 	}
