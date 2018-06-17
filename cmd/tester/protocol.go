@@ -23,8 +23,6 @@ type statusData struct {
 type TesterProtocol struct {
 	protocolVersion     uint32
 	networkId           uint64
-	lastBlock           *types.Block
-	totalDifficulty     *big.Int
 	genesisBlockHash    common.Hash
 	blockAccessor       *BlockAccessor
 }
@@ -35,8 +33,8 @@ func (tp *TesterProtocol) protocolRun (peer *p2p.Peer, rw p2p.MsgReadWriter) err
 	err := p2p.Send(rw, eth.StatusMsg, &statusData{
 			ProtocolVersion: tp.protocolVersion,
 			NetworkId:       tp.networkId,
-			TD:              tp.totalDifficulty,
-			CurrentBlock:    tp.lastBlock.Hash(),
+			TD:              tp.blockAccessor.totalDifficulty,
+			CurrentBlock:    tp.blockAccessor.lastBlock.Hash(),
 			GenesisBlock:    tp.genesisBlockHash,
 	})
 	if err != nil {
@@ -75,7 +73,7 @@ func (tp *TesterProtocol) protocolRun (peer *p2p.Peer, rw p2p.MsgReadWriter) err
 	}
 	fmt.Printf("eth handshake complete, block hash: %x, block difficulty: %s\n", statusResp.CurrentBlock, statusResp.TD)
 
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 10000; i++ {
 		fmt.Printf("Message loop i %d\n", i)
 		// Read the next message
 		msg, err = rw.ReadMsg()
@@ -215,5 +213,5 @@ func (tp *TesterProtocol) handleGetBlockBodiesMsg(msg p2p.Msg, rw p2p.MsgReadWri
 }
 
 func (tp *TesterProtocol) sendLastBlock(rw p2p.MsgReadWriter) error {
-	return p2p.Send(rw, eth.NewBlockMsg, []interface{}{tp.lastBlock, tp.totalDifficulty})
+	return p2p.Send(rw, eth.NewBlockMsg, []interface{}{tp.blockAccessor.lastBlock, tp.blockAccessor.totalDifficulty})
 }

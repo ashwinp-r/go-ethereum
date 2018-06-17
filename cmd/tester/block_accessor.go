@@ -4,8 +4,6 @@ import (
 	"os"
 	"fmt"
 	"io"
-	"compress/gzip"
-	"strings"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -19,6 +17,8 @@ type BlockAccessor struct {
 	blockOffsetByNumber map[uint64]uint64
 	headersByHash map[common.Hash]*types.Header
 	headersByNumber map[uint64]*types.Header
+	lastBlock *types.Block
+	totalDifficulty *big.Int
 }
 
 func (ba *BlockAccessor) Close() {
@@ -50,12 +50,13 @@ func (ba *BlockAccessor) GetBlockByHash(hash common.Hash) (*types.Block, error) 
 	return nil, nil
 }
 
-func rewriteChain(inputFile/*, outputFile*/ string) (lastBlock *types.Block, td *big.Int, ba *BlockAccessor, err error) {
+// Reads and indexes the file created by geth exportdb
+func NewBlockAccessor(inputFile string) (*BlockAccessor, error) {
 	input, err := os.Open(inputFile)
 	if err != nil {
-		return
+		return nil, err
 	}
-	ba = &BlockAccessor{
+	ba := &BlockAccessor{
 		input: input,
 		blockOffsetByHash: make(map[common.Hash]uint64),
 		blockOffsetByNumber: make(map[uint64]uint64),
@@ -70,16 +71,10 @@ func rewriteChain(inputFile/*, outputFile*/ string) (lastBlock *types.Block, td 
 	defer output.Close()
 	*/
 	var reader io.Reader = input
-	if strings.HasSuffix(inputFile, ".gz") {
-		if reader, err = gzip.NewReader(reader); err != nil {
-			return
-		}
-	}
 	stream := rlp.NewStream(reader, 0)
-	//blocks := make(types.Blocks, importBatchSize)
 	var b types.Block
 	n := 0
-	td = new(big.Int)
+	td := new(big.Int)
 	var pos uint64
 	for {
 		blockOffset := pos
@@ -90,7 +85,7 @@ func rewriteChain(inputFile/*, outputFile*/ string) (lastBlock *types.Block, td 
 				err = nil
 				break
 			}
-			return
+			return nil, fmt.Errorf("at block %d: %v", n, err)
 		}
 		pos += 1 + size
 		if size >= 56 {
@@ -105,8 +100,7 @@ func rewriteChain(inputFile/*, outputFile*/ string) (lastBlock *types.Block, td 
 			err = nil // Clear it
 			break
 		} else if err != nil {
-			err = fmt.Errorf("at block %d: %v", n, err)
-			return
+			return nil, fmt.Errorf("at block %d: %v", n, err)
 		}
 		// don't import first block
 		if b.NumberU64() == 0 {
@@ -122,6 +116,7 @@ func rewriteChain(inputFile/*, outputFile*/ string) (lastBlock *types.Block, td 
 		n++
 	}
 	fmt.Printf("%d blocks read, bytes read %d\n", n, pos)
-	lastBlock = &b
-	return
+	ba.lastBlock = &b
+	ba.totalDifficulty = td
+	return ba, nil
 }

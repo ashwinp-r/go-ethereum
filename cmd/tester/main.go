@@ -9,12 +9,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/console"
-	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/eth"
-	"github.com/ethereum/go-ethereum/eth/downloader"
-	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/internal/debug"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/p2p"
@@ -67,43 +63,10 @@ func main() {
 }
 
 func tester(ctx *cli.Context) error {
-	// Create a protocol manager
-	fd, err := NewFakeDatabase()
-	if err != nil {
-		return err
-	}
-	bc, err := core.NewBlockChain(
-		fd,
-		nil, /* *CacheConfig */
-		params.MainnetChainConfig,
-		nil, /* consensus.Engine */
-		vm.Config{},
-	)
-	if err != nil {
-		return err
-	}
-	txPool := core.NewTxPool(
-		core.DefaultTxPoolConfig,
-		params.MainnetChainConfig,
-		bc,
-	)
-	pm, err := eth.NewProtocolManager(
-		params.MainnetChainConfig,
-		downloader.FullSync,
-		1,
-		new(event.TypeMux),
-		txPool, /* txPool */
-		nil, /* consensus.Engine */
-		bc, /* *core.BlockChain */
-		fd, /* ethdb.Database */
-	)
-	if err != nil {
-		return err
-	}
-	pm.Start(1)
 	//fmt.Printf("%s %s\n", ctx.Args()[0], ctx.Args()[1])
+	var err error
 	tp := &TesterProtocol{}
-	tp.lastBlock, tp.totalDifficulty, tp.blockAccessor, err = rewriteChain(ctx.Args()[0]/*, ctx.Args()[1]*/)
+	tp.blockAccessor, err = NewBlockAccessor(ctx.Args()[0]/*, ctx.Args()[1]*/)
 	defer tp.blockAccessor.Close()
 	if err != nil {
 		panic(fmt.Sprintf("Failed to read blockchain file: %v", err))
