@@ -335,6 +335,7 @@ func allBuckets(db *bolt.DB) [][]byte {
 func bucketStats(db *bolt.DB) {
 	bucketList := allBuckets(db)
 	storageStats := new(bolt.BucketStats)
+	hStorageStats := new(bolt.BucketStats)
 	fmt.Printf(",BranchPageN,BranchOverflowN,LeafPageN,LeafOverflowN,KeyN,Depth,BranchAlloc,BranchInuse,LeafAlloc,LeafInuse,BucketN,InlineBucketN,InlineBucketInuse\n")
 	db.View(func (tx *bolt.Tx) error {
 		for _, bucket := range bucketList {
@@ -342,6 +343,8 @@ func bucketStats(db *bolt.DB) {
 			bs := b.Stats()
 			if len(bucket) == 20 {
 				storageStats.Add(bs)
+			} else if len(bucket) == 21 {
+				hStorageStats.Add(bs)
 			} else {
 				fmt.Printf("%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", string(bucket),
 					bs.BranchPageN,bs.BranchOverflowN,bs.LeafPageN,bs.LeafOverflowN,bs.KeyN,bs.Depth,bs.BranchAlloc,bs.BranchInuse,
@@ -352,6 +355,10 @@ func bucketStats(db *bolt.DB) {
 	})
 	bs := *storageStats
 	fmt.Printf("%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", "Contract Storage",
+		bs.BranchPageN,bs.BranchOverflowN,bs.LeafPageN,bs.LeafOverflowN,bs.KeyN,bs.Depth,bs.BranchAlloc,bs.BranchInuse,
+		bs.LeafAlloc,bs.LeafInuse,bs.BucketN,bs.InlineBucketN,bs.InlineBucketInuse)
+	bs = *hStorageStats
+	fmt.Printf("%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", "Contract hStorage",
 		bs.BranchPageN,bs.BranchOverflowN,bs.LeafPageN,bs.LeafOverflowN,bs.KeyN,bs.Depth,bs.BranchAlloc,bs.BranchInuse,
 		bs.LeafAlloc,bs.LeafInuse,bs.BucketN,bs.InlineBucketN,bs.InlineBucketInuse)
 }
@@ -779,12 +786,12 @@ func main() {
         }
         defer pprof.StopCPUProfile()
     }
-	//db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
 	//db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
- 	//check(err)
- 	//defer db.Close()
- 	//bucketStats(db)
- 	mychart()
+ 	check(err)
+ 	defer db.Close()
+ 	bucketStats(db)
+ 	//mychart()
  	//testRebuild()
  	//testRewind()
  	//hashFile()
