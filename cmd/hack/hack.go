@@ -11,6 +11,7 @@ import (
 	"log"
 	"io/ioutil"
 	"bufio"
+	"time"
 
 	"github.com/boltdb/bolt"
 	"github.com/wcharczuk/go-chart"
@@ -673,7 +674,33 @@ func testRewind() {
 	fmt.Printf("Calculated rewound root hash: %x\n", rewoundRoot)
 }
 
+func testStartup() {
+	startTime := time.Now()
+	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024)
+	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata", 16)
+	check(err)
+	defer ethDb.Close()
+	bc, err := core.NewBlockChain(ethDb, nil, params.MainnetChainConfig, ethash.NewFaker(), vm.Config{})
+	check(err)
+	currentBlock := bc.CurrentBlock()
+	currentBlockNr := currentBlock.NumberU64()
+	fmt.Printf("Current block number: %d\n", currentBlockNr)
+	fmt.Printf("Current block root hash: %x\n", currentBlock.Root())
+	t := trie.New(common.Hash{}, state.AccountsBucket, false)
+	r := t.NewResolver(ethDb, false)
+	key := []byte{}
+	rootHash := currentBlock.Root()
+	tc := t.NewContinuation(key, 0, rootHash[:])
+	r.AddContinuation(tc)
+	err = r.ResolveWithDb(ethDb, currentBlockNr)
+	if err != nil {
+		fmt.Printf("%v\n", err)
+	}
+	fmt.Printf("Took %v\n", time.Since(startTime))
+}
+
 func testResolve() {
+	startTime := time.Now()
 	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata", 16)
 	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 16)
 	check(err)
@@ -689,6 +716,7 @@ func testResolve() {
 	if err != nil {
 		fmt.Printf("%v\n", err)
 	}
+	fmt.Printf("Took %v\n", time.Since(startTime))
 }
 
 func hashFile() {
@@ -786,11 +814,11 @@ func main() {
         }
         defer pprof.StopCPUProfile()
     }
-	db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	//db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
 	//db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
- 	check(err)
- 	defer db.Close()
- 	bucketStats(db)
+ 	//check(err)
+ 	//defer db.Close()
+ 	//bucketStats(db)
  	//mychart()
  	//testRebuild()
  	//testRewind()
@@ -799,5 +827,6 @@ func main() {
  	//testResolve()
  	//rlpIndices()
  	//printFullNodeRLPs()
+ 	testStartup()
 }
 
