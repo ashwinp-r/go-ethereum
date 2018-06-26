@@ -111,6 +111,15 @@ func days() []chart.GridLine {
 		{Value: 24.0},
 		{Value: 48.0},
 		{Value: 72.0},
+		{Value: 96.0},
+		{Value: 120.0},
+		{Value: 144.0},
+		{Value: 168.0},
+		{Value: 192.0},
+		{Value: 216.0},
+		{Value: 240.0},
+		{Value: 264.0},
+		{Value: 288.0},
 	}
 }
 
@@ -814,11 +823,11 @@ func main() {
         }
         defer pprof.StopCPUProfile()
     }
-	//db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
 	//db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
- 	//check(err)
- 	//defer db.Close()
- 	//bucketStats(db)
+ 	check(err)
+ 	defer db.Close()
+ 	bucketStats(db)
  	//mychart()
  	//testRebuild()
  	//testRewind()
@@ -827,6 +836,6 @@ func main() {
  	//testResolve()
  	//rlpIndices()
  	//printFullNodeRLPs()
- 	testStartup()
+ 	//testStartup()
 }
 
