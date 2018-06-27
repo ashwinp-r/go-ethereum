@@ -63,8 +63,12 @@ func main() {
 }
 
 func tester(ctx *cli.Context) error {
-	//fmt.Printf("%s %s\n", ctx.Args()[0], ctx.Args()[1])
 	var err error
+	_, err = NewBlockGenerator("emptyblocks", 100)
+	if err != nil {
+		return err
+	}
+	//fmt.Printf("%s %s\n", ctx.Args()[0], ctx.Args()[1])
 	tp := &TesterProtocol{}
 	tp.blockAccessor, err = NewBlockAccessor(ctx.Args()[0]/*, ctx.Args()[1]*/)
 	defer tp.blockAccessor.Close()

@@ -811,6 +811,13 @@ func printFullNodeRLPs() {
 	trie.Hash7()
 }
 
+func testDifficulty() {
+	genesisBlock, _, _, err := core.DefaultGenesisBlock().ToBlock(nil)
+	check(err)
+	d1 := ethash.CalcDifficulty(params.MainnetChainConfig, 100000, genesisBlock.Header())
+	fmt.Printf("Block 1 difficulty: %d\n", d1)
+}
+
 func main() {
 	flag.Parse()
     if *cpuprofile != "" {
@@ -823,11 +830,11 @@ func main() {
         }
         defer pprof.StopCPUProfile()
     }
-	db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	//db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
 	//db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
- 	check(err)
- 	defer db.Close()
- 	bucketStats(db)
+ 	//check(err)
+ 	//defer db.Close()
+ 	//bucketStats(db)
  	//mychart()
  	//testRebuild()
  	//testRewind()
@@ -837,5 +844,6 @@ func main() {
  	//rlpIndices()
  	//printFullNodeRLPs()
  	//testStartup()
+ 	testDifficulty()
 }
 
