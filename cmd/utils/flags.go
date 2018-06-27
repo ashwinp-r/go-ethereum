@@ -959,6 +959,9 @@ func setEthash(ctx *cli.Context, cfg *eth.Config) {
 	if ctx.GlobalIsSet(EthashDatasetsOnDiskFlag.Name) {
 		cfg.Ethash.DatasetsOnDisk = ctx.GlobalInt(EthashDatasetsOnDiskFlag.Name)
 	}
+	if ctx.GlobalIsSet(FakePoWFlag.Name) {
+		cfg.Ethash.PowMode = ethash.ModeFake
+	}
 }
 
 // checkExclusive verifies that only a single isntance of the provided flags was

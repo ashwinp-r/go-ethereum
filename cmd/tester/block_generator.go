@@ -18,6 +18,7 @@ import (
 )
 
 type BlockGenerator struct {
+	input *os.File
 	genesisBlock *types.Block
 	coinbaseKey *ecdsa.PrivateKey
 	blockOffsetByHash map[common.Hash]uint64
@@ -26,6 +27,43 @@ type BlockGenerator struct {
 	headersByNumber map[uint64]*types.Header
 	lastBlock *types.Block
 	totalDifficulty *big.Int
+}
+
+func (bg *BlockGenerator) Close() {
+	bg.input.Close()
+}
+
+func (bg *BlockGenerator) GetHeaderByHash(hash common.Hash) *types.Header {
+	return bg.headersByHash[hash]
+}
+
+func (bg *BlockGenerator) GetHeaderByNumber(number uint64) *types.Header {
+	return bg.headersByNumber[number]
+}
+
+func (bg *BlockGenerator) readBlockFromOffset(offset uint64) (*types.Block, error) {
+	bg.input.Seek(int64(offset), 0)
+	stream := rlp.NewStream(bg.input, 0)
+	var b types.Block
+	if err := stream.Decode(&b); err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
+func (bg *BlockGenerator) GetBlockByHash(hash common.Hash) (*types.Block, error) {
+	if blockOffset, ok := bg.blockOffsetByHash[hash]; ok {
+		return bg.readBlockFromOffset(blockOffset)
+	}
+	return nil, nil
+}
+
+func (bg *BlockGenerator) TotalDifficulty() *big.Int {
+	return bg.totalDifficulty
+}
+
+func (bg *BlockGenerator) LastBlock() *types.Block {
+	return bg.lastBlock
 }
 
 func NewBlockGenerator(outputFile string, initialHeight int) (*BlockGenerator, error) {
@@ -57,6 +95,8 @@ func NewBlockGenerator(outputFile string, initialHeight int) (*BlockGenerator, e
 		headersByHash: make(map[common.Hash]*types.Header),
 		headersByNumber: make(map[uint64]*types.Header),
 	}
+	bg.headersByHash[genesisBlock.Header().Hash()] = genesisBlock.Header()
+	bg.headersByNumber[0] = genesisBlock.Header()
 	for height := 1; height <= initialHeight; height++ {
 		num := parent.Number()
 		tstamp := parent.Time().Int64() + 15
@@ -82,13 +122,14 @@ func NewBlockGenerator(outputFile string, initialHeight int) (*BlockGenerator, e
 		}
 		// Generate an empty block
 		block := types.NewBlock(header, []*types.Transaction{}, []*types.Header{}, []*types.Receipt{})
-		fmt.Printf("block hash for %d: %x\n", block.Number(), block.Hash())
+		fmt.Printf("block hash for %d: %x\n", block.NumberU64(), block.Hash())
 		if buffer, err := rlp.EncodeToBytes(block); err != nil {
 			return nil, err
 		} else {
 			output.Write(buffer)
 			pos += uint64(len(buffer))
 		}
+		header = block.Header()
 		hash := header.Hash()
 		bg.headersByHash[hash] = header
 		bg.headersByNumber[block.NumberU64()] = header
@@ -99,6 +140,12 @@ func NewBlockGenerator(outputFile string, initialHeight int) (*BlockGenerator, e
 	}
 	bg.lastBlock = parent
 	bg.totalDifficulty = td
+	output.Close()
+	// Reopen the file for reading
+	bg.input, err = os.Open(outputFile)
+	if err != nil {
+		return nil, err
+	}
 	return bg, nil
 }
 

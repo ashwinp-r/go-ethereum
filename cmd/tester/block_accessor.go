@@ -50,6 +50,14 @@ func (ba *BlockAccessor) GetBlockByHash(hash common.Hash) (*types.Block, error) 
 	return nil, nil
 }
 
+func (ba *BlockAccessor) TotalDifficulty() *big.Int {
+	return ba.totalDifficulty
+}
+
+func (ba *BlockAccessor) LastBlock() *types.Block {
+	return ba.lastBlock
+}
+
 // Reads and indexes the file created by geth exportdb
 func NewBlockAccessor(inputFile string) (*BlockAccessor, error) {
 	input, err := os.Open(inputFile)
@@ -63,13 +71,6 @@ func NewBlockAccessor(inputFile string) (*BlockAccessor, error) {
 		headersByHash: make(map[common.Hash]*types.Header),
 		headersByNumber: make(map[uint64]*types.Header),
 	}
-	/*
-	output, err := os.OpenFile(outputFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.ModePerm)
-	if err != nil {
-		return err
-	}
-	defer output.Close()
-	*/
 	var reader io.Reader = input
 	stream := rlp.NewStream(reader, 0)
 	var b types.Block

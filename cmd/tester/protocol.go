@@ -24,7 +24,7 @@ type TesterProtocol struct {
 	protocolVersion     uint32
 	networkId           uint64
 	genesisBlockHash    common.Hash
-	blockAccessor       *BlockAccessor
+	blockFeeder         BlockFeeder
 }
 
 func (tp *TesterProtocol) protocolRun (peer *p2p.Peer, rw p2p.MsgReadWriter) error {
@@ -33,8 +33,8 @@ func (tp *TesterProtocol) protocolRun (peer *p2p.Peer, rw p2p.MsgReadWriter) err
 	err := p2p.Send(rw, eth.StatusMsg, &statusData{
 			ProtocolVersion: tp.protocolVersion,
 			NetworkId:       tp.networkId,
-			TD:              tp.blockAccessor.totalDifficulty,
-			CurrentBlock:    tp.blockAccessor.lastBlock.Hash(),
+			TD:              tp.blockFeeder.TotalDifficulty(),
+			CurrentBlock:    tp.blockFeeder.LastBlock().Hash(),
 			GenesisBlock:    tp.genesisBlockHash,
 	})
 	if err != nil {
@@ -152,15 +152,17 @@ func (tp *TesterProtocol) handleGetBlockHeaderMsg(msg p2p.Msg, rw p2p.MsgReadWri
 	if query.Origin.Hash == (common.Hash{}) && !query.Reverse {
 		number := query.Origin.Number
 		for i := 0; i < int(query.Amount); i++ {
-			if header := tp.blockAccessor.GetHeaderByNumber(number); header != nil {
+			if header := tp.blockFeeder.GetHeaderByNumber(number); header != nil {
 				//fmt.Printf("Going to send block %d\n", header.Number.Uint64())
 				headers = append(headers, header)
+			} else {
+				fmt.Printf("Could not find header with number %d\n", number)
 			}
 			number += query.Skip+1
 		}
 	}
 	if query.Origin.Hash != (common.Hash{}) && query.Amount == 1 && query.Skip == 0 && !query.Reverse {
-		if header:= tp.blockAccessor.GetHeaderByHash(query.Origin.Hash); header != nil {
+		if header:= tp.blockFeeder.GetHeaderByHash(query.Origin.Hash); header != nil {
 			fmt.Printf("Going to send block %d\n", header.Number.Uint64())
 			headers = append(headers, header)
 		}
@@ -195,7 +197,7 @@ func (tp *TesterProtocol) handleGetBlockBodiesMsg(msg p2p.Msg, rw p2p.MsgReadWri
 			return fmt.Errorf("Failed to decode msg %v: %v", msg, err)
 		}
 		// Retrieve the requested block body, stopping if enough was found
-		if block, err := tp.blockAccessor.GetBlockByHash(hash); err != nil {
+		if block, err := tp.blockFeeder.GetBlockByHash(hash); err != nil {
 			fmt.Printf("Failed to read block %v", err)
 			return fmt.Errorf("Failed to read block %v", err)
 		} else if block != nil {
@@ -213,5 +215,5 @@ func (tp *TesterProtocol) handleGetBlockBodiesMsg(msg p2p.Msg, rw p2p.MsgReadWri
 }
 
 func (tp *TesterProtocol) sendLastBlock(rw p2p.MsgReadWriter) error {
-	return p2p.Send(rw, eth.NewBlockMsg, []interface{}{tp.blockAccessor.lastBlock, tp.blockAccessor.totalDifficulty})
+	return p2p.Send(rw, eth.NewBlockMsg, []interface{}{tp.blockFeeder.LastBlock(), tp.blockFeeder.TotalDifficulty()})
 }

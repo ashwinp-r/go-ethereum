@@ -70,8 +70,9 @@ func tester(ctx *cli.Context) error {
 	}
 	//fmt.Printf("%s %s\n", ctx.Args()[0], ctx.Args()[1])
 	tp := &TesterProtocol{}
-	tp.blockAccessor, err = NewBlockAccessor(ctx.Args()[0]/*, ctx.Args()[1]*/)
-	defer tp.blockAccessor.Close()
+	//tp.blockFeeder, err = NewBlockAccessor(ctx.Args()[0]/*, ctx.Args()[1]*/)
+	tp.blockFeeder, err = NewBlockGenerator("emptyblocks", 100000)
+	defer tp.blockFeeder.Close()
 	if err != nil {
 		panic(fmt.Sprintf("Failed to read blockchain file: %v", err))
 	}
