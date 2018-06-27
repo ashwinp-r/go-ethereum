@@ -14,11 +14,18 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 type BlockGenerator struct {
 	genesisBlock *types.Block
 	coinbaseKey *ecdsa.PrivateKey
+	blockOffsetByHash map[common.Hash]uint64
+	blockOffsetByNumber map[uint64]uint64
+	headersByHash map[common.Hash]*types.Header
+	headersByNumber map[uint64]*types.Header
+	lastBlock *types.Block
+	totalDifficulty *big.Int
 }
 
 func NewBlockGenerator(outputFile string, initialHeight int) (*BlockGenerator, error) {
@@ -40,7 +47,16 @@ func NewBlockGenerator(outputFile string, initialHeight int) (*BlockGenerator, e
 	}
 	coinbase := crypto.PubkeyToAddress(coinbaseKey.PublicKey)
 	config := params.MainnetChainConfig
-
+	var pos uint64
+	td := new(big.Int)
+	bg := &BlockGenerator{
+		genesisBlock: genesisBlock,
+		coinbaseKey: coinbaseKey,
+		blockOffsetByHash: make(map[common.Hash]uint64),
+		blockOffsetByNumber: make(map[uint64]uint64),
+		headersByHash: make(map[common.Hash]*types.Header),
+		headersByNumber: make(map[uint64]*types.Header),
+	}
 	for height := 1; height <= initialHeight; height++ {
 		num := parent.Number()
 		tstamp := parent.Time().Int64() + 15
@@ -67,12 +83,22 @@ func NewBlockGenerator(outputFile string, initialHeight int) (*BlockGenerator, e
 		// Generate an empty block
 		block := types.NewBlock(header, []*types.Transaction{}, []*types.Header{}, []*types.Receipt{})
 		fmt.Printf("block hash for %d: %x\n", block.Number(), block.Hash())
+		if buffer, err := rlp.EncodeToBytes(block); err != nil {
+			return nil, err
+		} else {
+			output.Write(buffer)
+			pos += uint64(len(buffer))
+		}
+		hash := header.Hash()
+		bg.headersByHash[hash] = header
+		bg.headersByNumber[block.NumberU64()] = header
+		bg.blockOffsetByHash[hash] = pos
+		bg.blockOffsetByNumber[block.NumberU64()] = pos
+		td = new(big.Int).Add(td, block.Difficulty())
 		parent = block
 	}
-	bg := &BlockGenerator{
-		genesisBlock: genesisBlock,
-		coinbaseKey: coinbaseKey,
-	}
+	bg.lastBlock = parent
+	bg.totalDifficulty = td
 	return bg, nil
 }
 
