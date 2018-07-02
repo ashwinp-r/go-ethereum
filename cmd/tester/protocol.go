@@ -90,6 +90,10 @@ func (tp *TesterProtocol) protocolRun (peer *p2p.Peer, rw p2p.MsgReadWriter) err
 			if err = tp.handleGetBlockBodiesMsg(msg, rw); err != nil {
 				return err
 			}
+		case msg.Code == eth.NewBlockHashesMsg:
+			if err = tp.handleNewBlockHashesMsg(msg, rw); err != nil {
+				return err
+			}
 		default:
 			fmt.Printf("Next message: %v\n", msg)
 		}
@@ -109,6 +113,12 @@ type getBlockHeadersData struct {
 	Amount  uint64       // Maximum number of headers to retrieve
 	Skip    uint64       // Blocks to skip between consecutive headers
 	Reverse bool         // Query direction (false = rising towards latest, true = falling towards genesis)
+}
+
+// newBlockHashesData is the network packet for the block announcements.
+type newBlockHashesData []struct {
+	Hash   common.Hash // Hash of one particular block being announced
+	Number uint64      // Number of one particular block being announced
 }
 
 // EncodeRLP is a specialized encoder for hashOrNumber to encode only one of the
@@ -167,13 +177,11 @@ func (tp *TesterProtocol) handleGetBlockHeaderMsg(msg p2p.Msg, rw p2p.MsgReadWri
 			headers = append(headers, header)
 		}
 	}
-	if len(headers) > 0 {
-		if err := p2p.Send(rw, eth.BlockHeadersMsg, headers); err != nil {
-			fmt.Printf("Failed to send headers: %v\n", err)
-			return err
-		}
-		fmt.Printf("Sent %d headers\n", len(headers))
+	if err := p2p.Send(rw, eth.BlockHeadersMsg, headers); err != nil {
+		fmt.Printf("Failed to send headers: %v\n", err)
+		return err
 	}
+	fmt.Printf("Sent %d headers\n", len(headers))
 	return nil
 }
 
@@ -216,4 +224,14 @@ func (tp *TesterProtocol) handleGetBlockBodiesMsg(msg p2p.Msg, rw p2p.MsgReadWri
 
 func (tp *TesterProtocol) sendLastBlock(rw p2p.MsgReadWriter) error {
 	return p2p.Send(rw, eth.NewBlockMsg, []interface{}{tp.blockFeeder.LastBlock(), tp.blockFeeder.TotalDifficulty()})
+}
+
+func (tp *TesterProtocol) handleNewBlockHashesMsg(msg p2p.Msg, rw p2p.MsgReadWriter) error {
+	var blockHashMsg newBlockHashesData
+	if err := msg.Decode(&blockHashMsg); err != nil {
+		fmt.Printf("Failed to decode msg %v: %v\n", msg, err)
+		return fmt.Errorf("Failed to decode msg %v: %v\n", msg, err)
+	}
+	fmt.Printf("NewBlockHashesMsg: %v\n", blockHashMsg)
+	return nil
 }
