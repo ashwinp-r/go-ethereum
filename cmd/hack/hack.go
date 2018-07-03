@@ -837,13 +837,13 @@ func main() {
  	//bucketStats(db)
  	//mychart()
  	//testRebuild()
- 	//testRewind()
+ 	testRewind()
  	//hashFile()
  	//buildHashFromFile()
  	//testResolve()
  	//rlpIndices()
  	//printFullNodeRLPs()
  	//testStartup()
- 	testDifficulty()
+ 	//testDifficulty()
 }
 

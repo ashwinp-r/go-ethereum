@@ -328,7 +328,7 @@ func (self *StateDB) getStateObject(addr common.Address) (stateObject *stateObje
 	if _, ok := self.nilAccounts[addr]; ok {
 		return nil
 	}
-	account, err := self.stateReader.ReadAccountData(&addr)
+	account, err := self.stateReader.ReadAccountData(crypto.Keccak256Hash(addr[:]))
 	if err != nil {
 		self.setError(err)
 		return nil
@@ -523,7 +523,7 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool, stateWriter StateWriter) err
 		}
 
 		if stateObject.suicided || (deleteEmptyObjects && stateObject.empty()) {
-			if err := stateWriter.DeleteAccount(&addr); err != nil {
+			if err := stateWriter.DeleteAccount(crypto.Keccak256Hash(addr[:])); err != nil {
 				return err
 			}
 			stateObject.deleted = true
@@ -531,7 +531,7 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool, stateWriter StateWriter) err
 			if err := stateObject.updateTrie(stateWriter); err != nil {
 				return err
 			}
-			if err := stateWriter.UpdateAccountData(&addr, &stateObject.data); err != nil {
+			if err := stateWriter.UpdateAccountData(crypto.Keccak256Hash(addr[:]), &stateObject.data); err != nil {
 				return err
 			}
 		}
@@ -553,7 +553,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool, stateWriter StateWriter) error
 		//fmt.Printf("%x %d %x %x\n", addr[:], stateObject.data.Balance, stateObject.data.CodeHash, stateObject.data.Root[:])
 
 		if stateObject.suicided || (isDirty && deleteEmptyObjects && stateObject.empty()) {
-			if err := stateWriter.DeleteAccount(&addr); err != nil {
+			if err := stateWriter.DeleteAccount(crypto.Keccak256Hash(addr[:])); err != nil {
 				return err
 			}
 			stateObject.deleted = true
@@ -567,7 +567,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool, stateWriter StateWriter) error
 			if err := stateObject.updateTrie(stateWriter); err != nil {
 				return err
 			}
-			if err := stateWriter.UpdateAccountData(&addr, &stateObject.data); err != nil {
+			if err := stateWriter.UpdateAccountData(crypto.Keccak256Hash(addr[:]), &stateObject.data); err != nil {
 				return err
 			}
 		}

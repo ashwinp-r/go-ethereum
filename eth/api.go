@@ -32,6 +32,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/miner"
@@ -414,7 +415,7 @@ func (api *PrivateDebugAPI) StorageRangeAt(ctx context.Context, blockHash common
 }
 
 func storageRangeAt(dbstate *state.DbState, contractAddress common.Address, start []byte, maxResult int) (StorageRangeResult, error) {
-	account, err := dbstate.ReadAccountData(&contractAddress)
+	account, err := dbstate.ReadAccountData(crypto.Keccak256Hash(contractAddress[:]))
 	if err != nil {
 		return StorageRangeResult{}, fmt.Errorf("error reading account %x: %v", contractAddress, err)
 	}
