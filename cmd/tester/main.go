@@ -69,7 +69,7 @@ func tester(ctx *cli.Context) error {
 		return err
 	}
 	//fmt.Printf("%s %s\n", ctx.Args()[0], ctx.Args()[1])
-	tp := &TesterProtocol{}
+	tp := NewTesterProtocol()
 	//tp.blockFeeder, err = NewBlockAccessor(ctx.Args()[0]/*, ctx.Args()[1]*/)
 	tp.blockFeeder, err = NewBlockGenerator("emptyblocks", 1000)
 	defer tp.blockFeeder.Close()
