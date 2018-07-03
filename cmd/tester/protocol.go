@@ -25,6 +25,7 @@ type TesterProtocol struct {
 	networkId           uint64
 	genesisBlockHash    common.Hash
 	blockFeeder         BlockFeeder
+	forkFeeder          BlockFeeder
 	blockMarkers        []uint64  // Bitmap to remember which blocks (or just header if the blocks are empty) have been sent already
 	                              // This is to prevent double counting them
 }
@@ -104,11 +105,11 @@ func (tp *TesterProtocol) protocolRun (peer *p2p.Peer, rw p2p.MsgReadWriter) err
 		}
 		switch {
 		case msg.Code == eth.GetBlockHeadersMsg:
-			if emptyBlocks, err = tp.handleGetBlockHeaderMsg(msg, rw, emptyBlocks); err != nil {
+			if emptyBlocks, err = tp.handleGetBlockHeaderMsg(msg, rw, tp.blockFeeder, emptyBlocks); err != nil {
 				return err
 			}
 		case msg.Code == eth.GetBlockBodiesMsg:
-			if sentBlocks, err = tp.handleGetBlockBodiesMsg(msg, rw, sentBlocks); err != nil {
+			if sentBlocks, err = tp.handleGetBlockBodiesMsg(msg, rw, tp.blockFeeder, sentBlocks); err != nil {
 				return err
 			}
 		case msg.Code == eth.NewBlockHashesMsg:
@@ -126,6 +127,8 @@ func (tp *TesterProtocol) protocolRun (peer *p2p.Peer, rw p2p.MsgReadWriter) err
 		//}
 	}
 	fmt.Printf("Peer downloaded all our blocks, entering next phase\n")
+	tp.sendLastBlock(rw, tp.forkFeeder)
+	fmt.Printf("Announced fork block\n")
 	for i := 0; i < 10000; i++ {
 		fmt.Printf("Message loop i %d\n", i)
 		// Read the next message
@@ -136,11 +139,11 @@ func (tp *TesterProtocol) protocolRun (peer *p2p.Peer, rw p2p.MsgReadWriter) err
 		}
 		switch {
 		case msg.Code == eth.GetBlockHeadersMsg:
-			if emptyBlocks, err = tp.handleGetBlockHeaderMsg(msg, rw, emptyBlocks); err != nil {
+			if emptyBlocks, err = tp.handleGetBlockHeaderMsg(msg, rw, tp.forkFeeder, emptyBlocks); err != nil {
 				return err
 			}
 		case msg.Code == eth.GetBlockBodiesMsg:
-			if sentBlocks, err = tp.handleGetBlockBodiesMsg(msg, rw, sentBlocks); err != nil {
+			if sentBlocks, err = tp.handleGetBlockBodiesMsg(msg, rw, tp.forkFeeder, sentBlocks); err != nil {
 				return err
 			}
 		case msg.Code == eth.NewBlockHashesMsg:
@@ -204,7 +207,7 @@ func (hn *hashOrNumber) DecodeRLP(s *rlp.Stream) error {
 	return err
 }
 
-func (tp *TesterProtocol) handleGetBlockHeaderMsg(msg p2p.Msg, rw p2p.MsgReadWriter, emptyBlocks int) (int, error) {
+func (tp *TesterProtocol) handleGetBlockHeaderMsg(msg p2p.Msg, rw p2p.MsgReadWriter, blockFeeder BlockFeeder, emptyBlocks int) (int, error) {
 	newEmptyBlocks := emptyBlocks
 	var query getBlockHeadersData
 	if err := msg.Decode(&query); err != nil {
@@ -216,7 +219,7 @@ func (tp *TesterProtocol) handleGetBlockHeaderMsg(msg p2p.Msg, rw p2p.MsgReadWri
 	if query.Origin.Hash == (common.Hash{}) && !query.Reverse {
 		number := query.Origin.Number
 		for i := 0; i < int(query.Amount); i++ {
-			if header := tp.blockFeeder.GetHeaderByNumber(number); header != nil {
+			if header := blockFeeder.GetHeaderByNumber(number); header != nil {
 				//fmt.Printf("Going to send block %d\n", header.Number.Uint64())
 				headers = append(headers, header)
 				if header.TxHash == types.EmptyRootHash {
@@ -231,7 +234,7 @@ func (tp *TesterProtocol) handleGetBlockHeaderMsg(msg p2p.Msg, rw p2p.MsgReadWri
 		}
 	}
 	if query.Origin.Hash != (common.Hash{}) && query.Amount == 1 && query.Skip == 0 && !query.Reverse {
-		if header:= tp.blockFeeder.GetHeaderByHash(query.Origin.Hash); header != nil {
+		if header:= blockFeeder.GetHeaderByHash(query.Origin.Hash); header != nil {
 			fmt.Printf("Going to send block %d\n", header.Number.Uint64())
 			headers = append(headers, header)
 		}
@@ -244,7 +247,7 @@ func (tp *TesterProtocol) handleGetBlockHeaderMsg(msg p2p.Msg, rw p2p.MsgReadWri
 	return newEmptyBlocks, nil
 }
 
-func (tp *TesterProtocol) handleGetBlockBodiesMsg(msg p2p.Msg, rw p2p.MsgReadWriter, sentBlocks int) (int, error) {
+func (tp *TesterProtocol) handleGetBlockBodiesMsg(msg p2p.Msg, rw p2p.MsgReadWriter, blockFeeder BlockFeeder, sentBlocks int) (int, error) {
 	newSentBlocks := sentBlocks
 	msgStream := rlp.NewStream(msg.Payload, uint64(msg.Size))
 	fmt.Printf("GetBlockBodiesMsg with size %d\n", msg.Size)
@@ -265,7 +268,7 @@ func (tp *TesterProtocol) handleGetBlockBodiesMsg(msg p2p.Msg, rw p2p.MsgReadWri
 			return newSentBlocks, fmt.Errorf("Failed to decode msg %v: %v", msg, err)
 		}
 		// Retrieve the requested block body, stopping if enough was found
-		if block, err := tp.blockFeeder.GetBlockByHash(hash); err != nil {
+		if block, err := blockFeeder.GetBlockByHash(hash); err != nil {
 			fmt.Printf("Failed to read block %v", err)
 			return newSentBlocks, fmt.Errorf("Failed to read block %v", err)
 		} else if block != nil {
@@ -285,8 +288,15 @@ func (tp *TesterProtocol) handleGetBlockBodiesMsg(msg p2p.Msg, rw p2p.MsgReadWri
 	return newSentBlocks, nil
 }
 
-func (tp *TesterProtocol) sendLastBlock(rw p2p.MsgReadWriter) error {
-	return p2p.Send(rw, eth.NewBlockMsg, []interface{}{tp.blockFeeder.LastBlock(), tp.blockFeeder.TotalDifficulty()})
+func (tp *TesterProtocol) announceForkBlock(rw p2p.MsgReadWriter) error {
+	request := make(newBlockHashesData, 1)
+	request[0].Hash = tp.forkFeeder.LastBlock().Hash()
+	request[0].Number = tp.forkFeeder.LastBlock().NumberU64()
+	return p2p.Send(rw, eth.NewBlockHashesMsg, request)
+}
+
+func (tp *TesterProtocol) sendLastBlock(rw p2p.MsgReadWriter, blockFeeder BlockFeeder) error {
+	return p2p.Send(rw, eth.NewBlockMsg, []interface{}{blockFeeder.LastBlock(), blockFeeder.TotalDifficulty()})
 }
 
 func (tp *TesterProtocol) handleNewBlockHashesMsg(msg p2p.Msg, rw p2p.MsgReadWriter) (bool, error) {

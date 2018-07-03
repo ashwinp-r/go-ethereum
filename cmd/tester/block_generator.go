@@ -58,6 +58,13 @@ func (bg *BlockGenerator) GetBlockByHash(hash common.Hash) (*types.Block, error)
 	return nil, nil
 }
 
+func (bg *BlockGenerator) GetBlockByNumber(number uint64) (*types.Block, error) {
+	if blockOffset, ok := bg.blockOffsetByNumber[number]; ok {
+		return bg.readBlockFromOffset(blockOffset)
+	}
+	return nil, nil
+}
+
 func (bg *BlockGenerator) TotalDifficulty() *big.Int {
 	return bg.totalDifficulty
 }
@@ -100,6 +107,94 @@ func NewBlockGenerator(outputFile string, initialHeight int) (*BlockGenerator, e
 	for height := 1; height <= initialHeight; height++ {
 		num := parent.Number()
 		tstamp := parent.Time().Int64() + 15
+		header := &types.Header{
+			ParentHash: parent.Hash(),
+			Number:     num.Add(num, common.Big1),
+			GasLimit:   core.CalcGasLimit(parent),
+			Extra:      extra,
+			Time:       big.NewInt(tstamp),
+			Coinbase: coinbase,
+			Difficulty: ethash.CalcDifficulty(config, uint64(tstamp), parent.Header()),
+		}
+		tds.SetBlockNr(parent.NumberU64())
+		statedb := state.New(tds)
+		accumulateRewards(config, statedb, header, []*types.Header{})
+		header.Root, err = tds.IntermediateRoot(statedb, config.IsEIP158(header.Number))
+		if err != nil {
+			return nil, err
+		}
+		err = statedb.Commit(config.IsEIP158(header.Number), tds.DbStateWriter())
+		if err != nil {
+			return nil, err
+		}
+		// Generate an empty block
+		block := types.NewBlock(header, []*types.Transaction{}, []*types.Header{}, []*types.Receipt{})
+		fmt.Printf("block hash for %d: %x\n", block.NumberU64(), block.Hash())
+		if buffer, err := rlp.EncodeToBytes(block); err != nil {
+			return nil, err
+		} else {
+			output.Write(buffer)
+			pos += uint64(len(buffer))
+		}
+		header = block.Header()
+		hash := header.Hash()
+		bg.headersByHash[hash] = header
+		bg.headersByNumber[block.NumberU64()] = header
+		bg.blockOffsetByHash[hash] = pos
+		bg.blockOffsetByNumber[block.NumberU64()] = pos
+		td = new(big.Int).Add(td, block.Difficulty())
+		parent = block
+	}
+	bg.lastBlock = parent
+	bg.totalDifficulty = td
+	output.Close()
+	// Reopen the file for reading
+	bg.input, err = os.Open(outputFile)
+	if err != nil {
+		return nil, err
+	}
+	return bg, nil
+}
+
+// Creates a fork from the existing block generator
+func NewForkGenerator(base *BlockGenerator, outputFile string, forkBase int, forkHeight int) (*BlockGenerator, error) {
+	output, err := os.OpenFile(outputFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.ModePerm)
+	if err != nil {
+		return nil, err
+	}
+	defer output.Close()
+	db := ethdb.NewMemDatabase()
+	genesisBlock, _, tds, err := core.DefaultGenesisBlock().ToBlock(db)
+	if err != nil {
+		return nil, err
+	}
+	parent := genesisBlock
+	extra := []byte("BlockGenerator")
+	forkCoinbaseKey, err := crypto.GenerateKey()
+	if err != nil {
+		return nil, err
+	}
+	coinbase := crypto.PubkeyToAddress(base.coinbaseKey.PublicKey)
+	forkCoinbase := crypto.PubkeyToAddress(forkCoinbaseKey.PublicKey)
+	config := params.MainnetChainConfig
+	var pos uint64
+	td := new(big.Int)
+	bg := &BlockGenerator{
+		genesisBlock: genesisBlock,
+		coinbaseKey: forkCoinbaseKey,
+		blockOffsetByHash: make(map[common.Hash]uint64),
+		blockOffsetByNumber: make(map[uint64]uint64),
+		headersByHash: make(map[common.Hash]*types.Header),
+		headersByNumber: make(map[uint64]*types.Header),
+	}
+	bg.headersByHash[genesisBlock.Header().Hash()] = genesisBlock.Header()
+	bg.headersByNumber[0] = genesisBlock.Header()
+	for height := 1; height <= forkBase + forkHeight; height++ {
+		num := parent.Number()
+		tstamp := parent.Time().Int64() + 15
+		if height >= forkBase {
+			coinbase = forkCoinbase
+		}
 		header := &types.Header{
 			ParentHash: parent.Hash(),
 			Number:     num.Add(num, common.Big1),

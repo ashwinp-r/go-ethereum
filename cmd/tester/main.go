@@ -71,10 +71,16 @@ func tester(ctx *cli.Context) error {
 	//fmt.Printf("%s %s\n", ctx.Args()[0], ctx.Args()[1])
 	tp := NewTesterProtocol()
 	//tp.blockFeeder, err = NewBlockAccessor(ctx.Args()[0]/*, ctx.Args()[1]*/)
-	tp.blockFeeder, err = NewBlockGenerator("emptyblocks", 1000)
-	defer tp.blockFeeder.Close()
+	blockGen, err := NewBlockGenerator("emptyblocks", 1000)
+	defer blockGen.Close()
 	if err != nil {
-		panic(fmt.Sprintf("Failed to read blockchain file: %v", err))
+		panic(fmt.Sprintf("Failed to create block generator: %v", err))
+	}
+	tp.blockFeeder = blockGen
+	tp.forkFeeder, err = NewForkGenerator(blockGen, "forkblocks", 900, 120)
+	defer tp.forkFeeder.Close()
+	if err != nil {
+		panic(fmt.Sprintf("Failed to create fork generator: %v", err))
 	}
 	tp.protocolVersion = uint32(eth.ProtocolVersions[0])
 	tp.networkId = 1 // Mainnet
