@@ -413,8 +413,9 @@ func (tds *TrieDbState) SetBlockNr(blockNr uint64) {
 
 func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
 	if err := tds.db.RewindData(tds.blockNr, blockNr, func (bucket, key, value []byte) error {
+		//fmt.Printf("Rewind with bucket %x key %x value %x\n", bucket, key, value)
 		var err error
-		if bytes.Equal(bucket, AccountsBucket) {
+		if bytes.Equal(bucket, AccountsHistoryBucket) {
 			var addrHash common.Hash
 			copy(addrHash[:], key)
 			if len(value) > 0 {
@@ -428,7 +429,7 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
 			}
 		} else {
 			var addrHash common.Hash
-			copy(addrHash[:], bucket)
+			copy(addrHash[:], bucket[1:])
 			var keyHash common.Hash
 			copy(keyHash[:], key)
 			m, ok := tds.storageUpdates[addrHash]
@@ -436,7 +437,7 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
 				m = make(map[common.Hash][]byte)
 				tds.storageUpdates[addrHash] = m
 			}
-			m[keyHash] = value
+			m[keyHash] = common.CopyBytes(value)
 		}
 		return nil
 	}); err != nil {

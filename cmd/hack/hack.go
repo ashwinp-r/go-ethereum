@@ -673,9 +673,9 @@ func testRewind() {
 	check(err)
 	err = tds.Rebuild()
 	check(err)
-	err = tds.UnwindTo(currentBlockNr - 80)
+	err = tds.UnwindTo(currentBlockNr - 90)
 	check(err)
-	rewoundBlock := bc.GetBlockByNumber(currentBlockNr - 80)
+	rewoundBlock := bc.GetBlockByNumber(currentBlockNr - 90)
 	fmt.Printf("Rewound block number: %d\n", rewoundBlock.NumberU64())
 	fmt.Printf("Rewound block root hash: %x\n", rewoundBlock.Root())
 	rewoundRoot, err := tds.TrieRoot()
@@ -818,6 +818,13 @@ func testDifficulty() {
 	fmt.Printf("Block 1 difficulty: %d\n", d1)
 }
 
+func testRewindTests() {
+	fmt.Printf("1 bucket\n")
+	ethdb.TestRewindData1Bucket()
+	fmt.Printf("2 buckets\n")
+	ethdb.TestRewindData2Bucket()
+}
+
 func main() {
 	flag.Parse()
     if *cpuprofile != "" {
@@ -845,5 +852,6 @@ func main() {
  	//printFullNodeRLPs()
  	//testStartup()
  	//testDifficulty()
+ 	//testRewindTests()
 }
 

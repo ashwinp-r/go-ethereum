@@ -1021,6 +1021,7 @@ func (m *mutation) NewBatch() Mutation {
 		db: m,
 		puts: llrb.New(),
 		hashes: make(map[uint32]Hash),
+		suffixkeys: make(map[uint64]map[string][][]byte),
 	}
 	return mm
 }
