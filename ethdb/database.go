@@ -511,17 +511,12 @@ func (db *LDBDatabase) LDB() *leveldb.DB {
 }
 
 type PutItem struct {
-	bucket, key, value []byte
+	key, value []byte
 }
 
 func (a *PutItem) Less(b llrb.Item) bool {
 	bi := b.(*PutItem)
-	c := bytes.Compare(a.bucket, bi.bucket)
-	if c == 0 {
-		return bytes.Compare(a.key, bi.key) < 0
-	} else {
-		return c < 0
-	}
+	return bytes.Compare(a.key, bi.key) < 0
 }
 
 type Hash struct {
@@ -529,7 +524,7 @@ type Hash struct {
 }
 
 type mutation struct {
-	puts *llrb.LLRB
+	puts map[string]*llrb.LLRB // Map buckets to RB tree containing items
 	suffixkeys map[uint64]map[string][][]byte
 	hashes map[uint32]Hash
 
@@ -540,7 +535,7 @@ type mutation struct {
 func (db *LDBDatabase) NewBatch() Mutation {
 	m := &mutation{
 		db: db,
-		puts: llrb.New(),
+		puts: make(map[string]*llrb.LLRB),
 		suffixkeys: make(map[uint64]map[string][][]byte),
 		hashes: make(map[uint32]Hash),
 	}
@@ -550,19 +545,23 @@ func (db *LDBDatabase) NewBatch() Mutation {
 func (m *mutation) getMem(bucket, key []byte) ([]byte, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	i := m.puts.Get(&PutItem{bucket: bucket, key: key})
-	if i == nil {
+	if t, ok := m.puts[string(bucket)]; ok {
+		i := t.Get(&PutItem{key: key})
+		if i == nil {
+			return nil, false
+		}
+		if item, ok := i.(*PutItem); ok {
+			if item.value == nil {
+				return nil, true
+			}
+			v := make([]byte, len(item.value))
+			copy(v, item.value)
+			return v, true
+		}
+		return nil, false
+	} else {
 		return nil, false
 	}
-	if item, ok := i.(*PutItem); ok {
-		if item.value == nil {
-			return nil, true
-		}
-		v := make([]byte, len(item.value))
-		copy(v, item.value)
-		return v, true
-	}
-	return nil, false
 }
 
 // Can only be called from the worker thread
@@ -580,13 +579,15 @@ func (m *mutation) Get(bucket, key []byte) ([]byte, error) {
 }
 
 func (m *mutation) getNoLock(bucket, key []byte) ([]byte, error) {
-	i := m.puts.Get(&PutItem{bucket: bucket, key: key})
-	if i != nil {
-		if item, ok := i.(*PutItem); ok {
-			if item.value == nil {
-				return nil, ErrKeyNotFound
+	if t, ok := m.puts[string(bucket)]; ok {
+		i := t.Get(&PutItem{key: key})
+		if i != nil {
+			if item, ok := i.(*PutItem); ok {
+				if item.value == nil {
+					return nil, ErrKeyNotFound
+				}
+				return common.CopyBytes(item.value), nil
 			}
-			return common.CopyBytes(item.value), nil
 		}
 	}
 	if m.db != nil {
@@ -598,7 +599,10 @@ func (m *mutation) getNoLock(bucket, key []byte) ([]byte, error) {
 func (m *mutation) hasMem(bucket, key []byte) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.puts.Has(&PutItem{bucket: bucket, key: key})
+	if t, ok := m.puts[string(bucket)]; ok {
+		return t.Has(&PutItem{key: key})
+	}
+	return false
 }
 
 func (m *mutation) Has(bucket, key []byte) (bool, error) {
@@ -627,7 +631,13 @@ func (m *mutation) Put(bucket, key []byte, value []byte) error {
 	copy(v, value)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.puts.ReplaceOrInsert(&PutItem{bucket: bb, key: k, value: v})
+	var t *llrb.LLRB
+	var ok bool
+	if t, ok = m.puts[string(bb)]; !ok {
+		t = llrb.New()
+		m.puts[string(bb)] = t
+	}
+	t.ReplaceOrInsert(&PutItem{key: k, value: v})
 	return nil
 }
 
@@ -648,11 +658,21 @@ func (m *mutation) PutS(bucket, hBucket, key, value []byte, timestamp uint64) er
 	suffix_m[string(hBucket)] = suffix_l
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.puts.ReplaceOrInsert(&PutItem{bucket: hBucket, key: composite, value: value})
+	var ht *llrb.LLRB
+	if ht, ok = m.puts[string(hBucket)]; !ok {
+		ht = llrb.New()
+		m.puts[string(hBucket)] = ht
+	}
+	ht.ReplaceOrInsert(&PutItem{key: composite, value: value})
+	var t *llrb.LLRB
+	if t, ok = m.puts[string(bucket)]; !ok {
+		t = llrb.New()
+		m.puts[string(bucket)] = t
+	}
 	if len(value) == 0 {
-		m.puts.ReplaceOrInsert(&PutItem{bucket: bucket, key: key, value: nil})
+		t.ReplaceOrInsert(&PutItem{key: key, value: nil})
 	} else {
-		m.puts.ReplaceOrInsert(&PutItem{bucket: bucket, key: key, value: value})
+		t.ReplaceOrInsert(&PutItem{key: key, value: value})
 	}
 	return nil
 }
@@ -662,7 +682,13 @@ func (m *mutation) MultiPut(tuples ...[]byte) error {
 	defer m.mu.Unlock()
 	l := len(tuples)
 	for i := 0; i < l; i += 3 {
-		m.puts.ReplaceOrInsert(&PutItem{bucket: tuples[i], key: tuples[i+1], value: tuples[i+2]})
+		var t *llrb.LLRB
+		var ok bool
+		if t, ok = m.puts[string(tuples[i])]; !ok {
+			t = llrb.New()
+			m.puts[string(tuples[i])] = t
+		}
+		t.ReplaceOrInsert(&PutItem{key: tuples[i+1], value: tuples[i+2]})
 	}
 	return nil
 }
@@ -670,19 +696,25 @@ func (m *mutation) MultiPut(tuples ...[]byte) error {
 func (m *mutation) BatchSize() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.puts.Len()
+	size := 0
+	for _, t := range m.puts {
+		size += t.Len()
+	}
+	return size
 }
 
 func (m *mutation) getAsOfMem(hBucket, key []byte, timestamp uint64) ([]byte, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	var t *llrb.LLRB
+	var ok bool
+	if t, ok = m.puts[string(hBucket)]; !ok {
+		return nil, false
+	}
 	composite, _ := compositeKeySuffix(key, timestamp)
 	var dat []byte
-	m.puts.AscendGreaterOrEqual1(&PutItem{bucket: hBucket, key: composite}, func(i llrb.Item) bool {
+	t.AscendGreaterOrEqual1(&PutItem{key: composite}, func(i llrb.Item) bool {
 		item := i.(*PutItem)
-		if !bytes.Equal(item.bucket, hBucket) {
-			return false
-		}
 		if !bytes.HasPrefix(item.key, key) {
 			return false
 		}
@@ -714,15 +746,17 @@ func (m *mutation) walkMem(bucket, startkey []byte, fixedbits uint, walker Walke
 	fixedbytes, mask := bytesmask(fixedbits)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	var t *llrb.LLRB
+	var ok bool
+	if t, ok = m.puts[string(bucket)]; !ok {
+		return nil
+	}
 	for nextkey := startkey; nextkey != nil; {
 		from := nextkey
 		nextkey = nil
 		var extErr error
-		m.puts.AscendGreaterOrEqual1(&PutItem{bucket: bucket, key: from}, func(i llrb.Item) bool {
+		t.AscendGreaterOrEqual1(&PutItem{key: from}, func(i llrb.Item) bool {
 			item := i.(*PutItem)
-			if !bytes.Equal(item.bucket, bucket) {
-				return false
-			}
 			if item.value == nil {
 				return true
 			}
@@ -769,111 +803,6 @@ func (m *mutation) MultiWalk(bucket []byte, startkeys [][]byte, fixedbits []uint
 	}
 }
 
-func (m *mutation) Walk1(bucket, startkey []byte, fixedbits uint, walker WalkerFunc) error {
-	if m.db == nil {
-		return m.walkMem(bucket, startkey, fixedbits, walker)
-	} else {
-		fixedbytes, mask := bytesmask(fixedbits)
-		m.mu.RLock()
-		defer m.mu.RUnlock()
-		start := startkey
-		stop := false
-		err := m.db.Walk(bucket, startkey, fixedbits, func (k, v []byte) ([]byte, WalkAction, error) {
-			nextkey := start
-			putsIt := m.puts.NewSeekIterator()
-			var action WalkAction
-			var err error
-			var wr []byte
-			shadowed := false // Whether the current DB item has been shadowed by the mutation
-			for i := putsIt.SeekTo(&PutItem{bucket: bucket, key: nextkey}); i != nil; i = putsIt.SeekTo(&PutItem{bucket: bucket, key: nextkey}) {
-				item := i.(*PutItem)
-				nextkey = item.key
-				if !bytes.Equal(item.bucket, bucket) {
-					break
-				}
-				c := bytes.Compare(item.key, k)
-				if c == 0 {
-					shadowed = true
-					start = k
-				} else if c > 0 {
-					break
-				}
-				if item.value == nil {
-					// Item has been deleted
-					continue
-				}
-				if fixedbits > 0 && (!bytes.Equal(item.key[:fixedbytes-1], startkey[:fixedbytes-1]) || (item.key[fixedbytes-1]&mask)!=(startkey[fixedbytes-1]&mask)) {
-					break
-				}
-				wr, action, err = walker(item.key, item.value)
-				if err != nil {
-					return nil, WalkActionStop, err
-				}
-				if action == WalkActionStop {
-					stop = true
-					return nil, WalkActionStop, nil
-				} else if action == WalkActionNext {
-					continue
-				} else if action == WalkActionSeek {
-					nextkey = wr
-					continue
-				} else {
-					panic("Wrong action")
-				}
-			}
-			if shadowed {
-				return start, WalkActionNext, nil
-			}
-			if action == WalkActionSeek && bytes.Compare(wr, k) > 0 {
-				return wr, WalkActionSeek, nil
-			}
-			start, action, err = walker(k, v)
-			if action == WalkActionNext {
-				start = k
-			} else if action == WalkActionStop {
-				stop = true
-			}
-			return start, action, err
-		})
-		if err != nil {
-			return err
-		}
-		if stop {
-			return nil
-		}
-		putsIt := m.puts.NewSeekIterator()
-		nextkey := start
-		for i := putsIt.SeekTo(&PutItem{bucket: bucket, key: nextkey}); i != nil; i = putsIt.SeekTo(&PutItem{bucket: bucket, key: nextkey}) {
-			item := i.(*PutItem)
-			if !bytes.Equal(item.bucket, bucket) {
-				break
-			}
-			if item.value == nil {
-				continue
-			}
-			if fixedbits > 0 && (!bytes.Equal(item.key[:fixedbytes-1], startkey[:fixedbytes-1]) || (item.key[fixedbytes-1]&mask)!=(startkey[fixedbytes-1]&mask)) {
-				continue
-			}
-			wr, action, err := walker(item.key, item.value)
-			if err != nil {
-				return err
-			}
-			if action == WalkActionStop {
-				break
-			} else if action == WalkActionNext {
-				// When nextkey does not change, it will automatically go to the next item
-				continue
-			} else if action == WalkActionSeek {
-				nextkey = wr
-				continue
-			} else {
-				panic("Wrong action")
-			}
-		}
-		return nil
-	}
-}
-
 func (m *mutation) WalkAsOf(hBucket, startkey []byte, fixedbits uint, timestamp uint64, walker func([]byte, []byte) (bool, error)) error {
 	return walkAsOf(m, hBucket, startkey, fixedbits, timestamp, walker)
 }
@@ -891,36 +820,53 @@ func (m *mutation) Delete(bucket, key []byte) error {
 	defer m.mu.Unlock()
 	bb := make([]byte, len(bucket))
 	copy(bb, bucket)
+	var t *llrb.LLRB
+	var ok bool
+	if t, ok = m.puts[string(bb)]; !ok {
+		t = llrb.New()
+		m.puts[string(bb)] = t
+	}
 	k := make([]byte, len(key))
 	copy(k, key)
-	m.puts.ReplaceOrInsert(&PutItem{bucket: bb, key: k, value: nil})
+	t.ReplaceOrInsert(&PutItem{key: k, value: nil})
 	return nil
 }
 
 // Deletes all keys with specified suffix from all the buckets
 func (m *mutation) DeleteTimestamp(timestamp uint64) error {
-	items := []*PutItem{}
 	suffix := encodeTimestamp(timestamp)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var t *llrb.LLRB
+	var ok bool
+	if t, ok = m.puts[string(SuffixBucket)]; !ok {
+		t = llrb.New()
+		m.puts[string(SuffixBucket)] = t
+	}
 	err := m.Walk(SuffixBucket, suffix, uint(8*len(suffix)), func(k, v []byte) ([]byte, WalkAction, error) {
 		hBucket := k[len(suffix):]
 		keycount := int(binary.BigEndian.Uint32(v))
+		var ht *llrb.LLRB
+		var ok bool
+		if keycount > 0 {
+			hBucketStr := string(common.CopyBytes(hBucket))
+			if ht, ok = m.puts[hBucketStr]; !ok {
+				ht = llrb.New()
+				m.puts[hBucketStr] = ht
+			}
+		}
 		for i, ki := 4, 0; ki < keycount; ki++ {
 			l := int(v[i])
 			i++
 			kk := make([]byte, l+len(suffix))
 			copy(kk, v[i:i+l])
 			copy(kk[l:], suffix)
-			items = append(items, &PutItem{bucket: common.CopyBytes(hBucket), key: kk, value: nil})
+			ht.ReplaceOrInsert(&PutItem{key: kk, value: nil})
 			i += l
 		}
-		items = append(items, &PutItem{bucket: SuffixBucket, key: common.CopyBytes(k), value: nil})
+		t.ReplaceOrInsert(&PutItem{key: common.CopyBytes(k), value: nil})
 		return nil, WalkActionNext, nil
 	})
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, item := range items {
-		m.puts.ReplaceOrInsert(item)
-	}
 	return err
 }
 
@@ -930,6 +876,14 @@ func (m *mutation) Commit() error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	var t *llrb.LLRB
+	var ok bool
+	if len(m.suffixkeys) > 0 {
+		if t, ok = m.puts[string(SuffixBucket)]; !ok {
+			t = llrb.New()
+			m.puts[string(SuffixBucket)] = t
+		}
+	}
 	for timestamp, suffix_m := range m.suffixkeys {
 		suffix := encodeTimestamp(timestamp)
 		for bucketStr, suffix_l := range suffix_m {
@@ -961,26 +915,32 @@ func (m *mutation) Commit() error {
 				copy(dv[i:], key)
 				i += len(key)
 			}
-			m.puts.ReplaceOrInsert(&PutItem{bucket: SuffixBucket, key: suffixkey, value: dv})
+			t.ReplaceOrInsert(&PutItem{key: suffixkey, value: dv})
 		}
 	}
 	m.suffixkeys = make(map[uint64]map[string][][]byte)
-	tuples := make([][]byte, m.puts.Len()*3)
+	size := 0
+	for _, t := range m.puts {
+		size += t.Len()
+	}
+	tuples := make([][]byte, size*3)
 	var index int
-	m.puts.AscendGreaterOrEqual1(&PutItem{}, func (i llrb.Item) bool {
-		item := i.(*PutItem)
-		tuples[index] = item.bucket
-		index++
-		tuples[index] = item.key
-		index++
-		tuples[index] = item.value
-		index++
-		return true
-	})
+	for bucketStr, bt := range m.puts {
+		bt.AscendGreaterOrEqual1(&PutItem{}, func (i llrb.Item) bool {
+			item := i.(*PutItem)
+			tuples[index] = []byte(bucketStr)
+			index++
+			tuples[index] = item.key
+			index++
+			tuples[index] = item.value
+			index++
+			return true
+		})
+	}
 	if putErr := m.db.MultiPut(tuples...); putErr != nil {
 		return putErr
 	}
-	m.puts = llrb.New()
+	m.puts = make(map[string]*llrb.LLRB)
 	for index, h := range m.hashes {
 		m.db.PutHash(index, h.hash[:])
 	}
@@ -992,23 +952,29 @@ func (m *mutation) Rollback() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.suffixkeys = make(map[uint64]map[string][][]byte)
-	m.puts = llrb.New()
+	m.puts = make(map[string]*llrb.LLRB)
 	m.hashes = make(map[uint32]Hash)
 }
 
 func (m *mutation) Keys() [][]byte {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	pairs := make([][]byte, 2*m.puts.Len())
+	size := 0
+	for _, t := range m.puts {
+		size += t.Len()
+	}
+	pairs := make([][]byte, 2*size)
 	idx := 0
-	m.puts.AscendGreaterOrEqual1(&PutItem{}, func(i llrb.Item) bool {
-		item := i.(*PutItem)
-		pairs[idx] = item.bucket
-		idx++
-		pairs[idx] = item.key
-		idx++
-		return true
-	})
+	for bucketStr, bt := range m.puts {
+		bt.AscendGreaterOrEqual1(&PutItem{}, func(i llrb.Item) bool {
+			item := i.(*PutItem)
+			pairs[idx] = []byte(bucketStr)
+			idx++
+			pairs[idx] = item.key
+			idx++
+			return true
+		})
+	}
 	return pairs
 }
 
@@ -1019,7 +985,7 @@ func (m *mutation) Close() {
 func (m *mutation) NewBatch() Mutation {
 	mm := &mutation{
 		db: m,
-		puts: llrb.New(),
+		puts: make(map[string]*llrb.LLRB),
 		hashes: make(map[uint32]Hash),
 		suffixkeys: make(map[uint64]map[string][][]byte),
 	}

@@ -125,18 +125,27 @@ func multiWalkAsOf(db Getter, bucket []byte, startkeys [][]byte, fixedbits []uin
 // timestapSrc is the current timestamp, and timestamp Dst is where we rewind
 func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, key, value []byte) error) error {
 	// Collect list of buckets and keys that need to be considered
-	m := llrb.New()
+	m := make(map[string]*llrb.LLRB)
 	suffixSrc := encodeTimestamp(timestampSrc)
 	if err := db.Walk(SuffixBucket, suffixSrc, 0, func (k, v []byte) ([]byte, WalkAction, error) {
 		timestamp, bucket := decodeTimestamp(k)
 		if timestamp <= timestampDst {
 			return nil, WalkActionStop, nil
 		}
+		var t *llrb.LLRB
+		var ok bool
 		keycount := int(binary.BigEndian.Uint32(v))
+		if keycount > 0 {
+			bucketStr := string(common.CopyBytes(bucket))
+			if t, ok = m[bucketStr]; !ok {
+				t = llrb.New()
+				m[bucketStr] = t
+			}
+		}
 		for i, ki := 4, 0; ki < keycount; ki++ {
 			l := int(v[i])
 			i++
-			m.ReplaceOrInsert(&PutItem{bucket: common.CopyBytes(bucket), key: common.CopyBytes(v[i:i+l]), value: nil})
+			t.ReplaceOrInsert(&PutItem{key: common.CopyBytes(v[i:i+l]), value: nil})
 			i += l
 		}
 		return nil, WalkActionNext, nil
@@ -144,60 +153,58 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 		return err
 	}
 	suffixDst := encodeTimestamp(timestampDst)
-	it := m.NewSeekIterator()
-	min, _ := m.Min().(*PutItem)
-	if min == nil {
-		return nil
-	}
-	var item *PutItem = it.SeekTo(min).(*PutItem)
-	seeking := false
-	for !seeking && item != nil {
-		bucket := item.bucket
-		startkey := make([]byte, len(item.key) + len(suffixDst))
-		copy(startkey[:], item.key)
-		copy(startkey[len(item.key):], suffixDst)
-		seeking = true
-		if err := db.Walk(bucket, startkey, 0, func (k, v []byte) ([]byte, WalkAction, error) {
-			// Check if we found the "item" in the database
-			if bytes.HasPrefix(k, item.key) {
-				item.value = common.CopyBytes(v)
-				item, _ = it.SeekTo(item).(*PutItem)
-			} else {
-				// Find the next item that could match
-				for bytes.Compare(item.key, k[:len(item.key)]) < 0 {
-					item, _ = it.SeekTo(item).(*PutItem)
-					if item == nil || !bytes.Equal(item.bucket, bucket) {
-						seeking = false
-						return nil, WalkActionStop, nil
-					}
-				}
-				if bytes.HasPrefix(k, item.key) && bytes.Compare(k[len(item.key):], suffixDst) <= 0 {
+	for bucketStr, t := range m {
+		bucket := []byte(bucketStr)
+		it := t.NewSeekIterator()
+		min, _ := t.Min().(*PutItem)
+		if min == nil {
+			return nil
+		}
+		var item *PutItem = it.SeekTo(min).(*PutItem)
+		seeking := false
+		for !seeking && item != nil {
+			startkey := make([]byte, len(item.key) + len(suffixDst))
+			copy(startkey[:], item.key)
+			copy(startkey[len(item.key):], suffixDst)
+			seeking = true
+			if err := db.Walk(bucket, startkey, 0, func (k, v []byte) ([]byte, WalkAction, error) {
+				// Check if we found the "item" in the database
+				if bytes.HasPrefix(k, item.key) {
 					item.value = common.CopyBytes(v)
 					item, _ = it.SeekTo(item).(*PutItem)
+				} else {
+					// Find the next item that could match
+					for bytes.Compare(item.key, k[:len(item.key)]) < 0 {
+						item, _ = it.SeekTo(item).(*PutItem)
+						if item == nil {
+							seeking = false
+							return nil, WalkActionStop, nil
+						}
+					}
+					if bytes.HasPrefix(k, item.key) && bytes.Compare(k[len(item.key):], suffixDst) <= 0 {
+						item.value = common.CopyBytes(v)
+						item, _ = it.SeekTo(item).(*PutItem)
+					}
 				}
+				if item == nil {
+					seeking = false
+					return nil, WalkActionStop, nil
+				}
+				wr := make([]byte, len(item.key) + len(suffixDst))
+				copy(wr, item.key)
+				copy(wr[len(item.key):], suffixDst)
+				seeking = true
+				return wr, WalkActionSeek, nil
+			}); err != nil {
+				return err
 			}
-			if item == nil {
-				seeking = false
-				return nil, WalkActionStop, nil
-			}
-			if !bytes.Equal(item.bucket, bucket) {
-				seeking = false
-				return nil, WalkActionStop, nil
-			}
-			wr := make([]byte, len(item.key) + len(suffixDst))
-			copy(wr, item.key)
-			copy(wr[len(item.key):], suffixDst)
-			seeking = true
-			return wr, WalkActionSeek, nil
-		}); err != nil {
-			return err
 		}
+		t.AscendGreaterOrEqual1(min, func(i llrb.Item) bool {
+			item := i.(*PutItem)
+			df(bucket, item.key, item.value)
+			return true
+		})
 	}
-	m.AscendGreaterOrEqual1(min, func(i llrb.Item) bool {
-		item := i.(*PutItem)
-		df(item.bucket, item.key, item.value)
-		return true
-	})
 	return nil
 }
 

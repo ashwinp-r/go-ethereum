@@ -23,7 +23,7 @@ import (
 func NewMemDatabase() Mutation {
 	m := &mutation{
 		db: nil,
-		puts: llrb.New(),
+		puts: make(map[string]*llrb.LLRB),
 		suffixkeys: make(map[uint64]map[string][][]byte),
 		hashes: make(map[uint32]Hash),
 	}
