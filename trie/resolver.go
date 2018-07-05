@@ -109,7 +109,7 @@ func (t *Trie) rebuildFromHashes(dbr DatabaseReader) (root node, roothash hashNo
 	if root != nil {
 		hasher.hash(root, true, rootHash[:])
 	}
-	log.Debug("rebuildFromHashes took %v\n", time.Since(startTime))
+	log.Debug(fmt.Sprintf("rebuildFromHashes took %v\n", time.Since(startTime)))
 	return root, hashNode(rootHash[:])
 }
 

@@ -412,6 +412,7 @@ func (tds *TrieDbState) SetBlockNr(blockNr uint64) {
 }
 
 func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
+	batch := tds.db.NewBatch()
 	if err := tds.db.RewindData(tds.blockNr, blockNr, func (bucket, key, value []byte) error {
 		//fmt.Printf("Rewind with bucket %x key %x value %x\n", bucket, key, value)
 		var err error
@@ -423,13 +424,22 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
 				if err != nil {
 					return err
 				}
+				err = batch.Put(AccountsBucket, key, value)
+				if err != nil {
+					return err
+				}
 			} else {
 				tds.accountUpdates[addrHash] = nil
 				tds.deleted[addrHash] = struct{}{}
+				err = batch.Delete(AccountsBucket, key)
+				if err != nil {
+					return err
+				}
 			}
 		} else {
+			currentBucket := bucket[1:]
 			var addrHash common.Hash
-			copy(addrHash[:], bucket[1:])
+			copy(addrHash[:], currentBucket)
 			var keyHash common.Hash
 			copy(keyHash[:], key)
 			m, ok := tds.storageUpdates[addrHash]
@@ -437,13 +447,21 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
 				m = make(map[common.Hash][]byte)
 				tds.storageUpdates[addrHash] = m
 			}
-			m[keyHash] = common.CopyBytes(value)
+			m[keyHash] = value
+			if len(value) > 0 {
+				batch.Put(currentBucket, key, value)
+			} else {
+				batch.Delete(currentBucket, key)
+			}
 		}
 		return nil
 	}); err != nil {
 		return err
 	}
 	if _, err := tds.TrieRoot(); err != nil {
+		return err
+	}
+	if err := batch.Commit(); err != nil {
 		return err
 	}
 	tds.blockNr = blockNr

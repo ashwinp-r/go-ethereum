@@ -1076,14 +1076,28 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		parentRoot := parent.Root()
 		bc.db.DeleteTimestamp(block.NumberU64())
 		if bc.trieDbState == nil || readBlockNr == 0 || !bytes.Equal(root[:], parentRoot[:]) {
-			//fmt.Printf("New StateDB created for %d block\n", readBlockNr)
-			log.Info("New StateDB created", "block", readBlockNr)
-			bc.trieDbState, err = state.NewTrieDbState(parent.Root(), bc.db, readBlockNr)
-			if err != nil {
-				return i, events, coalescedLogs, err
-			}
-			if err := bc.trieDbState.Rebuild(); err != nil {
-				return i, events, coalescedLogs, err
+			if bc.trieDbState != nil && readBlockNr != 0 {
+				log.Info("Rewinding", "to block", readBlockNr)
+				if err = bc.db.Commit(); err != nil {
+					log.Error("Could not commit chainDb before rewinding", err)
+					bc.db.Rollback()
+					return 0, events, coalescedLogs, err
+				}
+				bc.trieDbState.UnwindTo(readBlockNr)
+				if err = bc.db.Commit(); err != nil {
+					log.Error("Could not commit chainDb before rewinding", err)
+					bc.db.Rollback()
+					return 0, events, coalescedLogs, err
+				}
+			} else {
+				log.Info("New StateDB created", "block", readBlockNr)
+				bc.trieDbState, err = state.NewTrieDbState(parent.Root(), bc.db, readBlockNr)
+				if err != nil {
+					return i, events, coalescedLogs, err
+				}
+				if err := bc.trieDbState.Rebuild(); err != nil {
+					return i, events, coalescedLogs, err
+				}
 			}
 		} else {
 			bc.trieDbState.SetBlockNr(readBlockNr)
@@ -1214,6 +1228,7 @@ func countTransactions(chain []*types.Block) (c int) {
 // to be part of the new canonical chain and accumulates potential missing transactions and post an
 // event about them
 func (bc *BlockChain) reorg(oldBlock, newBlock *types.Block) error {
+	fmt.Printf("reorg %d %d\n", oldBlock.NumberU64(), newBlock.NumberU64())
 	var (
 		newChain    types.Blocks
 		oldChain    types.Blocks
