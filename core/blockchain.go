@@ -1067,6 +1067,17 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		}
 		readBlockNr := parent.NumberU64()
 		var root common.Hash
+		if bc.trieDbState == nil {
+			currentBlockNr := bc.CurrentBlock().NumberU64()
+			log.Info("Creating StateDB from latest state", "block", currentBlockNr)
+			bc.trieDbState, err = state.NewTrieDbState(bc.CurrentBlock().Header().Root, bc.db, currentBlockNr)
+			if err != nil {
+				return i, events, coalescedLogs, err
+			}
+			if err := bc.trieDbState.Rebuild(); err != nil {
+				return i, events, coalescedLogs, err
+			}
+		}
 		if bc.trieDbState != nil {
 			root, err = bc.trieDbState.TrieRoot()
 			if err != nil {
