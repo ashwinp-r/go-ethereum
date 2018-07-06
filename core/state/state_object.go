@@ -158,7 +158,7 @@ func (self *stateObject) GetState(key common.Hash) common.Hash {
 		return value
 	}
 	// Load from DB in case it is missing.
-	enc, err := self.db.stateReader.ReadAccountStorage(self.addrHash, &key)
+	enc, err := self.db.stateReader.ReadAccountStorage(self.address, &key)
 	if err != nil {
 		self.setError(err)
 		return common.Hash{}
@@ -186,7 +186,7 @@ func (self *stateObject) setState(key, value common.Hash) {
 // updateTrie writes cached storage modifications into the object's storage trie.
 func (self *stateObject) updateTrie(stateWriter StateWriter) error {
 	for key, value := range self.dirtyStorage {
-		if err := stateWriter.WriteAccountStorage(self.addrHash, &key, &value); err != nil {
+		if err := stateWriter.WriteAccountStorage(self.address, &key, &value); err != nil {
 			return err
 		}
 	}

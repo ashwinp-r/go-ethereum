@@ -52,6 +52,21 @@ func walkAsOf(db Getter, bucket, startkey []byte, fixedbits uint, timestamp uint
 	return err
 }
 
+func walkLatest(db Getter, bucket []byte, walker func ([]byte, []byte) (bool, error)) error {
+	l := 32
+	keyBuffer := make([]byte, l+len(EndSuffix))
+	err := db.Walk(bucket, []byte{}, 0, func(k, v []byte) ([]byte, WalkAction, error) {
+		goOn, err := walker(k[:l], v)
+		if err != nil || !goOn {
+			return nil, WalkActionStop, err
+		}
+		copy(keyBuffer, k[:l])
+		copy(keyBuffer[l:], EndSuffix)
+		return keyBuffer[:], WalkActionSeek, nil
+	})
+	return err
+}
+
 // keys is sorted, prefixes strightly containing each other removed
 func multiWalkAsOf(db Getter, bucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
 	if len(startkeys) == 0 {
