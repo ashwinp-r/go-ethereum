@@ -827,6 +827,17 @@ func testRewindTests() {
 	ethdb.TestRewindData2Bucket()
 }
 
+func testTimeSlice(timestamp uint64) {
+	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024)
+	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata", 1024)
+	check(err)
+	defer ethDb.Close()
+	startTime := time.Now()
+	_, err = ethDb.NewTimeSlice(timestamp)
+	fmt.Printf("Time slice created in %v\n", time.Since(startTime))
+	check(err)
+}
+
 func main() {
 	flag.Parse()
     if *cpuprofile != "" {
@@ -846,7 +857,7 @@ func main() {
  	//bucketStats(db)
  	//mychart()
  	//testRebuild()
- 	testRewind()
+ 	//testRewind()
  	//hashFile()
  	//buildHashFromFile()
  	//testResolve()
@@ -855,5 +866,6 @@ func main() {
  	//testStartup()
  	//testDifficulty()
  	//testRewindTests()
+ 	testTimeSlice(5863120)
 }
 
