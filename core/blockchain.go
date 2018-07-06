@@ -1095,8 +1095,15 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 					return 0, events, coalescedLogs, err
 				}
 				bc.trieDbState.UnwindTo(readBlockNr)
+				root, err := bc.trieDbState.TrieRoot()
+				if err != nil {
+					return 0, events, coalescedLogs, err
+				}
+				if root != parentRoot {
+					return 0, events, coalescedLogs, fmt.Errorf("Wrong root %x, expected %x\n", root, parentRoot)
+				}
 				if err = bc.db.Commit(); err != nil {
-					log.Error("Could not commit chainDb before rewinding", err)
+					log.Error("Could not commit chainDb after rewinding", err)
 					bc.db.Rollback()
 					return 0, events, coalescedLogs, err
 				}
