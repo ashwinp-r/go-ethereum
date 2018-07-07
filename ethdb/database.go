@@ -532,9 +532,9 @@ type mutation struct {
 	db Database
 }
 
-func (db *LDBDatabase) NewTimeSlice(timestamp uint64) (*mutation, error) {
+func (db *LDBDatabase) ResetTo(timestamp uint64) error {
 	m := &mutation{
-		db: nil, // Don't want to read from underlying DB
+		db: db, // Don't want to read from underlying DB
 		puts: make(map[string]*llrb.LLRB),
 		suffixkeys: make(map[uint64]map[string][][]byte),
 		hashes: make(map[uint32]Hash),
@@ -549,21 +549,16 @@ func (db *LDBDatabase) NewTimeSlice(timestamp uint64) (*mutation, error) {
 		})
 		return err
 	}); err != nil {
-		return nil, err
+		return err
 	}
-	var t *llrb.LLRB
-	var ok bool
-	if t, ok = m.puts["AT"]; !ok {
-		t = llrb.New()
-		m.puts["AT"] = t
+	bucketList = append(bucketList, []byte("AT"))
+	for _, bucket := range bucketList {
+		db.DeleteBucket(bucket)
 	}
 	startkey := make([]byte, 32)
-	if err := walkAsOf(db, []byte("hAT"), startkey, 0, timestamp, func(key []byte, value []byte) (bool, error) {
-		t.ReplaceOrInsert(&PutItem{key: common.CopyBytes(key), value: common.CopyBytes(value)})
-		return true, nil
-	}); err != nil {
-		return nil, err
-	}
+	itemCount := 0
+	var t *llrb.LLRB
+	var ok bool
 	for _, bucket := range bucketList {
 		if t, ok = m.puts[string(bucket)]; !ok {
 			t = llrb.New()
@@ -571,12 +566,28 @@ func (db *LDBDatabase) NewTimeSlice(timestamp uint64) (*mutation, error) {
 		}	
 		if err := walkAsOf(db, append([]byte("h"), bucket...), startkey, 0, timestamp, func(key []byte, value []byte) (bool, error) {
 			t.ReplaceOrInsert(&PutItem{key: common.CopyBytes(key), value: common.CopyBytes(value)})
+			itemCount++
+			if itemCount >= 100000 {
+				if err := m.Commit(); err != nil {
+					return false, err
+				}
+				itemCount = 0
+				if t, ok = m.puts[string(bucket)]; !ok {
+					t = llrb.New()
+					m.puts[string(bucket)] = t
+				}
+			}
 			return true, nil
 		}); err != nil {
-			return nil, err
+			return err
 		}		
 	}
-	return m, nil
+	if itemCount > 0 {
+		if err := m.Commit(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (db *LDBDatabase) NewBatch() Mutation {

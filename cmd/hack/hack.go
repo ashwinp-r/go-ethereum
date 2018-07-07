@@ -34,6 +34,7 @@ var emptyCodeHash = crypto.Keccak256(nil)
 var emptyRoot = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421").Bytes()
 
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile `file`")
+var reset = flag.Int("reset", -1, "reset to given block number")
 
 func bucketList(db *bolt.DB) [][]byte {
 	bucketList := [][]byte{}
@@ -838,14 +839,21 @@ var (
 	tdSuffix            = []byte("t")
 )
 
-func testTimeSlice(timestamp uint64) {
+func testReset(timestamp uint64) {
 	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024)
 	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata", 1024)
 	check(err)
 	defer ethDb.Close()
 	startTime := time.Now()
-	_, err = ethDb.NewTimeSlice(timestamp)
+	err = ethDb.ResetTo(timestamp)
 	fmt.Printf("Time slice created in %v\n", time.Since(startTime))
+	check(err)
+	m := ethDb.NewBatch()
+	hash := rawdb.ReadCanonicalHash(m, timestamp)
+	rawdb.WriteHeadBlockHash(m, hash)
+	rawdb.WriteHeadFastBlockHash(m, hash)
+	rawdb.WriteHeadHeaderHash(m, hash)
+	err = m.Commit()
 	check(err)
 }
 
@@ -877,6 +885,8 @@ func main() {
  	//testStartup()
  	//testDifficulty()
  	//testRewindTests()
- 	testTimeSlice(5863120)
+ 	if *reset != -1 {
+ 		testReset(uint64(*reset))
+ 	}
 }
 
