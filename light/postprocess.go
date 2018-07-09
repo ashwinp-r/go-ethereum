@@ -149,7 +149,7 @@ func (c *ChtIndexerBackend) Reset(section uint64, lastSectionHead common.Hash) e
 		root = GetChtRoot(c.diskdb, section-1, lastSectionHead)
 	}
 
-	c.trie = trie.New(root, ChtTablePrefix, false)
+	c.trie = trie.New(root, ChtTablePrefix, nil, false)
 	c.section = section
 	return nil
 }
@@ -235,7 +235,7 @@ func (b *BloomTrieIndexerBackend) Reset(section uint64, lastSectionHead common.H
 	if section > 0 {
 		root = GetBloomTrieRoot(b.diskdb, section-1, lastSectionHead)
 	}
-	b.trie = trie.New(root, BloomTrieTablePrefix, false)
+	b.trie = trie.New(root, BloomTrieTablePrefix, nil, false)
 	b.section = section
 	return nil
 }

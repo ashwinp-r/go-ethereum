@@ -71,8 +71,10 @@ type Trie struct {
 	root         	node
 	originalRoot 	common.Hash
 
-	// Prefix to form the database key
-	prefix 			[]byte
+	// Bucket for the database access
+	bucket 			[]byte
+	// Prefix to form database key (for storage)
+	prefix          []byte
 	encodeToBytes 	bool
 	accounts        bool
 
@@ -93,8 +95,8 @@ func (t *Trie) PrintTrie() {
 // trie is initially empty and does not require a database. Otherwise,
 // New will panic if db is nil and returns a MissingNodeError if root does
 // not exist in the database. Accessing the trie loads nodes from db on demand.
-func New(root common.Hash, prefix []byte, encodeToBytes bool) *Trie {
-	trie := &Trie{originalRoot: root, prefix: prefix, encodeToBytes: encodeToBytes, accounts: bytes.Equal(prefix, []byte("AT"))}
+func New(root common.Hash, bucket []byte, prefix []byte, encodeToBytes bool) *Trie {
+	trie := &Trie{originalRoot: root, bucket: bucket, prefix: prefix, encodeToBytes: encodeToBytes, accounts: bytes.Equal(bucket, []byte("AT"))}
 	if (root != common.Hash{}) && root != emptyRoot {
 		rootcopy := make([]byte, len(root[:]))
 		copy(rootcopy, root[:])
@@ -334,7 +336,7 @@ func (t *Trie) relistNodes(n node, level int) {
 }
 
 func (t *Trie) tryGet(dbr DatabaseReader, origNode node, key []byte, pos int, blockNr uint64) (value []byte, err error) {
-	val, err := dbr.Get(t.prefix, key)
+	val, err := dbr.Get(t.bucket, append(t.prefix, key...))
 	if err != nil || val == nil {
 		return nil, nil
 	}
@@ -398,7 +400,7 @@ func (t *Trie) Update(db ethdb.Database, key, value []byte, blockNr uint64) {
 func (t *Trie) TryUpdate(db ethdb.Database, key, value []byte, blockNr uint64) error {
 	tc := t.UpdateAction(key, value)
 	for !tc.RunWithDb(db) {
-		r := t.NewResolver(db, false)
+		r := t.NewResolver(db, false, t.accounts)
 		r.AddContinuation(tc)
 		if err := r.ResolveWithDb(db, blockNr); err != nil {
 			return err
@@ -475,6 +477,7 @@ type TrieContinuation struct {
 	value node           // original value being inserted or deleted
 	resolveKey []byte    // Key for which the resolution is requested
 	resolvePos int       // Position in the key for which resolution is requested
+	extResolvePos int
 	resolveHash hashNode // Expected hash of the resolved node (for correctness checking)
 	resolved node        // Node that has been resolved via Database access
 	n node               // Returned node after the operation is complete
@@ -491,7 +494,7 @@ func (tc *TrieContinuation) Trie() *Trie {
 }
 
 func (tc *TrieContinuation) Print() {
-	fmt.Printf("tc{t:%x,action:%d,key:%x,resolveKey:%x,resolvePos:%d}\n", tc.t.prefix, tc.action, tc.key, tc.resolveKey, tc.resolvePos)
+	fmt.Printf("tc{t:%x/%x,action:%d,key:%x,resolveKey:%x,resolvePos:%d}\n", tc.t.bucket, tc.t.prefix, tc.action, tc.key, tc.resolveKey, tc.resolvePos)
 }
 
 func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieContinuation) bool {
@@ -684,7 +687,7 @@ func (t *Trie) Delete(db ethdb.Database, key []byte, blockNr uint64) {
 func (t *Trie) TryDelete(db ethdb.Database, key []byte, blockNr uint64) error {
 	tc := t.DeleteAction(key)
 	for !tc.RunWithDb(db) {
-		r := t.NewResolver(db, false)
+		r := t.NewResolver(db, false, t.accounts)
 		r.AddContinuation(tc)
 		if err := r.ResolveWithDb(db, blockNr); err != nil {
 			return err
@@ -1018,7 +1021,7 @@ func (t *Trie) resolveHash(db ethdb.Database, n hashNode, key []byte, pos int, b
 		return nil, err
 	}
 	if !bytes.Equal(n, gotHash) {
-		fmt.Printf("Resolving wrong hash for prefix %x, trie prefix %x block %d\n", key[:pos], t.prefix, blockNr)
+		fmt.Printf("Resolving wrong hash for prefix %x, bucket %x prefix %x block %d\n", key[:pos], t.bucket, t.prefix, blockNr)
 		fmt.Printf("Expected hash %s\n", n)
 		fmt.Printf("Got hash %s\n", hashNode(gotHash))
 		fmt.Printf("Stack: %s\n", debug.Stack())
@@ -1180,10 +1183,7 @@ func (t *Trie) hashRoot() (node, error) {
 	}
 	h := newHasher(t.encodeToBytes)
 	defer returnHasherToPool(h)
-	//t.flush(t.root)
-	//fmt.Printf("hashRoot\n")
 	var hn common.Hash
 	h.hash(t.root, true, hn[:])
-	//fmt.Printf("Hashed %d nodes in the trie with prefix %x\n", hashed, t.prefix)
 	return hashNode(hn[:]), nil
 }

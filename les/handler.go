@@ -896,7 +896,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			if header := pm.blockchain.GetHeaderByNumber(req.BlockNum); header != nil {
 				sectionHead := rawdb.ReadCanonicalHash(pm.chainDb, req.ChtNum*light.CHTFrequencyServer-1)
 				if root := light.GetChtRoot(pm.chainDb, req.ChtNum-1, sectionHead); root != (common.Hash{}) {
-					trie := trie.New(root, light.ChtTablePrefix, false)
+					trie := trie.New(root, light.ChtTablePrefix, nil, false)
 					readBlockNr := header.Number.Uint64()-1
 					var encNumber [8]byte
 					binary.BigEndian.PutUint64(encNumber[:], req.BlockNum)
@@ -948,7 +948,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 
 				var prefix string
 				if root, prefix = pm.getHelperTrie(req.Type, req.TrieIdx); root != (common.Hash{}) {
-					auxTrie = trie.New(root, []byte(prefix), false)
+					auxTrie = trie.New(root, []byte(prefix), nil, false)
 				}
 			}
 			if req.AuxReq == auxRoot {
@@ -1128,7 +1128,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 
 // getAccount retrieves an account from the state based at root.
 func (pm *ProtocolManager) getAccount(tds *state.TrieDbState, root, hash common.Hash) (state.Account, error) {
-	trie := trie.New(root, state.AccountsBucket, false)
+	trie := trie.New(root, state.AccountsBucket, nil, false)
 	blob, _, err := trie.TryGet(tds.Database(), hash[:], 0 /* Replace with correct blockNr */)
 	if err != nil {
 		return state.Account{}, err

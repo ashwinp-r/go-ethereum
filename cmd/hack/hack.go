@@ -828,20 +828,9 @@ func testRewindTests() {
 	ethdb.TestRewindData2Bucket()
 }
 
-var (
-	trieSyncKey   = []byte("TrieSync")
-	headerPrefix        = []byte("h")
-	headBlockKey  = []byte("LastBlock")
-	blockHashPrefix     = []byte("H")
-	bodyPrefix          = []byte("b")
-	headHeaderKey = []byte("LastHeader")
-	headFastKey   = []byte("LastFast")
-	tdSuffix            = []byte("t")
-)
-
 func testReset(timestamp uint64) {
-	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024)
-	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata", 1024)
+	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024)
+	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata", 1024)
 	check(err)
 	defer ethDb.Close()
 	startTime := time.Now()

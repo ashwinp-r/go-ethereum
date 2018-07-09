@@ -496,11 +496,11 @@ func (api *PrivateDebugAPI) getModifiedAccounts(startBlock, endBlock *types.Bloc
 		return nil, fmt.Errorf("start block height (%d) must be less than end block height (%d)", startBlock.Number().Uint64(), endBlock.Number().Uint64())
 	}
 
-	oldTrie, err := trie.NewSecure(startBlock.Root(), state.AccountsBucket, false)
+	oldTrie, err := trie.NewSecure(startBlock.Root(), state.AccountsBucket, nil, false)
 	if err != nil {
 		return nil, err
 	}
-	newTrie, err := trie.NewSecure(endBlock.Root(), state.AccountsBucket, false)
+	newTrie, err := trie.NewSecure(endBlock.Root(), state.AccountsBucket, nil, false)
 	if err != nil {
 		return nil, err
 	}

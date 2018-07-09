@@ -163,7 +163,7 @@ func (t *odrTrie) Unlink() {}
 func (t *odrTrie) do(key []byte, fn func() error) error {
 	for {
 		if t.trie == nil {
-			t.trie = trie.New(t.id.Root, t.prefix, false)
+			t.trie = trie.New(t.id.Root, t.prefix, nil, false)
 		}
 		err := fn()
 		if _, ok := err.(*trie.MissingNodeError); !ok {
@@ -187,7 +187,7 @@ func newNodeIterator(t *odrTrie, startkey []byte, blockNr uint64) trie.NodeItera
 	// Open the actual non-ODR trie if that hasn't happened yet.
 	if t.trie == nil {
 		it.do(func() error {
-			it.t.trie = trie.New(t.id.Root, t.prefix, false)
+			it.t.trie = trie.New(t.id.Root, t.prefix, nil, false)
 			return nil
 		})
 	}

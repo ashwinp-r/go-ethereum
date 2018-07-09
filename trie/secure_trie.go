@@ -53,8 +53,8 @@ type SecureTrie struct {
 // Loaded nodes are kept around until their 'cache generation' expires.
 // A new cache generation is created by each call to Commit.
 // cachelimit sets the number of past cache generations to keep.
-func NewSecure(root common.Hash, prefix []byte, encodeToBytes bool) (*SecureTrie, error) {
-	trie := New(root, prefix, encodeToBytes)
+func NewSecure(root common.Hash, bucket []byte, prefix []byte, encodeToBytes bool) (*SecureTrie, error) {
+	trie := New(root, bucket, prefix, encodeToBytes)
 	hashKeyCache, err := lru.New(1024*1024)
 	if err != nil {
 		return nil, err

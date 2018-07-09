@@ -143,7 +143,7 @@ func (t *Trie) Rebuild(db ethdb.Database, blockNr uint64) hashNode {
 	return roothash
 }
 
-const Levels = 64
+const Levels = 104
 
 type ResolveHexes [][]byte
 
@@ -162,7 +162,7 @@ func (rh ResolveHexes) Swap(i, j int) {
 
 /* One resolver per trie (prefix) */
 type TrieResolver struct {
-	t *Trie
+	accounts bool // Is this a resolver for accounts or for storage
 	dbw ethdb.Putter // For updating hashes
 	hashes bool
 	continuations []*TrieContinuation
@@ -172,7 +172,8 @@ type TrieResolver struct {
 	rhIndexGt int // index in resolveHexes with resolve key greater than the current key
 	              // if the current key is greater than the last resolve key, this index is len(resolveHexes)
 	contIndices []int // Indices pointing back to continuation array from arrays retured by PrepareResolveParams
-	key [32]byte
+	key_array [52]byte
+	key []byte
 	value []byte
 	key_set bool
 	nodeStack [Levels+1]shortNode
@@ -183,9 +184,9 @@ type TrieResolver struct {
 	h *hasher
 }
 
-func (t *Trie) NewResolver(dbw ethdb.Putter, hashes bool) *TrieResolver {
+func (t *Trie) NewResolver(dbw ethdb.Putter, hashes bool, accounts bool) *TrieResolver {
 	tr := TrieResolver{
-		t: t,
+		accounts: accounts,
 		dbw: dbw,
 		hashes: hashes,
 		continuations: []*TrieContinuation{},
@@ -259,13 +260,16 @@ func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
 	for i, c := range tr.continuations {
 		if prevC == nil || c.resolvePos < prevC.resolvePos || !bytes.HasPrefix(c.resolveKey[:c.resolvePos], prevC.resolveKey[:prevC.resolvePos]) {
 			tr.contIndices = append(tr.contIndices, i)
-			key := make([]byte, 32)
-			decodeNibbles(c.resolveKey[:c.resolvePos], key)
+			pLen := len(c.t.prefix)
+			key := make([]byte, pLen+32)
+			copy(key[:], c.t.prefix)
+			decodeNibbles(c.resolveKey[:c.resolvePos], key[pLen:])
 			startkeys = append(startkeys, key)
-			fixedbits = append(fixedbits, uint(4*c.resolvePos))
+			c.extResolvePos = c.resolvePos + 2*pLen
+			fixedbits = append(fixedbits, uint(4*c.extResolvePos))
 			prevC = c
 			//c.Print()
-			if tr.t.encodeToBytes {
+			if !tr.accounts {
 				switch c.resolvePos {
 					case 0:
 						atomic.AddUint32(&resolvedLevelS0, 1)
@@ -337,7 +341,7 @@ func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
 			}
 		}
 	}
-	tr.startLevel = tr.continuations[0].resolvePos
+	tr.startLevel = tr.continuations[0].extResolvePos
 	return startkeys, fixedbits
 }
 
@@ -349,8 +353,8 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 	}
 	tc := tr.continuations[tr.contIndices[tr.keyIdx]]
 	startLevel := tr.startLevel
-	if startLevel < tc.resolvePos {
-		startLevel = tc.resolvePos
+	if startLevel < tc.extResolvePos {
+		startLevel = tc.extResolvePos
 	}
 	if startLevel < stopLevel {
 		startLevel = stopLevel
@@ -411,7 +415,7 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 			if tr.hashes && level <= 5 && compactLen(short.Key) + level >= 5 {
 				tr.dbw.PutHash(hashIdx, storeHashTo[:])
 			}
-			if level >= tc.resolvePos {
+			if level >= tc.extResolvePos {
 				tr.nodeStack[level+1].Key = nil
 				tr.nodeStack[level+1].Val = nil
 				tr.nodeStack[level+1].flags.dirty = true
@@ -456,7 +460,7 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 			}
 		}
 		tr.fillCount[level]++
-		if level >= tc.resolvePos {
+		if level >= tc.extResolvePos {
 			tr.nodeStack[level+1].Key = nil
 			tr.nodeStack[level+1].Val = nil
 			tr.nodeStack[level+1].flags.dirty = true
@@ -471,12 +475,12 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 	if k == nil {
 		var root node
 		//fmt.Printf("root fillCount %d\n", tr.fillCount[tc.resolvePos])
-		if tr.fillCount[tc.resolvePos] == 1 {
-			root = tr.nodeStack[tc.resolvePos].copy()
-		} else if tr.fillCount[tc.resolvePos] == 2 {
-			root = tr.vertical[tc.resolvePos].duoCopy()
-		} else if tr.fillCount[tc.resolvePos] > 2 {
-			root = tr.vertical[tc.resolvePos].copy()
+		if tr.fillCount[tc.extResolvePos] == 1 {
+			root = tr.nodeStack[tc.extResolvePos].copy()
+		} else if tr.fillCount[tc.extResolvePos] == 2 {
+			root = tr.vertical[tc.extResolvePos].duoCopy()
+		} else if tr.fillCount[tc.extResolvePos] > 2 {
+			root = tr.vertical[tc.extResolvePos].copy()
 		}
 		if root == nil {
 			return fmt.Errorf("Resolve returned nil root")
@@ -485,20 +489,18 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 		hashLen := tr.h.hash(root, tc.resolvePos == 0, gotHash[:])
 		if hashLen == 32 {
 			if !bytes.Equal(tc.resolveHash, gotHash[:]) {
-				return fmt.Errorf("Resolving wrong hash for key %x, pos %d, trie prefix %x\nexpected %s, got %s\n",
+				return fmt.Errorf("Resolving wrong hash for key %x, pos %d, \nexpected %s, got %s\n",
 					tc.resolveKey,
 					tc.resolvePos,
-					tr.t.prefix,
 					tc.resolveHash,
 					hashNode(gotHash[:]),
 				)
 			}
 		} else {
 			if tc.resolveHash != nil {
-				return fmt.Errorf("Resolving wrong hash for key %x, pos %d, trie prefix %x\nexpected %s, got embedded node\n",
+				return fmt.Errorf("Resolving wrong hash for key %x, pos %d\nexpected %s, got embedded node\n",
 					tc.resolveKey,
 					tc.resolvePos,
-					tr.t.prefix,
 					tc.resolveHash)
 			}
 		}
@@ -548,8 +550,14 @@ func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
 			}
 		}
 		// Remember the current key and value
-		copy(tr.key[:], k[:32])
-		if tr.t.accounts {
+		if tr.accounts {
+			copy(tr.key_array[:], k[:32])
+			tr.key = tr.key_array[:32]
+		} else {
+			copy(tr.key_array[:], k[:52])
+			tr.key = tr.key_array[:52]
+		}
+		if tr.accounts {
 			var data Account
 			var err error
 			if len(v) == 1 {
@@ -583,19 +591,25 @@ func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
 }
 
 func (tr *TrieResolver) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
-	tr.h = newHasher(tr.t.encodeToBytes)
+	tr.h = newHasher(!tr.accounts)
 	defer returnHasherToPool(tr.h)
 	startkeys, fixedbits := tr.PrepareResolveParams()
 	//if err := db.MultiWalkAsOf(append([]byte("h"), tr.t.prefix...), startkeys, fixedbits, blockNr, tr.Walker); err != nil {
-	if err := db.MultiWalk(tr.t.prefix, startkeys, fixedbits, tr.Walker); err != nil {
-		return err
+	if tr.accounts {
+		if err := db.MultiWalk([]byte("AT"), startkeys, fixedbits, tr.Walker); err != nil {
+			return err
+		}
+	} else {
+		if err := db.MultiWalk([]byte("ST"), startkeys, fixedbits, tr.Walker); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 func (t *Trie) rebuildHashes(db ethdb.Database, key []byte, pos int, blockNr uint64, hashes bool, expected hashNode) (node, hashNode, error) {
 	tc := t.NewContinuation(key, pos, expected)
-	r := t.NewResolver(db, true)
+	r := t.NewResolver(db, true, true)
 	r.AddContinuation(tc)
 	if err := r.ResolveWithDb(db, blockNr); err != nil {
 		return nil, nil, err

@@ -317,7 +317,7 @@ func (bc *BlockChain) FastSyncCommitHead(hash common.Hash) error {
 	if block == nil {
 		return fmt.Errorf("non existent block [%x…]", hash[:4])
 	}
-	if _, err := trie.NewSecure(block.Root(), state.AccountsBucket, false); err != nil {
+	if _, err := trie.NewSecure(block.Root(), state.AccountsBucket, nil, false); err != nil {
 		return err
 	}
 	// If all checks out, manually set the head block

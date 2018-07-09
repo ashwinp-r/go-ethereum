@@ -555,7 +555,7 @@ func (db *LDBDatabase) ResetTo(timestamp uint64) error {
 	for _, bucket := range bucketList {
 		db.DeleteBucket(bucket)
 	}
-	startkey := make([]byte, 32)
+	startkey := make([]byte, 52)
 	itemCount := 0
 	var t *llrb.LLRB
 	var ok bool
