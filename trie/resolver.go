@@ -211,12 +211,18 @@ func min(a, b int) int {
 }
 
 func (tr *TrieResolver) Less(i, j int) bool {
-	m := min(tr.continuations[i].resolvePos, tr.continuations[j].resolvePos)
-	c := bytes.Compare(tr.continuations[i].resolveKey[:m], tr.continuations[j].resolveKey[:m])
+	ci := tr.continuations[i]
+	cj := tr.continuations[j]
+	m := min(ci.resolvePos, cj.resolvePos)
+	c := bytes.Compare(ci.t.prefix, cj.t.prefix)
 	if c != 0 {
 		return c < 0
 	}
-	return tr.continuations[i].resolvePos < tr.continuations[j].resolvePos
+	c = bytes.Compare(ci.resolveKey[:m], cj.resolveKey[:m])
+	if c != 0 {
+		return c < 0
+	}
+	return ci.resolvePos < cj.resolvePos
 }
 
 func (tr *TrieResolver) Swap(i, j int) {
@@ -225,7 +231,11 @@ func (tr *TrieResolver) Swap(i, j int) {
 
 func (tr *TrieResolver) AddContinuation(c *TrieContinuation) {
 	tr.continuations = append(tr.continuations, c)
-	tr.resolveHexes = append(tr.resolveHexes, c.resolveKey)
+	if c.t.prefix == nil {
+		tr.resolveHexes = append(tr.resolveHexes, c.resolveKey)
+	} else {
+		tr.resolveHexes = append(tr.resolveHexes, append(keybytesToHex(c.t.prefix), c.resolveKey...))
+	}
 }
 
 func (tr *TrieResolver) Print() {
@@ -258,7 +268,9 @@ func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
 	tr.resolveHexes = newHexes
 	var prevC *TrieContinuation
 	for i, c := range tr.continuations {
-		if prevC == nil || c.resolvePos < prevC.resolvePos || !bytes.HasPrefix(c.resolveKey[:c.resolvePos], prevC.resolveKey[:prevC.resolvePos]) {
+		if prevC == nil || c.resolvePos < prevC.resolvePos ||
+			!bytes.Equal(c.t.prefix, prevC.t.prefix) ||
+			!bytes.HasPrefix(c.resolveKey[:c.resolvePos], prevC.resolveKey[:prevC.resolvePos]) {
 			tr.contIndices = append(tr.contIndices, i)
 			pLen := len(c.t.prefix)
 			key := make([]byte, pLen+32)
