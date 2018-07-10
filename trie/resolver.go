@@ -234,7 +234,7 @@ func (tr *TrieResolver) AddContinuation(c *TrieContinuation) {
 	if c.t.prefix == nil {
 		tr.resolveHexes = append(tr.resolveHexes, c.resolveKey)
 	} else {
-		tr.resolveHexes = append(tr.resolveHexes, append(keybytesToHex(c.t.prefix), c.resolveKey...))
+		tr.resolveHexes = append(tr.resolveHexes, append(keybytesToHex(c.t.prefix)[:40], c.resolveKey...))
 	}
 }
 
@@ -358,7 +358,7 @@ func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
 }
 
 func (tr *TrieResolver) finishPreviousKey(k []byte) error {
-	pLen := prefixLen(k, tr.key[:])
+	pLen := prefixLen(k, tr.key)
 	stopLevel := 2*pLen
 	if k != nil && (k[pLen]^tr.key[pLen])&0xf0 == 0 {
 		stopLevel++
@@ -371,7 +371,7 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 	if startLevel < stopLevel {
 		startLevel = stopLevel
 	}
-	hex := keybytesToHex(tr.key[:])
+	hex := keybytesToHex(tr.key)
 	tr.nodeStack[startLevel+1].Key = hexToCompact(hex[startLevel+1:])
 	tr.nodeStack[startLevel+1].Val = valueNode(tr.value)
 	tr.nodeStack[startLevel+1].flags.dirty = true
@@ -400,8 +400,6 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 	for level := startLevel; level >= stopLevel; level-- {
 		keynibble := hex[level]
 		onResolvingPath := level <= rhPrefixLen // <= instead of < to be able to resolve deletes in one go
-		//fmt.Printf("Level %d, keynibble %d, onResolvingPath %t, fillCount %d\n",
-		//	level, keynibble, onResolvingPath, tr.fillCount[level+1])
 		var hashIdx uint32
 		if tr.hashes && level <= 5 {
 			hashIdx = binary.BigEndian.Uint32(tr.key[:4]) >> 8

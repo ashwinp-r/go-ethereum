@@ -310,13 +310,6 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 	}
 	it := 0
 	for len(oldContinuations) > 0 {
-		if it == 3 {
-			fmt.Printf("Unresolved continuations:\n")
-			for _, c := range oldContinuations {
-				c.Print()
-			}
-		}
-		//fmt.Printf("After iteration %d, %d unresolved\n", it, len(oldContinuations))
 		var resolver *trie.TrieResolver
 		for _, c := range oldContinuations {
 			if !c.RunWithDb(tds.db) {
