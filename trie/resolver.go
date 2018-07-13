@@ -181,6 +181,7 @@ type TrieResolver struct {
 	startLevel int
 	keyIdx int
 	h *hasher
+	historical bool
 }
 
 func (t *Trie) NewResolver(dbw ethdb.Putter, hashes bool) *TrieResolver {
@@ -195,6 +196,10 @@ func (t *Trie) NewResolver(dbw ethdb.Putter, hashes bool) *TrieResolver {
 		contIndices: []int{},
 	}
 	return &tr
+}
+
+func (tr *TrieResolver) SetHistorical(h bool) {
+	tr.historical = h
 }
 
 // TrieResolver implements sort.Interface
@@ -586,16 +591,19 @@ func (tr *TrieResolver) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
 	tr.h = newHasher(tr.t.encodeToBytes)
 	defer returnHasherToPool(tr.h)
 	startkeys, fixedbits := tr.PrepareResolveParams()
-	//if err := db.MultiWalkAsOf(append([]byte("h"), tr.t.prefix...), startkeys, fixedbits, blockNr, tr.Walker); err != nil {
-	if err := db.MultiWalk(tr.t.prefix, startkeys, fixedbits, tr.Walker); err != nil {
-		return err
+	var err error
+	if tr.historical {
+		err = db.MultiWalkAsOf(tr.t.prefix, startkeys, fixedbits, blockNr, tr.Walker)
+	} else {
+		err = db.MultiWalk(tr.t.prefix, startkeys, fixedbits, tr.Walker)
 	}
-	return nil
+	return err
 }
 
 func (t *Trie) rebuildHashes(db ethdb.Database, key []byte, pos int, blockNr uint64, hashes bool, expected hashNode) (node, hashNode, error) {
 	tc := t.NewContinuation(key, pos, expected)
 	r := t.NewResolver(db, true)
+	r.SetHistorical(t.historical)
 	r.AddContinuation(tc)
 	if err := r.ResolveWithDb(db, blockNr); err != nil {
 		return nil, nil, err

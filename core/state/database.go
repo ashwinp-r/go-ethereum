@@ -201,6 +201,7 @@ type TrieDbState struct {
 	deleted          map[common.Hash]struct{}
 	codeCache        *lru.Cache
 	codeSizeCache    *lru.Cache
+	historical       bool
 }
 
 func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieDbState, error) {
@@ -239,6 +240,11 @@ func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieD
 	return &tds, nil
 }
 
+func (tds *TrieDbState) SetHistorical(h bool) {
+	tds.historical = h
+	tds.t.SetHistorical(h)
+}
+
 func (tds *TrieDbState) Copy() *TrieDbState {
 	addrHashCache, err := lru.New(128*1024)
 	if err != nil {
@@ -273,6 +279,10 @@ func (tds *TrieDbState) AccountTrie() *trie.Trie {
 }
 
 func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
+	return tds.trieRoot(true)
+}
+
+func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 	if len(tds.storageUpdates) == 0 && len(tds.accountUpdates) == 0 {
 		return tds.t.Hash(), nil
 	}
@@ -284,7 +294,7 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 	newStorageC := [][]*trie.TrieContinuation{}
 	relist := []*trie.Trie{}
 	for address, m := range tds.storageUpdates {
-		addrHash, err := tds.HashAddress(address, false /*save*/)
+		addrHash, err := tds.HashAddress(address, false)
 		if err != nil {
 			return common.Hash{}, nil
 		}
@@ -320,6 +330,7 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 					newContinuations = append(newContinuations, c)
 					if resolver == nil {
 						resolver = c.Trie().NewResolver(tds.db, false)
+						resolver.SetHistorical(tds.historical)
 					}
 					resolver.AddContinuation(c)
 				}
@@ -356,9 +367,12 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 				deleteStorageTrie = true
 				account.Root = emptyRoot
 			} else if storageTrie != nil {
-				account.Root = storageTrie.Hash()
+				sth := storageTrie.Hash()
+				if !forward && account.Root != sth {
+					fmt.Printf("Set root %x from %x to %x\n", addrHash[:], account.Root[:], sth)
+				}
+				account.Root = sth
 			}
-			//fmt.Printf("Set root %x %x\n", address[:], account.Root[:])
 			data, err := rlp.EncodeToBytes(account)
 			if err != nil {
 				return common.Hash{}, err
@@ -384,6 +398,7 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 				newContinuations = append(newContinuations, c)
 				if resolver == nil {
 					resolver = tds.t.NewResolver(tds.db, false)
+					resolver.SetHistorical(tds.historical)
 				}
 				resolver.AddContinuation(c)
 			}
@@ -416,8 +431,9 @@ func (tds *TrieDbState) SetBlockNr(blockNr uint64) {
 	tds.blockNr = blockNr
 }
 
-func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
+func (tds *TrieDbState) UnwindTo(blockNr uint64, commit bool) error {
 	batch := tds.db.NewBatch()
+	fmt.Printf("Rewinding from block %d to block %d\n", tds.blockNr, blockNr)
 	if err := tds.db.RewindData(tds.blockNr, blockNr, func (bucket, key, value []byte) error {
 		//fmt.Printf("Rewind with bucket %x key %x value %x\n", bucket, key, value)
 		var err error
@@ -463,11 +479,16 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
 	}); err != nil {
 		return err
 	}
-	if _, err := tds.TrieRoot(); err != nil {
+	if _, err := tds.trieRoot(false); err != nil {
 		return err
 	}
-	if err := batch.Commit(); err != nil {
-		return err
+	if commit {
+		for i := tds.blockNr; i > blockNr; i-- {
+			batch.DeleteTimestamp(i)
+		}
+		if err := batch.Commit(); err != nil {
+			return err
+		}
 	}
 	tds.blockNr = blockNr
 	return nil
@@ -557,6 +578,7 @@ func (tds *TrieDbState) getStorageTrie(address common.Address, addrHash common.H
 		} else {
 			t = trie.New(account.Root, address[:], true)
 		}
+		t.SetHistorical(tds.historical)
 		t.MakeListed(tds.nodeList)
 		tds.storageTries[addrHash] = t
 	}
