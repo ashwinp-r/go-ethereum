@@ -183,7 +183,6 @@ type TrieResolver struct {
 	keyIdx int
 	h *hasher
 	historical bool
-	counter int
 }
 
 func NewResolver(dbw ethdb.Putter, hashes bool, accounts bool) *TrieResolver {
@@ -286,7 +285,7 @@ func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
 			c.extResolvePos = c.resolvePos + 2*pLen
 			fixedbits = append(fixedbits, uint(4*c.extResolvePos))
 			prevC = c
-			c.Print()
+			//c.Print()
 			if !tr.accounts {
 				switch c.resolvePos {
 					case 0:
@@ -332,7 +331,6 @@ func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
 			}
 			total := atomic.AddUint32(&resolvedTotal, 1)
 			print := total % 50000 == 0
-			print = false
 			if print {
 				fmt.Printf("total: %d, 0:%d, 1:%d, 2:%d, 3:%d, 4:%d, 5:%d, 6:%d, 7:%d, 8:%d\n",
 					total,
@@ -522,10 +520,6 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 			}
 		}
 		tc.resolved = root
-		fmt.Printf("Resolved for key %x, pos %d, hash %s\n",
-			tc.resolveKey,
-			tc.resolvePos,
-			tc.resolveHash)
 		for i := 0; i <= Levels; i++ {
 			tr.nodeStack[i].Key = nil
 			tr.nodeStack[i].Val = nil
@@ -553,8 +547,7 @@ type Account struct {
 var emptyCodeHash = crypto.Keccak256(nil)
 
 func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
-	tr.counter++
-	fmt.Printf("%d %x %x\n", keyIdx, k, v)
+	//fmt.Printf("%d %x %x\n", keyIdx, k, v)
 	if keyIdx != tr.keyIdx {
 		if tr.key_set {
 			if err := tr.finishPreviousKey(nil); err != nil {
@@ -616,30 +609,20 @@ func (tr *TrieResolver) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
 	tr.h = newHasher(!tr.accounts)
 	defer returnHasherToPool(tr.h)
 	startkeys, fixedbits := tr.PrepareResolveParams()
-	for i := 0;i<len(startkeys);i++ {
-		fmt.Printf("sk: %x, fb: %d\n", startkeys[i], fixedbits[i])
-	}
-	//if err := db.MultiWalkAsOf(append([]byte("h"), tr.t.prefix...), startkeys, fixedbits, blockNr, tr.Walker); err != nil {
 	var err error
-	tr.counter = 0
 	if tr.accounts {
 		if tr.historical {
-			fmt.Printf("hAT\n")
 			err = db.MultiWalkAsOf([]byte("hAT"), startkeys, fixedbits, blockNr, tr.Walker)
 		} else {
-			fmt.Printf("AT\n")
 			err = db.MultiWalk([]byte("AT"), startkeys, fixedbits, tr.Walker)
 		}
 	} else {
 		if tr.historical {
-			fmt.Printf("hST\n")
 			err = db.MultiWalkAsOf([]byte("hST"), startkeys, fixedbits, blockNr, tr.Walker)
 		} else {
-			fmt.Printf("ST\n")
 			err = db.MultiWalk([]byte("ST"), startkeys, fixedbits, tr.Walker)
 		}
 	}
-	fmt.Printf("ResolveWithDb counter %d\n", tr.counter)
 	return err
 }
 

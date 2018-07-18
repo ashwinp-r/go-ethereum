@@ -19,7 +19,7 @@ package ethdb
 import (
 	"bytes"
 	"errors"
-	"fmt"
+	//"fmt"
 	"os"
 	"path"
 	"sync"
@@ -342,7 +342,6 @@ func (db *LDBDatabase) MultiWalk(bucket []byte, startkeys [][]byte, fixedbits []
 		} else {
 			k, v = c.Seek(startkey)
 		}
-		fmt.Printf("MultiWalk, first k %x, v %x\n", k, v)
 		for k != nil {
 			// Adjust keyIdx if needed
 			if fixedbytes > 0 {
@@ -360,7 +359,6 @@ func (db *LDBDatabase) MultiWalk(bucket []byte, startkeys [][]byte, fixedbits []
 					}
 					if cmp < 0 {
 						k, v = c.SeekTo(startkey)
-						fmt.Printf("MultiWalk, next (cmp<0) k %x, v %x\n", k, v)
 						if k == nil {
 							return nil
 						}
@@ -375,7 +373,6 @@ func (db *LDBDatabase) MultiWalk(bucket []byte, startkeys [][]byte, fixedbits []
 						fixedbytes, mask = bytesmask(fixedbits[keyIdx])
 						startkey = startkeys[keyIdx]
 						k, v = c.SeekTo(startkey)
-						fmt.Printf("MultiWalk, next (cmp>0) k %x, v %x\n", k, v)
 						if k == nil {
 							return nil
 						}
@@ -389,7 +386,6 @@ func (db *LDBDatabase) MultiWalk(bucket []byte, startkeys [][]byte, fixedbits []
 				}
 			}
 			k, v = c.Next()
-			fmt.Printf("MultiWalk, next k %x, v %x\n", k, v)
 		}
 		return nil
 	}); err != nil {
