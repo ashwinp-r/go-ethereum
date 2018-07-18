@@ -183,9 +183,10 @@ type TrieResolver struct {
 	keyIdx int
 	h *hasher
 	historical bool
+	counter int
 }
 
-func (t *Trie) NewResolver(dbw ethdb.Putter, hashes bool, accounts bool) *TrieResolver {
+func NewResolver(dbw ethdb.Putter, hashes bool, accounts bool) *TrieResolver {
 	tr := TrieResolver{
 		accounts: accounts,
 		dbw: dbw,
@@ -331,6 +332,7 @@ func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
 			}
 			total := atomic.AddUint32(&resolvedTotal, 1)
 			print := total % 50000 == 0
+			print = false
 			if print {
 				fmt.Printf("total: %d, 0:%d, 1:%d, 2:%d, 3:%d, 4:%d, 5:%d, 6:%d, 7:%d, 8:%d\n",
 					total,
@@ -547,6 +549,7 @@ type Account struct {
 var emptyCodeHash = crypto.Keccak256(nil)
 
 func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
+	tr.counter++
 	//fmt.Printf("%d %x %x\n", keyIdx, k, v)
 	if keyIdx != tr.keyIdx {
 		if tr.key_set {
@@ -611,6 +614,7 @@ func (tr *TrieResolver) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
 	startkeys, fixedbits := tr.PrepareResolveParams()
 	//if err := db.MultiWalkAsOf(append([]byte("h"), tr.t.prefix...), startkeys, fixedbits, blockNr, tr.Walker); err != nil {
 	var err error
+	tr.counter = 0
 	if tr.accounts {
 		if tr.historical {
 			err = db.MultiWalkAsOf([]byte("hAT"), startkeys, fixedbits, blockNr, tr.Walker)
@@ -624,12 +628,13 @@ func (tr *TrieResolver) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
 			err = db.MultiWalk([]byte("ST"), startkeys, fixedbits, tr.Walker)
 		}
 	}
+	fmt.Printf("ResolveWithDb counter %d\n", tr.counter)
 	return err
 }
 
 func (t *Trie) rebuildHashes(db ethdb.Database, key []byte, pos int, blockNr uint64, hashes bool, expected hashNode) (node, hashNode, error) {
 	tc := t.NewContinuation(key, pos, expected)
-	r := t.NewResolver(db, true, true)
+	r := NewResolver(db, true, true)
 	r.SetHistorical(t.historical)
 	r.AddContinuation(tc)
 	if err := r.ResolveWithDb(db, blockNr); err != nil {

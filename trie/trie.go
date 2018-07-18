@@ -412,7 +412,7 @@ func (t *Trie) Update(db ethdb.Database, key, value []byte, blockNr uint64) {
 func (t *Trie) TryUpdate(db ethdb.Database, key, value []byte, blockNr uint64) error {
 	tc := t.UpdateAction(key, value)
 	for !tc.RunWithDb(db) {
-		r := t.NewResolver(db, false, t.accounts)
+		r := NewResolver(db, false, t.accounts)
 		r.AddContinuation(tc)
 		if err := r.ResolveWithDb(db, blockNr); err != nil {
 			return err
@@ -499,10 +499,6 @@ type TrieContinuation struct {
 
 func (t *Trie) NewContinuation(key []byte, pos int, resolveHash []byte) *TrieContinuation {
 	return &TrieContinuation{t: t, key: key, resolveKey: key, resolvePos: pos, resolveHash: hashNode(resolveHash)}
-}
-
-func (tc *TrieContinuation) Trie() *Trie {
-	return tc.t
 }
 
 func (tc *TrieContinuation) Print() {
@@ -699,7 +695,7 @@ func (t *Trie) Delete(db ethdb.Database, key []byte, blockNr uint64) {
 func (t *Trie) TryDelete(db ethdb.Database, key []byte, blockNr uint64) error {
 	tc := t.DeleteAction(key)
 	for !tc.RunWithDb(db) {
-		r := t.NewResolver(db, false, t.accounts)
+		r := NewResolver(db, false, t.accounts)
 		r.AddContinuation(tc)
 		if err := r.ResolveWithDb(db, blockNr); err != nil {
 			return err
