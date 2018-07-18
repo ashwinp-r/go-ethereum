@@ -522,6 +522,10 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 			}
 		}
 		tc.resolved = root
+		fmt.Printf("Resolved for key %x, pos %d, hash %s\n",
+			tc.resolveKey,
+			tc.resolvePos,
+			tc.resolveHash)
 		for i := 0; i <= Levels; i++ {
 			tr.nodeStack[i].Key = nil
 			tr.nodeStack[i].Val = nil
