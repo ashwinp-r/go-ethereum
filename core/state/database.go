@@ -325,8 +325,8 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 			if !c.RunWithDb(tds.db) {
 				newContinuations = append(newContinuations, c)
 				if resolver == nil {
-					resolver.SetHistorical(tds.historical)
 					resolver = c.Trie().NewResolver(tds.db, false, false)
+					resolver.SetHistorical(tds.historical)
 				}
 				resolver.AddContinuation(c)
 			}
