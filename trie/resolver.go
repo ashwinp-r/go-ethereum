@@ -286,7 +286,7 @@ func (tr *TrieResolver) PrepareResolveParams() ([][]byte, []uint) {
 			c.extResolvePos = c.resolvePos + 2*pLen
 			fixedbits = append(fixedbits, uint(4*c.extResolvePos))
 			prevC = c
-			//c.Print()
+			c.Print()
 			if !tr.accounts {
 				switch c.resolvePos {
 					case 0:
