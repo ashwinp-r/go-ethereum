@@ -343,6 +343,13 @@ func allBuckets(db *bolt.DB) [][]byte {
 	return bucketList
 }
 
+func printBuckets(db *bolt.DB) {
+	bucketList := allBuckets(db)
+	for _, bucket := range bucketList {
+		fmt.Printf("%s\n", bucket)
+	}
+}
+
 func bucketStats(db *bolt.DB) {
 	bucketList := allBuckets(db)
 	storageStats := new(bolt.BucketStats)
@@ -710,8 +717,8 @@ func testStartup() {
 	currentBlockNr := currentBlock.NumberU64()
 	fmt.Printf("Current block number: %d\n", currentBlockNr)
 	fmt.Printf("Current block root hash: %x\n", currentBlock.Root())
-	t := trie.New(common.Hash{}, state.AccountsBucket, false)
-	r := t.NewResolver(ethDb, false)
+	t := trie.New(common.Hash{}, state.AccountsBucket, nil, false)
+	r := trie.NewResolver(ethDb, false, true)
 	key := []byte{}
 	rootHash := currentBlock.Root()
 	tc := t.NewContinuation(key, 0, rootHash[:])
@@ -730,8 +737,8 @@ func testResolve() {
 	check(err)
 	defer ethDb.Close()
 	treePrefix := common.FromHex("1194e966965418c7d73a42cceeb254d875860356")
-	t := trie.New(common.Hash{}, treePrefix, true)
-	r := t.NewResolver(ethDb, false)
+	t := trie.New(common.Hash{}, state.StorageBucket, treePrefix, true)
+	r := trie.NewResolver(ethDb, false, false)
 	key := common.FromHex("0d0c02060f0d09030a0a0000070808000c04080606090b070c060a0e020803030b030f040f0e080c090f0f020a0c06060b0402090e0b050007090d06010c0a0310")
 	resolveHash := common.FromHex("931f3dbc6b2e9c23cf9cd399504139efe208e33d3e3ce51a2f040aac0159b79e")
 	tc := t.NewContinuation(key, 0, resolveHash)
@@ -769,8 +776,8 @@ func hashFile() {
 
 func buildHashFromFile() {
 	treePrefix := common.FromHex("2a0c0dbecc7e4d658f48e01e3fa353f44050c208")
-	t := trie.New(common.Hash{}, treePrefix, false)
-	r := t.NewResolver(nil, false)
+	t := trie.New(common.Hash{}, state.StorageBucket, treePrefix, false)
+	r := trie.NewResolver(nil, false, false)
 	key := common.FromHex("010d04080f0e060e08000d09040800040f0f0f020c04060109090d0c020c090a010d0609070a0905020e0904000808030c020f060c0709060107080f0209020210")
 	resolveHash := common.FromHex("9edde1605e84902c450fdf275a6c9ef00fc67691d2ed62b4de35ef8c8bf1b20")
 	tc := t.NewContinuation(key, 0, resolveHash)
@@ -880,9 +887,9 @@ func main() {
         }
         defer pprof.StopCPUProfile()
     }
-	//db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
 	//db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
- 	//check(err)
+ 	check(err)
  	//defer db.Close()
  	//bucketStats(db)
  	//mychart()
@@ -899,6 +906,7 @@ func main() {
  	//if *reset != -1 {
  	//	testReset(uint64(*reset))
  	//}
- 	testBlockHashes()
+ 	//testBlockHashes()
+ 	printBuckets(db)
 }
 
