@@ -554,7 +554,7 @@ var emptyCodeHash = crypto.Keccak256(nil)
 
 func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
 	tr.counter++
-	//fmt.Printf("%d %x %x\n", keyIdx, k, v)
+	fmt.Printf("%d %x %x\n", keyIdx, k, v)
 	if keyIdx != tr.keyIdx {
 		if tr.key_set {
 			if err := tr.finishPreviousKey(nil); err != nil {
