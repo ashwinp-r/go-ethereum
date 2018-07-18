@@ -966,15 +966,56 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		externTd = externTd.Add(externTd, header.Difficulty)
 	}
 	if localTd.Cmp(externTd) >= 0 {
-		fmt.Printf("Ignoring the chain segment because of insufficient difficulty: %v vs local %v\n", externTd, localTd)
+		log.Warn("Ignoring the chain segment because of insufficient difficulty", "external", externTd, "local", localTd)
+		// But we still write the blocks to the database because others might build on top of them
+		td := bc.GetTd(chain[0].ParentHash(), chain[0].NumberU64()-1)
+		for _, block := range chain {
+			log.Warn("Saving", "block", block.NumberU64(), "hash", block.Hash())
+			td = new(big.Int).Add(block.Difficulty(), td)
+			rawdb.WriteBlock(bc.db, block)
+			rawdb.WriteTd(bc.db, block.Hash(), block.NumberU64(), td)
+		}
 		return 0, events, coalescedLogs, nil
 	}
 
 	// Start a parallel signature recovery (signer will fluke on fork transition, minimal perf loss)
 	senderCacher.recoverFromBlocks(types.MakeSigner(bc.chainConfig, chain[0].Number()), chain)
 
+	// Find correct insertion point for this chain
+	preBlocks := []*types.Block{}
+	parentNumber := chain[0].NumberU64() - 1
+	parentHash := chain[0].ParentHash()
+	parent := bc.GetBlock(parentHash, parentNumber)
+	if parent == nil {
+		log.Error("Chain segment could not be inserter, missing parent", "hash", parentHash)
+		return 0, events, coalescedLogs, fmt.Errorf("Chain segment could not be inserter, missing parent %x", parentHash)
+	}
+	canonicalHash := rawdb.ReadCanonicalHash(bc.db, parentNumber)
+	for canonicalHash != parentHash {
+		log.Warn("Chain segment's parent not on canonical hash, adding to pre-blocks", "block", parentNumber, "hash", parentHash)
+		preBlocks = append(preBlocks, parent)
+		parentNumber--
+		parentHash = parent.ParentHash()
+		parent = bc.GetBlock(parentHash, parentNumber)
+		if parent == nil {
+			log.Error("Chain segment could not be inserter, missing parent", "hash", parentHash)
+			return 0, events, coalescedLogs, fmt.Errorf("Chain segment could not be inserter, missing parent %x", parentHash)
+		}
+		canonicalHash = rawdb.ReadCanonicalHash(bc.db, parentNumber)
+	}
+	for left, right := 0, len(preBlocks)-1; left < right; left, right = left+1, right-1 {
+		preBlocks[left], preBlocks[right] = preBlocks[right], preBlocks[left]
+	}
+	offset := len(preBlocks)
+	if offset > 0 {
+		chain = append(preBlocks, chain...)
+	}
 	// Iterate over the blocks and insert when the verifier permits
 	for i, block := range chain {
+		k := 0
+		if i >= offset {
+			k = i-offset
+		}
 		// If the chain is terminating, stop processing blocks
 		if atomic.LoadInt32(&bc.procInterrupt) == 1 {
 			log.Debug("Premature abort during blocks processing")
@@ -983,12 +1024,12 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		// If the header is a banned one, straight out abort
 		if BadHashes[block.Hash()] {
 			bc.reportBlock(block, nil, ErrBlacklistedHash)
-			return i, events, coalescedLogs, ErrBlacklistedHash
+			return k, events, coalescedLogs, ErrBlacklistedHash
 		}
 		// Wait for the block's verification to complete
 		bstart := time.Now()
 		var err error
-		if i >= verifyFrom {
+		if i >= offset && k >= verifyFrom {
 			err = <-results
 		}
 		if err == nil {
@@ -1009,7 +1050,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 			// the chain is discarded and processed at a later time if given.
 			max := big.NewInt(time.Now().Unix() + maxTimeFutureBlocks)
 			if block.Time().Cmp(max) > 0 {
-				return i, events, coalescedLogs, fmt.Errorf("future block: %v > %v", block.Time(), max)
+				return k, events, coalescedLogs, fmt.Errorf("future block: %v > %v", block.Time(), max)
 			}
 			bc.futureBlocks.Add(block.Hash(), block)
 			stats.queued++
@@ -1028,14 +1069,14 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 			externTd := new(big.Int).Add(bc.GetTd(block.ParentHash(), block.NumberU64()-1), block.Difficulty())
 			if localTd.Cmp(externTd) > 0 {
 				if err = bc.WriteBlockWithoutState(block, externTd); err != nil {
-					return i, events, coalescedLogs, err
+					return k, events, coalescedLogs, err
 				}
 				continue
 			}
 			// Competitor chain beat canonical, gather all blocks from the common ancestor
 			var winner []*types.Block
 
-			parent := bc.GetBlock(block.ParentHash(), block.NumberU64()-1)
+			parent = bc.GetBlock(block.ParentHash(), block.NumberU64()-1)
 			for !bc.HasState(parent.Root()) {
 				winner = append(winner, parent)
 				parent = bc.GetBlock(parent.ParentHash(), parent.NumberU64()-1)
@@ -1050,7 +1091,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 			events, coalescedLogs = evs, logs
 
 			if err != nil {
-				return i, events, coalescedLogs, err
+				return k, events, coalescedLogs, err
 			}
 
 		case err != nil:
@@ -1059,10 +1100,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		}
 		// Create a new statedb using the parent block and report an
 		// error if it fails.
-		var parent *types.Block
-		if i == 0 {
-			parent = bc.GetBlock(block.ParentHash(), block.NumberU64()-1)
-		} else {
+		if i > 0 {
 			parent = chain[i-1]
 		}
 		readBlockNr := parent.NumberU64()
@@ -1072,20 +1110,19 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 			log.Info("Creating StateDB from latest state", "block", currentBlockNr)
 			bc.trieDbState, err = state.NewTrieDbState(bc.CurrentBlock().Header().Root, bc.db, currentBlockNr)
 			if err != nil {
-				return i, events, coalescedLogs, err
+				return k, events, coalescedLogs, err
 			}
 			if err := bc.trieDbState.Rebuild(); err != nil {
-				return i, events, coalescedLogs, err
+				return k, events, coalescedLogs, err
 			}
 		}
 		if bc.trieDbState != nil {
 			root, err = bc.trieDbState.TrieRoot()
 			if err != nil {
-				return i, events, coalescedLogs, err
+				return k, events, coalescedLogs, err
 			}
 		}
 		parentRoot := parent.Root()
-		bc.db.DeleteTimestamp(block.NumberU64())
 		if bc.trieDbState == nil || readBlockNr == 0 || !bytes.Equal(root[:], parentRoot[:]) {
 			if bc.trieDbState != nil && readBlockNr != 0 {
 				log.Info("Rewinding", "to block", readBlockNr)
@@ -1094,12 +1131,14 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 					bc.db.Rollback()
 					return 0, events, coalescedLogs, err
 				}
-				bc.trieDbState.UnwindTo(readBlockNr)
+				bc.trieDbState.UnwindTo(readBlockNr, true)
 				root, err := bc.trieDbState.TrieRoot()
 				if err != nil {
 					return 0, events, coalescedLogs, err
 				}
 				if root != parentRoot {
+					fmt.Printf("Wrong root %x, expected %x\n", root, parentRoot)
+					bc.db.Rollback()
 					return 0, events, coalescedLogs, fmt.Errorf("Wrong root %x, expected %x\n", root, parentRoot)
 				}
 				if err = bc.db.Commit(); err != nil {
@@ -1111,10 +1150,10 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 				log.Info("New StateDB created", "block", readBlockNr)
 				bc.trieDbState, err = state.NewTrieDbState(parent.Root(), bc.db, readBlockNr)
 				if err != nil {
-					return i, events, coalescedLogs, err
+					return k, events, coalescedLogs, err
 				}
 				if err := bc.trieDbState.Rebuild(); err != nil {
-					return i, events, coalescedLogs, err
+					return k, events, coalescedLogs, err
 				}
 			}
 		} else {
@@ -1125,20 +1164,20 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		receipts, logs, usedGas, err := bc.processor.Process(block, stateDB, bc.trieDbState, bc.vmConfig)
 		if err != nil {
 			bc.reportBlock(block, receipts, err)
-			return i, events, coalescedLogs, err
+			return k, events, coalescedLogs, err
 		}
 		// Validate the state using the default validator
 		err = bc.Validator().ValidateState(block, parent, stateDB, bc.trieDbState, receipts, usedGas)
 		if err != nil {
 			bc.reportBlock(block, receipts, err)
-			return i, events, coalescedLogs, err
+			return k, events, coalescedLogs, err
 		}
 		proctime := time.Since(bstart)
 
 		// Write the block to the chain and get the status.
 		status, err := bc.WriteBlockWithState(block, receipts, stateDB, bc.trieDbState)
 		if err != nil {
-			return i, events, coalescedLogs, err
+			return k, events, coalescedLogs, err
 		}
 		switch status {
 		case CanonStatTy:
@@ -1328,7 +1367,7 @@ func (bc *BlockChain) reorg(oldBlock, newBlock *types.Block) error {
 	}
 	// Delete the old chain
 	for _, oldBlock := range oldChain {
-		rawdb.DeleteBlock(bc.db, oldBlock.Hash(), oldBlock.NumberU64())
+		rawdb.DeleteCanonicalHash(bc.db, oldBlock.NumberU64())
 	}
 	// Insert the new chain, taking care of the proper incremental order
 	var addedTxs types.Transactions

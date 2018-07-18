@@ -661,7 +661,8 @@ func trieChart() {
 }
 
 func testRewind() {
-	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024)
+	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 16)
+	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata", 16)
 	check(err)
 	defer ethDb.Close()
 	db := ethDb.NewBatch()
@@ -670,15 +671,26 @@ func testRewind() {
 	check(err)
 	currentBlock := bc.CurrentBlock()
 	currentBlockNr := currentBlock.NumberU64()
+	//currentBlockNr -= 22
+	//currentBlock = bc.GetBlockByNumber(currentBlockNr)
 	fmt.Printf("Current block number: %d\n", currentBlockNr)
 	fmt.Printf("Current block root hash: %x\n", currentBlock.Root())
 	tds, err := state.NewTrieDbState(currentBlock.Root(), db, currentBlockNr)
+	tds.SetHistorical(false)
 	check(err)
+	startTime := time.Now()
 	err = tds.Rebuild()
+	fmt.Printf("Rebuld done in %v\n", time.Since(startTime))
 	check(err)
-	err = tds.UnwindTo(currentBlockNr - 90)
+	rebuiltRoot, err := tds.TrieRoot()
 	check(err)
-	rewoundBlock := bc.GetBlockByNumber(currentBlockNr - 90)
+	fmt.Printf("Rebuit root hash: %x\n", rebuiltRoot)
+	startTime = time.Now()
+	rewindLen := uint64(1)
+	err = tds.UnwindTo(currentBlockNr - rewindLen, false)
+	fmt.Printf("Unwind done in %v\n", time.Since(startTime))
+	check(err)
+	rewoundBlock := bc.GetBlockByNumber(currentBlockNr - rewindLen)
 	fmt.Printf("Rewound block number: %d\n", rewoundBlock.NumberU64())
 	fmt.Printf("Rewound block root hash: %x\n", rewoundBlock.Root())
 	rewoundRoot, err := tds.TrieRoot()
@@ -846,6 +858,16 @@ func testReset(timestamp uint64) {
 	check(err)
 }
 
+func testBlockHashes() {
+	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024)
+	check(err)
+	hash := rawdb.ReadCanonicalHash(ethDb, 823144)
+	fmt.Printf("Canonical hash: %x\n", hash)
+	header := rawdb.ReadHeader(ethDb, hash, 823144)
+	fmt.Printf("Header.TxHash: %x\n", header.TxHash)
+	fmt.Printf("Header.UncleHash: %x\n", header.UncleHash)
+}
+
 func main() {
 	flag.Parse()
     if *cpuprofile != "" {
@@ -874,8 +896,9 @@ func main() {
  	//testStartup()
  	//testDifficulty()
  	//testRewindTests()
- 	if *reset != -1 {
- 		testReset(uint64(*reset))
- 	}
+ 	//if *reset != -1 {
+ 	//	testReset(uint64(*reset))
+ 	//}
+ 	testBlockHashes()
 }
 

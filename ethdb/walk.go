@@ -144,6 +144,9 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 	suffixSrc := encodeTimestamp(timestampSrc)
 	if err := db.Walk(SuffixBucket, suffixSrc, 0, func (k, v []byte) ([]byte, WalkAction, error) {
 		timestamp, bucket := decodeTimestamp(k)
+		if timestamp > timestampSrc {
+			return nil, WalkActionNext, nil
+		}
 		if timestamp <= timestampDst {
 			return nil, WalkActionStop, nil
 		}
@@ -167,14 +170,15 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 	}); err != nil {
 		return err
 	}
-	suffixDst := encodeTimestamp(timestampDst)
+	//suffixDst := encodeTimestamp(timestampDst)
 	for bucketStr, t := range m {
 		bucket := []byte(bucketStr)
-		it := t.NewSeekIterator()
+		//it := t.NewSeekIterator()
 		min, _ := t.Min().(*PutItem)
 		if min == nil {
 			return nil
 		}
+		/*
 		var item *PutItem = it.SeekTo(min).(*PutItem)
 		seeking := false
 		for !seeking && item != nil {
@@ -183,6 +187,9 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 			copy(startkey[len(item.key):], suffixDst)
 			seeking = true
 			if err := db.Walk(bucket, startkey, 0, func (k, v []byte) ([]byte, WalkAction, error) {
+				if bytes.Compare(k, startkey) < 0 {
+					return nil, WalkActionNext, nil
+				}
 				// Check if we found the "item" in the database
 				if bytes.HasPrefix(k, item.key) {
 					item.value = common.CopyBytes(v)
@@ -214,11 +221,20 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 				return err
 			}
 		}
+		*/
+		var extErr error
 		t.AscendGreaterOrEqual1(min, func(i llrb.Item) bool {
 			item := i.(*PutItem)
-			df(bucket, item.key, item.value)
+			value, err := db.GetAsOf(bucket, item.key, timestampDst)
+			if err != nil {
+				value = nil
+			}
+			df(bucket, item.key, value)
 			return true
 		})
+		if extErr != nil {
+			return extErr
+		}
 	}
 	return nil
 }

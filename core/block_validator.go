@@ -49,9 +49,9 @@ func NewBlockValidator(config *params.ChainConfig, blockchain *BlockChain, engin
 // header's transaction and uncle roots. The headers are assumed to be already
 // validated at this point.
 func (v *BlockValidator) ValidateBody(block *types.Block) error {
-	if v.bc.HasBlockAndState(block.Hash(), block.NumberU64()) {
-		return ErrKnownBlock
-	}
+	//if v.bc.HasBlockAndState(block.Hash(), block.NumberU64()) {
+	//	return ErrKnownBlock
+	//}
 	// Check whether the block is linkable
 	if v.bc.GetBlockByHash(block.ParentHash()) == nil {
 		return consensus.ErrUnknownAncestor

@@ -79,6 +79,7 @@ type Trie struct {
 	accounts        bool
 
 	nodeList        *List
+	historical      bool
 }
 
 func (t *Trie) PrintTrie() {
@@ -103,6 +104,13 @@ func New(root common.Hash, bucket []byte, prefix []byte, encodeToBytes bool) *Tr
 		trie.root = hashNode(rootcopy)
 	}
 	return trie
+}
+
+func (t *Trie) SetHistorical(h bool) {
+	t.historical = h
+	if h && !bytes.HasPrefix(t.bucket, []byte("h")) {
+		t.bucket = append([]byte("h"), t.bucket...)
+	}
 }
 
 func (t *Trie) MakeListed(nodeList *List) {
@@ -336,11 +344,15 @@ func (t *Trie) relistNodes(n node, level int) {
 }
 
 func (t *Trie) tryGet(dbr DatabaseReader, origNode node, key []byte, pos int, blockNr uint64) (value []byte, err error) {
-	val, err := dbr.Get(t.bucket, append(t.prefix, key...))
-	if err != nil || val == nil {
+	if t.historical {
+		value, err = dbr.GetAsOf(t.bucket, append(t.prefix, key...), blockNr)
+	} else {
+		value, err = dbr.Get(t.bucket, append(t.prefix, key...))
+	}
+	if err != nil || value == nil {
 		return nil, nil
 	}
-	return val, err
+	return
 }
 
 func (t *Trie) tryGet1(db ethdb.Database, origNode node, key []byte, pos int, blockNr uint64) (value []byte, gotValue bool) {

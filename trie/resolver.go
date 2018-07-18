@@ -182,6 +182,7 @@ type TrieResolver struct {
 	startLevel int
 	keyIdx int
 	h *hasher
+	historical bool
 }
 
 func (t *Trie) NewResolver(dbw ethdb.Putter, hashes bool, accounts bool) *TrieResolver {
@@ -196,6 +197,10 @@ func (t *Trie) NewResolver(dbw ethdb.Putter, hashes bool, accounts bool) *TrieRe
 		contIndices: []int{},
 	}
 	return &tr
+}
+
+func (tr *TrieResolver) SetHistorical(h bool) {
+	tr.historical = h
 }
 
 // TrieResolver implements sort.Interface
@@ -605,21 +610,27 @@ func (tr *TrieResolver) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
 	defer returnHasherToPool(tr.h)
 	startkeys, fixedbits := tr.PrepareResolveParams()
 	//if err := db.MultiWalkAsOf(append([]byte("h"), tr.t.prefix...), startkeys, fixedbits, blockNr, tr.Walker); err != nil {
+	var err error
 	if tr.accounts {
-		if err := db.MultiWalk([]byte("AT"), startkeys, fixedbits, tr.Walker); err != nil {
-			return err
+		if tr.historical {
+			err = db.MultiWalkAsOf([]byte("hAT"), startkeys, fixedbits, blockNr, tr.Walker)
+		} else {
+			err = db.MultiWalk([]byte("AT"), startkeys, fixedbits, tr.Walker)
 		}
 	} else {
-		if err := db.MultiWalk([]byte("ST"), startkeys, fixedbits, tr.Walker); err != nil {
-			return err
+		if tr.historical {
+			err = db.MultiWalkAsOf([]byte("hST"), startkeys, fixedbits, blockNr, tr.Walker)
+		} else {
+			err = db.MultiWalk([]byte("ST"), startkeys, fixedbits, tr.Walker)
 		}
 	}
-	return nil
+	return err
 }
 
 func (t *Trie) rebuildHashes(db ethdb.Database, key []byte, pos int, blockNr uint64, hashes bool, expected hashNode) (node, hashNode, error) {
 	tc := t.NewContinuation(key, pos, expected)
 	r := t.NewResolver(db, true, true)
+	r.SetHistorical(t.historical)
 	r.AddContinuation(tc)
 	if err := r.ResolveWithDb(db, blockNr); err != nil {
 		return nil, nil, err
