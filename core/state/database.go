@@ -646,8 +646,7 @@ func (tds *TrieDbState) PruneTries() {
 	}
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	churn := (m.TotalAlloc - prevMemStats.TotalAlloc) - (prevMemStats.Alloc - m.Alloc)
-	log.Info("Memory", "alloc", int(m.Alloc / 1024), "churn", int(churn / 1024), "sys", int(m.Sys / 1024), "numGC", int(m.NumGC))
+	log.Info("Memory", "alloc", int(m.Alloc / 1024), "sys", int(m.Sys / 1024), "numGC", int(m.NumGC))
 	prevMemStats = m
 }
 
