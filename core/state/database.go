@@ -448,12 +448,11 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64, commit bool) error {
 					return err
 				}
 			}
-		} else {
-			currentBucket := bucket[1:]
+		} else if bytes.Equal(bucket, StorageHistoryBucket) {
 			var address common.Address
-			copy(address[:], currentBucket)
+			copy(address[:], key[:20])
 			var keyHash common.Hash
-			copy(keyHash[:], key)
+			copy(keyHash[:], key[20:])
 			m, ok := tds.storageUpdates[address]
 			if !ok {
 				m = make(map[common.Hash][]byte)
@@ -461,9 +460,9 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64, commit bool) error {
 			}
 			m[keyHash] = value
 			if len(value) > 0 {
-				batch.Put(currentBucket, key, value)
+				batch.Put(StorageBucket, key, value)
 			} else {
-				batch.Delete(currentBucket, key)
+				batch.Delete(StorageBucket, key)
 			}
 		}
 		return nil
