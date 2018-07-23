@@ -887,14 +887,14 @@ func main() {
         }
         defer pprof.StopCPUProfile()
     }
-	db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	//db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
 	//db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
- 	check(err)
+ 	//check(err)
  	//defer db.Close()
  	//bucketStats(db)
  	//mychart()
  	//testRebuild()
- 	//testRewind()
+ 	testRewind()
  	//hashFile()
  	//buildHashFromFile()
  	//testResolve()
@@ -907,6 +907,6 @@ func main() {
  	//	testReset(uint64(*reset))
  	//}
  	//testBlockHashes()
- 	printBuckets(db)
+ 	//printBuckets(db)
 }
 
