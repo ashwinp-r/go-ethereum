@@ -134,9 +134,6 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tds
 			cfg.Debug = true
 		}
 		*/
-		if cfg.Debug {
-			fmt.Printf("DEBUG!\n")
-		}
 		receipt, _, err := ApplyTransaction(p.config, p.bc, nil, gp, statedb, tds, header, tx, usedGas, cfg)
 		if err != nil {
 			return nil, nil, 0, err
@@ -190,14 +187,19 @@ func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *commo
 	// Update the state with pending changes
 	var root []byte
 	if config.IsByzantium(header.Number) {
-		statedb.Finalise(true, tds.TrieStateWriter())
-		//tds.TrieRoot()
-	} else {
-		rootHash, err := tds.IntermediateRoot(statedb, config.IsEIP158(header.Number))
-		if err != nil {
+		//statedb.Finalise(true, tds.TrieStateWriter())
+		if err := statedb.Finalise(true, state.NoopStateWriter()); err != nil {
 			return nil, 0, err
 		}
-		root = rootHash.Bytes()
+	} else {
+		if err := statedb.Finalise(config.IsEIP158(header.Number), state.NoopStateWriter()); err != nil {
+			return nil, 0, err
+		}
+		//rootHash, err := tds.IntermediateRoot(statedb, config.IsEIP158(header.Number))
+		//if err != nil {
+		//	return nil, 0, err
+		//}
+		//root = rootHash.Bytes()
 	}
 	*usedGas += gas
 

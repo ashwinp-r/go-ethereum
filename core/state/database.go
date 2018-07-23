@@ -515,9 +515,15 @@ func encodingToAccount(enc []byte) (*Account, error) {
 }
 
 func (tds *TrieDbState) ReadAccountData(addrHash common.Hash) (*Account, error) {
-	enc, _, err := tds.t.TryGet(tds.db, addrHash[:], tds.blockNr)
-	if err != nil {
-		return nil, err
+	var enc []byte
+	var err error
+	if tds.historical {
+		enc, err = tds.db.GetAsOf(AccountsHistoryBucket, addrHash[:], tds.blockNr)
+	} else {
+		enc, err = tds.db.Get(AccountsBucket, addrHash[:])
+	}
+	if err != nil || enc == nil {
+		return nil, nil
 	}
 	return encodingToAccount(enc)
 }
@@ -579,21 +585,18 @@ func (tds *TrieDbState) getStorageTrie(address common.Address, addrHash common.H
 }
 
 func (tds *TrieDbState) ReadAccountStorage(address common.Address, key *common.Hash) ([]byte, error) {
-	addrHash, err := tds.HashAddress(address, false /*save*/)
-	if err != nil {
-		return nil, err
-	}
-	t, err := tds.getStorageTrie(address, addrHash, true)
-	if err != nil {
-		return nil, err
-	}
 	seckey, err := tds.HashKey(*key, false /*save*/)
 	if err != nil {
 		return nil, err
 	}
-	enc, _, err := t.TryGet(tds.db, seckey[:], tds.blockNr)
-	if err != nil {
-		return nil, err
+	var enc []byte
+	if tds.historical {
+		enc, err = tds.db.GetAsOf(StorageHistoryBucket, append(address[:], seckey[:]...), tds.blockNr)
+	} else {
+		enc, err = tds.db.Get(StorageBucket, append(address[:], seckey[:]...))
+	}
+	if err != nil || enc == nil {
+		return nil, nil
 	}
 	return enc, nil
 }
@@ -658,12 +661,19 @@ type DbStateWriter struct {
 	tds *TrieDbState
 }
 
+type noopStateWriter struct {
+}
+
 func (tds *TrieDbState) TrieStateWriter() *TrieStateWriter {
 	return &TrieStateWriter{tds: tds}
 }
 
 func (tds *TrieDbState) DbStateWriter() *DbStateWriter {
 	return &DbStateWriter{tds: tds}
+}
+
+func NoopStateWriter() StateWriter {
+	return &noopStateWriter{}
 }
 
 var emptyRoot = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
@@ -697,6 +707,10 @@ func (dsw *DbStateWriter) UpdateAccountData(addrHash common.Hash, account *Accou
 	return dsw.tds.db.PutS(AccountsBucket, AccountsHistoryBucket, addrHash[:], data, dsw.tds.blockNr)
 }
 
+func (nsw *noopStateWriter) UpdateAccountData(addrHash common.Hash, account *Account) error {
+	return nil
+}
+
 func (tsw *TrieStateWriter) DeleteAccount(addrHash common.Hash) error {
 	tsw.tds.accountUpdates[addrHash] = nil
 	tsw.tds.deleted[addrHash] = struct{}{}
@@ -707,12 +721,20 @@ func (dsw *DbStateWriter) DeleteAccount(addrHash common.Hash) error {
 	return dsw.tds.db.PutS(AccountsBucket, AccountsHistoryBucket, addrHash[:], []byte{}, dsw.tds.blockNr)
 }
 
+func (nsw *noopStateWriter) DeleteAccount(addrHash common.Hash) error {
+	return nil
+}
+
 func (tsw *TrieStateWriter) UpdateAccountCode(codeHash common.Hash, code []byte) error {
 	return nil
 }
 
 func (dsw *DbStateWriter) UpdateAccountCode(codeHash common.Hash, code []byte) error {
 	return dsw.tds.db.Put(CodeBucket, codeHash[:], code)
+}
+
+func (nsw *noopStateWriter) UpdateAccountCode(codeHash common.Hash, code []byte) error {
+	return nil
 }
 
 func (tsw *TrieStateWriter) WriteAccountStorage(address common.Address, key, value *common.Hash) error {
@@ -743,6 +765,10 @@ func (dsw *DbStateWriter) WriteAccountStorage(address common.Address, key, value
 	vv := make([]byte, len(v))
 	copy(vv, v)
 	return dsw.tds.db.PutS(StorageBucket, StorageHistoryBucket, append(address[:], seckey[:]...), vv, dsw.tds.blockNr)
+}
+
+func (nsw *noopStateWriter) WriteAccountStorage(address common.Address, key, value *common.Hash) error {
+	return nil
 }
 
 // Database wraps access to tries and contract code.

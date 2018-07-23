@@ -18,7 +18,6 @@
 package core
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -1104,7 +1103,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 			parent = chain[i-1]
 		}
 		readBlockNr := parent.NumberU64()
-		var root common.Hash
+		//var root common.Hash
 		if bc.trieDbState == nil {
 			currentBlockNr := bc.CurrentBlock().NumberU64()
 			log.Info("Creating StateDB from latest state", "block", currentBlockNr)
@@ -1112,18 +1111,18 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 			if err != nil {
 				return k, events, coalescedLogs, err
 			}
-			if err := bc.trieDbState.Rebuild(); err != nil {
-				return k, events, coalescedLogs, err
-			}
+			//if err := bc.trieDbState.Rebuild(); err != nil {
+			//	return k, events, coalescedLogs, err
+			//}
 		}
 		if bc.trieDbState != nil {
-			root, err = bc.trieDbState.TrieRoot()
-			if err != nil {
-				return k, events, coalescedLogs, err
-			}
+			//root, err = bc.trieDbState.TrieRoot()
+			//if err != nil {
+			//	return k, events, coalescedLogs, err
+			//}
 		}
 		parentRoot := parent.Root()
-		if bc.trieDbState == nil || readBlockNr == 0 || !bytes.Equal(root[:], parentRoot[:]) {
+		if bc.trieDbState == nil || readBlockNr == 0 /*|| root != parentRoot */ {
 			if bc.trieDbState != nil && readBlockNr != 0 {
 				log.Info("Rewinding", "to block", readBlockNr)
 				if err = bc.db.Commit(); err != nil {
