@@ -1167,12 +1167,14 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		// Process block using the parent state as reference point.
 		receipts, logs, usedGas, err := bc.processor.Process(block, stateDB, bc.trieDbState, bc.vmConfig)
 		if err != nil {
+			bc.db.Rollback()
 			bc.reportBlock(block, receipts, err)
 			return k, events, coalescedLogs, err
 		}
 		// Validate the state using the default validator
 		err = bc.Validator().ValidateState(block, parent, stateDB, bc.trieDbState, receipts, usedGas)
 		if err != nil {
+			bc.db.Rollback()
 			bc.reportBlock(block, receipts, err)
 			return k, events, coalescedLogs, err
 		}
