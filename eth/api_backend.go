@@ -98,8 +98,9 @@ func (b *EthAPIBackend) StateAndHeaderByNumber(ctx context.Context, blockNr rpc.
 	if header == nil || err != nil {
 		return nil, nil, err
 	}
-	stateDb, _, err := b.eth.BlockChain().StateAt(header.Root, header.Number.Uint64())
-	return stateDb, header, err
+	ds := state.NewDbState(b.eth.BlockChain().ChainDb(), uint64(blockNr))
+	stateDb := state.New(ds)
+	return stateDb, header, nil
 }
 
 func (b *EthAPIBackend) GetBlock(ctx context.Context, hash common.Hash) (*types.Block, error) {

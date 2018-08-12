@@ -67,19 +67,18 @@ type StateWriter interface {
 
 // Implements StateReader by wrapping database only, without trie
 type DbState struct {
-	db ethdb.Mutation
+	db ethdb.Getter
 	blockNr uint64
 }
 
-func NewDbState(db ethdb.Database, blockNr uint64) *DbState {
+func NewDbState(db ethdb.Getter, blockNr uint64) *DbState {
 	return &DbState{
-		db: db.NewBatch(),
+		db: db,
 		blockNr: blockNr,
 	}
 }
 
 func (dbs *DbState) SetBlockNr(blockNr uint64) {
-	dbs.db.DeleteTimestamp(blockNr)
 	dbs.blockNr = blockNr
 }
 
@@ -129,7 +128,7 @@ func (dbs *DbState) ReadAccountData(addrHash common.Hash) (*Account, error) {
 
 func (dbs *DbState) ReadAccountStorage(address common.Address, key *common.Hash) ([]byte, error) {
 	seckey := crypto.Keccak256Hash(key[:])
-	enc, err := dbs.db.GetAsOf(append([]byte("h"), address[:]...), seckey[:], dbs.blockNr)
+	enc, err := dbs.db.GetAsOf(StorageHistoryBucket, append(address[:], seckey[:]...), dbs.blockNr)
 	if err != nil || enc == nil {
 		return nil, nil
 	}
@@ -152,41 +151,19 @@ func (dbs *DbState) ReadAccountCodeSize(codeHash common.Hash) (int, error) {
 }
 
 func (dbs *DbState) UpdateAccountData(addrHash common.Hash, account *Account) error {
-	var data []byte
-	var err error
-	if bytes.Equal(account.CodeHash, emptyCodeHash) && (account.Root == emptyRoot || account.Root == common.Hash{}) {
-		if account.Balance.Sign() == 0 && account.Nonce == 0 {
-			data = []byte{byte(192)}
-		} else {
-			var extAccount ExtAccount
-			extAccount.Nonce = account.Nonce
-			extAccount.Balance = account.Balance
-			data, err = rlp.EncodeToBytes(extAccount)
-			if err != nil {
-				return err
-			}
-		}
-	} else {
-		data, err = rlp.EncodeToBytes(account)
-		if err != nil {
-			return err
-		}
-	}
-	return dbs.db.PutS(AccountsBucket, AccountsHistoryBucket, addrHash[:], data, dbs.blockNr)
+	return nil
 }
 
 func (dbs *DbState) DeleteAccount(addrHash common.Hash) error {
-	return dbs.db.PutS(AccountsBucket, AccountsHistoryBucket, addrHash[:], []byte{}, dbs.blockNr)
+	return nil
 }
 
 func (dbs *DbState) UpdateAccountCode(codeHash common.Hash, code []byte) error {
-	return dbs.db.Put(CodeBucket, codeHash[:], code)
+	return nil
 }
 
 func (dbs *DbState) WriteAccountStorage(address common.Address, key, value *common.Hash) error {
-	seckey := crypto.Keccak256Hash(key[:])
-	v := bytes.TrimLeft(value[:], "\x00")
-	return dbs.db.PutS(StorageBucket, StorageHistoryBucket, append(address[:], seckey[:]...), v, dbs.blockNr)
+	return nil
 }
 
 // Implements StateReader by wrapping a trie and a database, where trie acts as a cache for the database
