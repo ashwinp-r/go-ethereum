@@ -217,7 +217,7 @@ func main() {
 	lastBlock := blockNumber.Number.ToInt().Int64()
 	fmt.Printf("Last block: %d\n", lastBlock)
 	accounts := make(map[common.Address]struct{})
-	firstBn := 1000000-2
+	firstBn := 200000-2
 	prevBn := firstBn
 	for bn := firstBn; bn <= int(lastBlock); bn++ {
 		template := `

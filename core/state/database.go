@@ -498,36 +498,33 @@ func (tds *TrieDbState) ReadAccountData(addrHash common.Hash) (*Account, error) 
 	return encodingToAccount(enc)
 }
 
+func (tds *TrieDbState) savePreimage(save bool, hash, preimage []byte) error {
+	if !save {
+		return nil
+	}
+	return tds.db.Put(trie.SecureKeyPrefix, hash, preimage)
+}
+
 func (tds *TrieDbState) HashAddress(address common.Address, save bool) (common.Hash, error) {
 	if cached, ok := tds.addrHashCache.Get(address); ok {
 		var hash common.Hash
 		copy(hash[:], cached.([]byte))
-		return hash, nil
+		return hash, tds.savePreimage(save, hash[:], address[:])
 	}
 	hash := crypto.Keccak256Hash(address[:])
 	tds.addrHashCache.Add(address, hash[:])
-	if save {
-		if err := tds.db.Put(trie.SecureKeyPrefix, hash[:], address[:]); err != nil {
-			return common.Hash{}, err
-		}
-	}
-	return hash, nil
+	return hash, tds.savePreimage(save, hash[:], address[:])
 }
 
 func (tds *TrieDbState) HashKey(key common.Hash, save bool) (common.Hash, error) {
 	if cached, ok := tds.keyHashCache.Get(key); ok {
 		var hash common.Hash
 		copy(hash[:], cached.([]byte))
-		return hash, nil
+		return hash, tds.savePreimage(save, hash[:], key[:])
 	}
 	hash := crypto.Keccak256Hash(key[:])
 	tds.keyHashCache.Add(key, hash[:])
-	if save {
-		if err := tds.db.Put(trie.SecureKeyPrefix, hash[:], key[:]); err != nil {
-			return common.Hash{}, err
-		}
-	}
-	return hash, nil
+	return hash, tds.savePreimage(save, hash[:], key[:])
 }
 
 func (tds *TrieDbState) GetKey(shaKey []byte) []byte {
@@ -645,7 +642,7 @@ func (tds *TrieDbState) DbStateWriter() *DbStateWriter {
 var emptyRoot = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
 
 func (tsw *TrieStateWriter) UpdateAccountData(address common.Address, account *Account) error {
-	addrHash, err := tsw.tds.HashAddress(address, true /*save*/)
+	addrHash, err := tsw.tds.HashAddress(address, false /*save*/)
 	if err != nil {
 		return err
 	}
@@ -706,7 +703,7 @@ func (tsw *TrieStateWriter) WriteAccountStorage(address common.Address, key, val
 		m = make(map[common.Hash][]byte)
 		tsw.tds.storageUpdates[address] = m
 	}
-	seckey, err :=tsw.tds.HashKey(*key, true /*save*/)
+	seckey, err :=tsw.tds.HashKey(*key, false /*save*/)
 	if err != nil {
 		return err
 	}

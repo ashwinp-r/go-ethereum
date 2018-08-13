@@ -279,8 +279,9 @@ func GetModifiedAccounts(db Getter, starttimestamp, endtimestamp uint64) ([]comm
 		item := i.(*PutItem)
 		value, err := db.Get([]byte("secure-key-"), item.key)
 		if err != nil {
-			//extErr = err
-			//return false
+			fmt.Printf("%x\n", item.key)
+			extErr = err
+			return false
 		}
 		copy(accounts[idx][:], value)
 		idx++
