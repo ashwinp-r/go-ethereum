@@ -239,6 +239,59 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 	return nil
 }
 
+func GetModifiedAccounts(db Getter, starttimestamp, endtimestamp uint64) ([]common.Address, error) {
+	t := llrb.New()
+	endCode := encodeTimestamp(endtimestamp)
+	if err := db.Walk(SuffixBucket, endCode, 0, func (k, v []byte) ([]byte, WalkAction, error) {
+		timestamp, bucket := decodeTimestamp(k)
+		//fmt.Printf("timestamp %d, bucket: %s\n", timestamp, bucket)
+		if !bytes.Equal(bucket, []byte("hAT")) {
+			return nil, WalkActionNext, nil
+		}
+		if timestamp > endtimestamp {
+			return nil, WalkActionNext, nil
+		}
+		if timestamp < starttimestamp {
+			return nil, WalkActionStop, nil
+		}
+		keycount := int(binary.BigEndian.Uint32(v))
+		for i, ki := 4, 0; ki < keycount; ki++ {
+			l := int(v[i])
+			i++
+			t.ReplaceOrInsert(&PutItem{key: common.CopyBytes(v[i:i+l]), value: nil})
+			i += l
+		}
+		return nil, WalkActionNext, nil
+	}); err != nil {
+		return nil, err
+	}
+	accounts := make([]common.Address, t.Len())
+	if t.Len() == 0 {
+		return accounts, nil
+	}
+	idx := 0
+	var extErr error
+	min, _ := t.Min().(*PutItem)
+	if min == nil {
+		return accounts, nil
+	}
+	t.AscendGreaterOrEqual1(min, func(i llrb.Item) bool {
+		item := i.(*PutItem)
+		value, err := db.Get([]byte("secure-key-"), item.key)
+		if err != nil {
+			//extErr = err
+			//return false
+		}
+		copy(accounts[idx][:], value)
+		idx++
+		return true
+	})
+	if extErr != nil {
+		return nil, extErr
+	}
+	return accounts, nil
+}
+
 var testbucket = []byte("B")
 
 func TestRewindData1Bucket() {

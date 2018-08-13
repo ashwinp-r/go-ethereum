@@ -33,13 +33,13 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/miner"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
-	"github.com/ethereum/go-ethereum/trie"
 )
 
 // PublicEthereumAPI provides an API to access Ethereum full node-related
@@ -492,31 +492,12 @@ func (api *PrivateDebugAPI) GetModifiedAccountsByHash(startHash common.Hash, end
 }
 
 func (api *PrivateDebugAPI) getModifiedAccounts(startBlock, endBlock *types.Block) ([]common.Address, error) {
-	if startBlock.Number().Uint64() >= endBlock.Number().Uint64() {
-		return nil, fmt.Errorf("start block height (%d) must be less than end block height (%d)", startBlock.Number().Uint64(), endBlock.Number().Uint64())
+	startNum := startBlock.NumberU64()
+	endNum := endBlock.NumberU64()
+	if startNum >= endNum {
+		return nil, fmt.Errorf("start block height (%d) must be less than end block height (%d)", startNum, endNum)
 	}
 
-	oldTrie, err := trie.NewSecure(startBlock.Root(), state.AccountsBucket, nil, false)
-	if err != nil {
-		return nil, err
-	}
-	newTrie, err := trie.NewSecure(endBlock.Root(), state.AccountsBucket, nil, false)
-	if err != nil {
-		return nil, err
-	}
-
-	diff, _ := trie.NewDifferenceIterator(
-		oldTrie.NodeIterator(api.eth.chainDb, []byte{}, startBlock.NumberU64()), 
-		newTrie.NodeIterator(api.eth.chainDb, []byte{}, endBlock.NumberU64()))
-	iter := trie.NewIterator(diff)
-
-	var dirty []common.Address
-	for iter.Next() {
-		key := newTrie.GetKey(api.eth.chainDb, iter.Key)
-		if key == nil {
-			return nil, fmt.Errorf("no preimage found for hash %x", iter.Key)
-		}
-		dirty = append(dirty, common.BytesToAddress(key))
-	}
-	return dirty, nil
+	dirty, err := ethdb.GetModifiedAccounts(api.eth.blockchain.ChainDb(), startNum, endNum)
+	return dirty, err
 }

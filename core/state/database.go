@@ -59,7 +59,7 @@ type StateReader interface {
 }
 
 type StateWriter interface {
-	UpdateAccountData(addrHash common.Hash, account *Account) error
+	UpdateAccountData(address common.Address, account *Account) error
 	UpdateAccountCode(codeHash common.Hash, code []byte) error
 	DeleteAccount(addrHash common.Hash) error
 	WriteAccountStorage(address common.Address, key, value *common.Hash) error
@@ -150,7 +150,7 @@ func (dbs *DbState) ReadAccountCodeSize(codeHash common.Hash) (int, error) {
 	return len(code), nil
 }
 
-func (dbs *DbState) UpdateAccountData(addrHash common.Hash, account *Account) error {
+func (dbs *DbState) UpdateAccountData(address common.Address, account *Account) error {
 	return nil
 }
 
@@ -644,12 +644,16 @@ func (tds *TrieDbState) DbStateWriter() *DbStateWriter {
 
 var emptyRoot = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
 
-func (tsw *TrieStateWriter) UpdateAccountData(addrHash common.Hash, account *Account) error {
+func (tsw *TrieStateWriter) UpdateAccountData(address common.Address, account *Account) error {
+	addrHash, err := tsw.tds.HashAddress(address, true /*save*/)
+	if err != nil {
+		return err
+	}
 	tsw.tds.accountUpdates[addrHash] = account
 	return nil
 }
 
-func (dsw *DbStateWriter) UpdateAccountData(addrHash common.Hash, account *Account) error {
+func (dsw *DbStateWriter) UpdateAccountData(address common.Address, account *Account) error {
 	var data []byte
 	var err error
 	if bytes.Equal(account.CodeHash, emptyCodeHash) && (account.Root == emptyRoot || account.Root == common.Hash{}) {
@@ -669,6 +673,10 @@ func (dsw *DbStateWriter) UpdateAccountData(addrHash common.Hash, account *Accou
 		if err != nil {
 			return err
 		}
+	}
+	addrHash, err := dsw.tds.HashAddress(address, true /*save*/)
+	if err != nil {
+		return err
 	}
 	return dsw.tds.db.PutS(AccountsBucket, AccountsHistoryBucket, addrHash[:], data, dsw.tds.blockNr)
 }

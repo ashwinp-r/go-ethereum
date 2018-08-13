@@ -531,7 +531,7 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool, stateWriter StateWriter) err
 			if err := stateObject.updateTrie(stateWriter); err != nil {
 				return err
 			}
-			if err := stateWriter.UpdateAccountData(crypto.Keccak256Hash(addr[:]), &stateObject.data); err != nil {
+			if err := stateWriter.UpdateAccountData(addr, &stateObject.data); err != nil {
 				return err
 			}
 		}
@@ -567,7 +567,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool, stateWriter StateWriter) error
 			if err := stateObject.updateTrie(stateWriter); err != nil {
 				return err
 			}
-			if err := stateWriter.UpdateAccountData(crypto.Keccak256Hash(addr[:]), &stateObject.data); err != nil {
+			if err := stateWriter.UpdateAccountData(addr, &stateObject.data); err != nil {
 				return err
 			}
 		}

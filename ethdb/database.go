@@ -300,11 +300,11 @@ func (db *LDBDatabase) Walk(bucket, startkey []byte, fixedbits uint, walker Walk
 		}
 		c := b.Cursor()
 		var k, v []byte
-		if fixedbits == 0 {
-			k, v = c.First()
-		} else {
+		//if fixedbits == 0 {
+		//	k, v = c.First()
+		//} else {
 			k, v = c.Seek(startkey)
-		}
+		//}
 		for k != nil && (fixedbits == 0 || bytes.Equal(k[:fixedbytes-1], startkey[:fixedbytes-1]) && (k[fixedbytes-1]&mask)==(startkey[fixedbytes-1]&mask)) {
 			nextkey, action, err := walker(k, v)
 			if err != nil {
@@ -337,11 +337,11 @@ func (db *LDBDatabase) MultiWalk(bucket []byte, startkeys [][]byte, fixedbits []
 		}
 		c := b.Cursor()
 		var k, v []byte
-		if fixedbits[keyIdx] == 0 {
-			k, v = c.First()
-		} else {
+		//if fixedbits[keyIdx] == 0 {
+		//	k, v = c.First()
+		//} else {
 			k, v = c.Seek(startkey)
-		}
+		//}
 		for k != nil {
 			// Adjust keyIdx if needed
 			if fixedbytes > 0 {

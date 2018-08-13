@@ -74,6 +74,11 @@ type EthTxTrace struct {
 	Result EthTxTraceResult `json:"result"`
 }
 
+type DebugModifiedAccounts struct {
+	CommonResponse
+	Result []common.Address `json:"result"`
+}
+
 func post(client *http.Client, url, request string, response interface{}) error {
 	r, err := client.Post(url, "application/json", strings.NewReader(request))
 	if err != nil {
@@ -192,9 +197,10 @@ func compareBalances(balance, balanceg *EthBalance) bool {
 func main() {
 	fmt.Printf("Hello, world!\n")
 	var client = &http.Client{
-		Timeout: time.Second * 120,
+		Timeout: time.Second * 600,
 	}
 	geth_url := "http://192.168.1.96:8545"
+	//geth_url := "http://localhost:8545"
 	turbogeth_url := "http://localhost:8545"
 	request := `
 {"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":83}
@@ -211,7 +217,9 @@ func main() {
 	lastBlock := blockNumber.Number.ToInt().Int64()
 	fmt.Printf("Last block: %d\n", lastBlock)
 	accounts := make(map[common.Address]struct{})
-	for bn := 100000; bn <= int(lastBlock); bn++ {
+	firstBn := 1000000-2
+	prevBn := firstBn
+	for bn := firstBn; bn <= int(lastBlock); bn++ {
 		template := `
 {"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x%x", true],"id":83}
 `
@@ -241,6 +249,7 @@ func main() {
 			if tx.To != nil {
 				accounts[*tx.To] = struct{}{}
 			}
+			/*
 			template =`
 {"jsonrpc":"2.0","method":"debug_traceTransaction","params":["%s"],"id":83}
 `
@@ -267,9 +276,7 @@ func main() {
 				fmt.Printf("Different traces block %d, tx %s\n", bn, tx.Hash)
 				return
 			}
-			if len(trace.Result.StructLogs) > 0 {
-				fmt.Printf("Trace length for %s: %d\n", tx.Hash, len(trace.Result.StructLogs))
-			}
+			*/
 		}
 		template = `
 {"jsonrpc":"2.0","method":"eth_getBalance","params":["0x%x", "0x%x"],"id":83}
@@ -296,8 +303,31 @@ func main() {
 			fmt.Printf("Miner %x balance difference for block %d\n", b.Result.Miner, bn)
 			return
 		}
-		if bn % 1000 == 0 {
-			fmt.Printf("Done block %d, unique accounts: %d\n", bn, len(accounts))
+		if prevBn < bn && bn % 1000 == 0 {
+			// Checking modified accounts
+			template = `
+{"jsonrpc":"2.0","method":"debug_getModifiedAccountsByNumber","params":[%d, %d],"id":83}
+`
+			var ma DebugModifiedAccounts
+			if err := post(client, turbogeth_url, fmt.Sprintf(template, prevBn, bn), &ma); err != nil {
+				fmt.Printf("Could not get modified accounts: %v\n", err)
+				return
+			}
+			if ma.Error != nil {
+				fmt.Printf("Error getting modified accounts: %d %d\n", ma.Error.Code, ma.Error.Message)
+				return
+			}
+			var mag DebugModifiedAccounts
+			if err := post(client, geth_url, fmt.Sprintf(template, prevBn, bn), &mag); err != nil {
+				fmt.Printf("Could not get modified accounts g: %v\n", err)
+				return
+			}
+			if mag.Error != nil {
+				fmt.Printf("Error getting modified accounts g: %d %d\n", mag.Error.Code, mag.Error.Message)
+				return
+			}
+			fmt.Printf("Done blocks %d-%d, modified accounts: %d (%d)\n", prevBn, bn, len(ma.Result), len(mag.Result))
+			prevBn = bn
 		}
 	}
 }
