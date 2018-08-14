@@ -144,9 +144,9 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 	suffixSrc := encodeTimestamp(timestampSrc)
 	if err := db.Walk(SuffixBucket, suffixSrc, 0, func (k, v []byte) ([]byte, WalkAction, error) {
 		timestamp, bucket := decodeTimestamp(k)
-		if timestamp > timestampSrc {
-			return nil, WalkActionNext, nil
-		}
+		//if timestamp > timestampSrc {
+		//	return nil, WalkActionNext, nil
+		//}
 		if timestamp <= timestampDst {
 			return nil, WalkActionStop, nil
 		}
@@ -240,16 +240,11 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 }
 
 func GetModifiedAccounts(db Getter, starttimestamp, endtimestamp uint64) ([]common.Address, error) {
-	c4 := common.HexToHash("0xa876da518a393dbd067dc72abfa08d475ed6447fca96d92ec3f9e7eba503ca61")
 	t := llrb.New()
 	endCode := encodeTimestamp(endtimestamp)
 	if err := db.Walk(SuffixBucket, endCode, 0, func (k, v []byte) ([]byte, WalkAction, error) {
 		timestamp, bucket := decodeTimestamp(k)
-		//fmt.Printf("timestamp %d, bucket: %s\n", timestamp, bucket)
 		if !bytes.Equal(bucket, []byte("hAT")) {
-			return nil, WalkActionNext, nil
-		}
-		if timestamp > endtimestamp {
 			return nil, WalkActionNext, nil
 		}
 		if timestamp <= starttimestamp {
@@ -259,9 +254,6 @@ func GetModifiedAccounts(db Getter, starttimestamp, endtimestamp uint64) ([]comm
 		for i, ki := 4, 0; ki < keycount; ki++ {
 			l := int(v[i])
 			i++
-			if bytes.Equal(c4[:], v[i:i+l]) {
-				fmt.Printf("c4 at block %d\n", timestamp)
-			}
 			t.ReplaceOrInsert(&PutItem{key: common.CopyBytes(v[i:i+l]), value: nil})
 			i += l
 		}
@@ -283,8 +275,7 @@ func GetModifiedAccounts(db Getter, starttimestamp, endtimestamp uint64) ([]comm
 		item := i.(*PutItem)
 		value, err := db.Get([]byte("secure-key-"), item.key)
 		if err != nil {
-			fmt.Printf("%x\n", item.key)
-			extErr = err
+			extErr = fmt.Errorf("Could not get preimage for key %x", item.key)
 			return false
 		}
 		copy(accounts[idx][:], value)
