@@ -150,7 +150,7 @@ func historyBucket(bucket []byte) []byte {
 }
 
 // Put puts the given key / value to the queue
-func (db *LDBDatabase) PutS(bucket, hBucket, key, value []byte, timestamp uint64) error {
+func (db *LDBDatabase) PutS(hBucket, key, value []byte, timestamp uint64) error {
 	composite, suffix := compositeKeySuffix(key, timestamp)
 	suffixkey := make([]byte, len(suffix) + len(hBucket))
 	copy(suffixkey, suffix)
@@ -160,18 +160,6 @@ func (db *LDBDatabase) PutS(bucket, hBucket, key, value []byte, timestamp uint64
 			return err
 		}
 		if err = hb.Put(composite, value); err != nil {
-			return err
-		}
-		b, err := tx.CreateBucketIfNotExists(bucket)
-		if err != nil {
-			return err
-		}
-		if len(value) == 0 {
-			err = b.Delete(key)
-		} else {
-			err = b.Put(key, value)
-		}
-		if err != nil {
 			return err
 		}
 		sb, err := tx.CreateBucketIfNotExists(SuffixBucket)
@@ -699,7 +687,7 @@ func (m *mutation) Put(bucket, key []byte, value []byte) error {
 }
 
 // Assumes that bucket, key, and value won't be modified
-func (m *mutation) PutS(bucket, hBucket, key, value []byte, timestamp uint64) error {
+func (m *mutation) PutS(hBucket, key, value []byte, timestamp uint64) error {
 	//fmt.Printf("PutS bucket %x key %x value %x timestamp %d\n", bucket, key, value, timestamp)
 	composite, _ := compositeKeySuffix(key, timestamp)
 	suffix_m, ok := m.suffixkeys[timestamp]
@@ -721,16 +709,6 @@ func (m *mutation) PutS(bucket, hBucket, key, value []byte, timestamp uint64) er
 		m.puts[string(hBucket)] = ht
 	}
 	ht.ReplaceOrInsert(&PutItem{key: composite, value: value})
-	var t *llrb.LLRB
-	if t, ok = m.puts[string(bucket)]; !ok {
-		t = llrb.New()
-		m.puts[string(bucket)] = t
-	}
-	if len(value) == 0 {
-		t.ReplaceOrInsert(&PutItem{key: key, value: nil})
-	} else {
-		t.ReplaceOrInsert(&PutItem{key: key, value: value})
-	}
 	return nil
 }
 
@@ -1086,8 +1064,8 @@ func (dt *table) Put(bucket, key []byte, value []byte) error {
 	return dt.db.Put(bucket, append([]byte(dt.prefix), key...), value)
 }
 
-func (dt *table) PutS(bucket, hBucket, key, value []byte, timestamp uint64) error {
-	return dt.db.PutS(bucket, hBucket, append([]byte(dt.prefix), key...), value, timestamp)
+func (dt *table) PutS(hBucket, key, value []byte, timestamp uint64) error {
+	return dt.db.PutS(hBucket, append([]byte(dt.prefix), key...), value, timestamp)
 }
 
 func (dt *table) MultiPut(tuples ...[]byte) error {

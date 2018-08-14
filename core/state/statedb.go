@@ -232,7 +232,8 @@ func (self *StateDB) GetCodeHash(addr common.Address) common.Hash {
 func (self *StateDB) GetState(addr common.Address, bhash common.Hash) common.Hash {
 	stateObject := self.getStateObject(addr)
 	if stateObject != nil {
-		return stateObject.GetState(bhash)
+		value, _ := stateObject.GetState(bhash)
+		return value
 	}
 	return common.Hash{}
 }
@@ -410,6 +411,7 @@ func (self *StateDB) CreateAccount(addr common.Address, checkPrev bool) {
 }
 
 func (tds *TrieDbState) ForEachStorage(s *StateDB, addr common.Address, cb func(key, value common.Hash) bool) {
+	/*
 	so := s.getStateObject(addr)
 	if so == nil {
 		return
@@ -428,6 +430,7 @@ func (tds *TrieDbState) ForEachStorage(s *StateDB, addr common.Address, cb func(
 		}
 		return true, nil
 	})
+	*/
 }
 
 // Copy creates a deep, independent copy of the state.
@@ -523,7 +526,7 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool, stateWriter StateWriter) err
 		}
 
 		if stateObject.suicided || (deleteEmptyObjects && stateObject.empty()) {
-			if err := stateWriter.DeleteAccount(crypto.Keccak256Hash(addr[:])); err != nil {
+			if err := stateWriter.DeleteAccount(addr); err != nil {
 				return err
 			}
 			stateObject.deleted = true
@@ -531,7 +534,7 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool, stateWriter StateWriter) err
 			if err := stateObject.updateTrie(stateWriter); err != nil {
 				return err
 			}
-			if err := stateWriter.UpdateAccountData(addr, &stateObject.data); err != nil {
+			if err := stateWriter.UpdateAccountData(addr, &stateObject.original, &stateObject.data); err != nil {
 				return err
 			}
 		}
@@ -553,7 +556,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool, stateWriter StateWriter) error
 		//fmt.Printf("%x %d %x %x\n", addr[:], stateObject.data.Balance, stateObject.data.CodeHash, stateObject.data.Root[:])
 
 		if stateObject.suicided || (isDirty && deleteEmptyObjects && stateObject.empty()) {
-			if err := stateWriter.DeleteAccount(crypto.Keccak256Hash(addr[:])); err != nil {
+			if err := stateWriter.DeleteAccount(addr); err != nil {
 				return err
 			}
 			stateObject.deleted = true
@@ -567,7 +570,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool, stateWriter StateWriter) error
 			if err := stateObject.updateTrie(stateWriter); err != nil {
 				return err
 			}
-			if err := stateWriter.UpdateAccountData(addr, &stateObject.data); err != nil {
+			if err := stateWriter.UpdateAccountData(addr, &stateObject.original, &stateObject.data); err != nil {
 				return err
 			}
 		}

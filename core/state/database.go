@@ -59,9 +59,9 @@ type StateReader interface {
 }
 
 type StateWriter interface {
-	UpdateAccountData(address common.Address, account *Account) error
+	UpdateAccountData(address common.Address, original, account *Account) error
 	UpdateAccountCode(codeHash common.Hash, code []byte) error
-	DeleteAccount(addrHash common.Hash) error
+	DeleteAccount(address common.Address) error
 	WriteAccountStorage(address common.Address, key, value *common.Hash) error
 }
 
@@ -150,11 +150,11 @@ func (dbs *DbState) ReadAccountCodeSize(codeHash common.Hash) (int, error) {
 	return len(code), nil
 }
 
-func (dbs *DbState) UpdateAccountData(address common.Address, account *Account) error {
+func (dbs *DbState) UpdateAccountData(address common.Address, original, account *Account) error {
 	return nil
 }
 
-func (dbs *DbState) DeleteAccount(addrHash common.Hash) error {
+func (dbs *DbState) DeleteAccount(address common.Address) error {
 	return nil
 }
 
@@ -641,7 +641,11 @@ func (tds *TrieDbState) DbStateWriter() *DbStateWriter {
 
 var emptyRoot = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
 
-func (tsw *TrieStateWriter) UpdateAccountData(address common.Address, account *Account) error {
+func accountsEqual(a1, a2 *Account) bool {
+	return a1.Nonce == a2.Nonce && a1.Balance.Cmp(a2.Balance) == 0 && a1.Root == a2.Root && bytes.Equal(a1.CodeHash, a2.CodeHash)
+}
+
+func (tsw *TrieStateWriter) UpdateAccountData(address common.Address, original, account *Account) error {
 	addrHash, err := tsw.tds.HashAddress(address, false /*save*/)
 	if err != nil {
 		return err
@@ -650,7 +654,7 @@ func (tsw *TrieStateWriter) UpdateAccountData(address common.Address, account *A
 	return nil
 }
 
-func (dsw *DbStateWriter) UpdateAccountData(address common.Address, account *Account) error {
+func (dsw *DbStateWriter) UpdateAccountData(address common.Address, original, account *Account) error {
 	var data []byte
 	var err error
 	if bytes.Equal(account.CodeHash, emptyCodeHash) && (account.Root == emptyRoot || account.Root == common.Hash{}) {
@@ -675,17 +679,35 @@ func (dsw *DbStateWriter) UpdateAccountData(address common.Address, account *Acc
 	if err != nil {
 		return err
 	}
-	return dsw.tds.db.PutS(AccountsBucket, AccountsHistoryBucket, addrHash[:], data, dsw.tds.blockNr)
+	if err = dsw.tds.db.Put(AccountsBucket, addrHash[:], data); err != nil {
+		return err
+	}
+	// Don't write historical record if the account did not change
+	if accountsEqual(original, account) {
+		return nil
+	}
+	return dsw.tds.db.PutS(AccountsHistoryBucket, addrHash[:], data, dsw.tds.blockNr)
 }
 
-func (tsw *TrieStateWriter) DeleteAccount(addrHash common.Hash) error {
+func (tsw *TrieStateWriter) DeleteAccount(address common.Address) error {
+	addrHash, err := tsw.tds.HashAddress(address, false /*save*/)
+	if err != err {
+		return err
+	}
 	tsw.tds.accountUpdates[addrHash] = nil
 	tsw.tds.deleted[addrHash] = struct{}{}
 	return nil
 }
 
-func (dsw *DbStateWriter) DeleteAccount(addrHash common.Hash) error {
-	return dsw.tds.db.PutS(AccountsBucket, AccountsHistoryBucket, addrHash[:], []byte{}, dsw.tds.blockNr)
+func (dsw *DbStateWriter) DeleteAccount(address common.Address) error {
+	addrHash, err := dsw.tds.HashAddress(address, false /*save*/)
+	if err != nil {
+		return err
+	}
+	if err := dsw.tds.db.Delete(AccountsBucket, addrHash[:]); err != nil {
+		return err
+	}
+	return dsw.tds.db.PutS(AccountsHistoryBucket, addrHash[:], []byte{}, dsw.tds.blockNr)
 }
 
 func (tsw *TrieStateWriter) UpdateAccountCode(codeHash common.Hash, code []byte) error {
@@ -723,7 +745,16 @@ func (dsw *DbStateWriter) WriteAccountStorage(address common.Address, key, value
 	v := bytes.TrimLeft(value[:], "\x00")
 	vv := make([]byte, len(v))
 	copy(vv, v)
-	return dsw.tds.db.PutS(StorageBucket, StorageHistoryBucket, append(address[:], seckey[:]...), vv, dsw.tds.blockNr)
+	compositeKey := append(address[:], seckey[:]...)
+	if len(v) == 0 {
+		err = dsw.tds.db.Delete(StorageBucket, compositeKey)
+	} else {
+		err = dsw.tds.db.Put(StorageBucket, compositeKey, vv)
+	}
+	if err != nil {
+		return err
+	}
+	return dsw.tds.db.PutS(StorageHistoryBucket, compositeKey, vv, dsw.tds.blockNr)
 }
 
 // Database wraps access to tries and contract code.

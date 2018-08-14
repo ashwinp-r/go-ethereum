@@ -194,6 +194,30 @@ func compareBalances(balance, balanceg *EthBalance) bool {
 	return true
 }
 
+func compareModifiedAccounts(ma, mag *DebugModifiedAccounts) bool {
+	r := ma.Result
+	rg := mag.Result
+	rset := make(map[common.Address]struct{})
+	rsetg := make(map[common.Address]struct{})
+	for _, a := range r {
+		rset[a] = struct{}{}
+	}
+	for _, a := range rg {
+		rsetg[a] = struct{}{}
+	}
+	for _, a := range r {
+		if _, ok := rsetg[a]; !ok {
+			fmt.Printf("%x not present in rg\n", a)
+		}
+	}
+	for _, a := range rg {
+		if _, ok := rset[a]; !ok {
+			fmt.Printf("%x not present in r\n", a)
+		}
+	}
+	return true
+}
+
 func main() {
 	fmt.Printf("Hello, world!\n")
 	var client = &http.Client{
@@ -324,6 +348,10 @@ func main() {
 			}
 			if mag.Error != nil {
 				fmt.Printf("Error getting modified accounts g: %d %d\n", mag.Error.Code, mag.Error.Message)
+				return
+			}
+			if !compareModifiedAccounts(&ma, &mag) {
+				fmt.Printf("Modified accouts different for blocks %d-%d\n", prevBn, bn)
 				return
 			}
 			fmt.Printf("Done blocks %d-%d, modified accounts: %d (%d)\n", prevBn, bn, len(ma.Result), len(mag.Result))
