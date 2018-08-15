@@ -37,6 +37,7 @@ type EthTransaction struct {
 	From common.Address  `json:"from"`
 	To   *common.Address `json:"to"` // Pointer because it might be missing
 	Hash string          `json:"hash"`
+	Gas  hexutil.Big     `json:"gas"`
 }
 
 type EthBlockByNumberResult struct {
@@ -44,6 +45,7 @@ type EthBlockByNumberResult struct {
 	Miner        common.Address   `json:"miner"`
 	Transactions []EthTransaction `json:"transactions"`
 	TxRoot       common.Hash      `json:"transactionsRoot"`
+	Hash         common.Hash      `json:"hash"`
 }
 
 type EthBlockByNumber struct {
@@ -78,6 +80,24 @@ type EthTxTrace struct {
 type DebugModifiedAccounts struct {
 	CommonResponse
 	Result []common.Address `json:"result"`
+}
+
+// StorageRangeResult is the result of a debug_storageRangeAt API call.
+type StorageRangeResult struct {
+	Storage storageMap   `json:"storage"`
+	NextKey *common.Hash `json:"nextKey"` // nil if Storage includes the last key in the trie.
+}
+
+type storageMap map[common.Hash]storageEntry
+
+type storageEntry struct {
+	Key   *common.Hash `json:"key"`
+	Value common.Hash  `json:"value"`
+}
+
+type DebugStorageRange struct {
+	CommonResponse
+	Result StorageRangeResult `json:"result"`
 }
 
 func post(client *http.Client, url, request string, response interface{}) error {
@@ -262,16 +282,62 @@ func bench1() {
 		}
 		if bg.Error != nil {
 			fmt.Printf("Error retrieving block g: %d %s\n", bg.Error.Code, bg.Error.Message)
+			return
 		}
 		if !compareBlocks(&b, &bg) {
 			fmt.Printf("Block difference for %d\n", bn)
 			return
 		}
 		accounts[b.Result.Miner] = struct{}{}
-		for _, tx := range b.Result.Transactions {
+		for i, tx := range b.Result.Transactions {
 			accounts[tx.From] = struct{}{}
 			if tx.To != nil {
 				accounts[*tx.To] = struct{}{}
+			}
+			if tx.To != nil && tx.Gas.ToInt().Uint64() > 21000 {
+				// Request storage range
+				// blockHash common.Hash, txIndex int, contractAddress common.Address, keyStart hexutil.Bytes, maxResult int
+				template = `
+	{"jsonrpc":"2.0","method":"debug_storageRangeAt","params":["0x%x", %d, "0x%x", "0x%x", %d],"id":83}
+	`
+				var srg DebugStorageRange
+				smg := make(map[common.Hash]storageEntry)
+				nextKey := &common.Hash{}
+				for nextKey != nil {
+					if err := post(client, geth_url, fmt.Sprintf(template, b.Result.Hash, i, tx.To, *nextKey, 16), &srg); err != nil {
+						fmt.Printf("Could not get storageRange g: %d %d: %v\n", bn, i, err)
+						return
+					}
+					if srg.Error != nil {
+						fmt.Printf("Error getting storageRange g: %d %s\n", srg.Error.Code, srg.Error.Message)
+						break
+					} else {
+						nextKey = srg.Result.NextKey
+						for k, v := range srg.Result.Storage {
+							smg[k] = v
+						}
+					}
+				}
+				fmt.Printf("storageRange g: %d\n", len(smg))
+				var sr DebugStorageRange
+				sm := make(map[common.Hash]storageEntry)
+				nextKey = &common.Hash{}
+				for nextKey != nil {
+					if err := post(client, turbogeth_url, fmt.Sprintf(template, b.Result.Hash, i, tx.To, *nextKey, 16), &sr); err != nil {
+						fmt.Printf("Could not get storageRange: %d %d: %v\n", bn, i, err)
+						return
+					}
+					if sr.Error != nil {
+						fmt.Printf("Error getting storageRange: %d %s\n", sr.Error.Code, sr.Error.Message)
+						break
+					} else {
+						nextKey = sr.Result.NextKey
+						for k, v := range sr.Result.Storage {
+							sm[k] = v
+						}
+					}
+				}
+				fmt.Printf("storageRange: %d\n", len(sm))
 			}
 			/*
 			template =`

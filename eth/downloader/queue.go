@@ -774,15 +774,16 @@ func (q *queue) DeliverBodies(id string, txLists [][]*types.Transaction, uncleLi
 			// Try to search for the right result
 			found := false
 			for i = 0; i < len(txLists); i++ {
-				if types.DeriveSha(types.Transactions(txLists[i])) == header.TxHash || types.CalcUncleHash(uncleLists[i]) == header.UncleHash {
+				if types.DeriveSha(types.Transactions(txLists[i])) == header.TxHash && types.CalcUncleHash(uncleLists[i]) == header.UncleHash {
 					found = true
 					break
 				}
-
 			}
 			if !found {
-				fmt.Printf("INVALID body %d ", header.Number.Uint64())
+				fmt.Printf("Could not find body for %d\n", header.Number.Uint64())
 				return false, errInvalidBody
+			} else {
+				fmt.Printf("Fixed up body %d\n", header.Number.Uint64())
 			}
 		}
 		result.Transactions = txLists[i]
