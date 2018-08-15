@@ -465,18 +465,10 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		}
 		// Filter out any explicitly requested bodies, deliver the rest to the downloader
 		filter := len(transactions) > 0 || len(uncles) > 0
-		lenTx := len(transactions)
-		lenUn := len(uncles)
 		if filter {
 			transactions, uncles = pm.fetcher.FilterBodies(p.id, transactions, uncles, time.Now())
-			if lenTx > len(transactions) || lenUn > len(uncles) {
-				fmt.Printf("(*)Transactions %d -> %d, uncles %d -> %d\n", lenTx, len(transactions), lenUn, len(uncles))
-			}
 		}
 		if len(transactions) > 0 || len(uncles) > 0 || !filter {
-			if lenTx > len(transactions) || lenUn > len(uncles) {
-				fmt.Printf("Transactions %d -> %d, uncles %d -> %d\n", lenTx, len(transactions), lenUn, len(uncles))
-			}
 			err := pm.downloader.DeliverBodies(p.id, transactions, uncles)
 			if err != nil {
 				log.Debug("Failed to deliver bodies", "err", err)

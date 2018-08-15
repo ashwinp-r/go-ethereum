@@ -875,6 +875,17 @@ func testBlockHashes() {
 	fmt.Printf("Header.UncleHash: %x\n", header.UncleHash)
 }
 
+func printTxHashes() {
+	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024)
+	check(err)
+	defer ethDb.Close()
+	for b := uint64(0); b < uint64(2400000); b++ {
+		hash := rawdb.ReadCanonicalHash(ethDb, b)
+		header := rawdb.ReadHeader(ethDb, hash, b)
+		fmt.Printf("%d %x\n", b, header.TxHash)
+	}
+}
+
 func main() {
 	flag.Parse()
     if *cpuprofile != "" {
@@ -888,8 +899,8 @@ func main() {
         defer pprof.StopCPUProfile()
     }
 	//db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
-	db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
- 	check(err)
+	//db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+ 	//check(err)
  	//defer db.Close()
  	//bucketStats(db)
  	//mychart()
@@ -907,6 +918,7 @@ func main() {
  	//	testReset(uint64(*reset))
  	//}
  	//testBlockHashes()
- 	printBuckets(db)
+ 	//printBuckets(db)
+ 	printTxHashes()
 }
 

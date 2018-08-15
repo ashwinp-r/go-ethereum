@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"sync"
 	"time"
-	"runtime/debug"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -769,23 +768,26 @@ func (q *queue) DeliverBodies(id string, txLists [][]*types.Transaction, uncleLi
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
-	reconstruct := func(header *types.Header, index int, result *fetchResult) error {
-		if types.DeriveSha(types.Transactions(txLists[index])) != header.TxHash || types.CalcUncleHash(uncleLists[index]) != header.UncleHash {
-			fmt.Printf("INVALID body %d ", header.Number.Uint64())
-			txHash := types.DeriveSha(types.Transactions(txLists[index]))
-			if txHash != header.TxHash {
-				fmt.Printf("due to wrong tx hash, got %x, expected %x\n", txHash, header.TxHash)
+	reconstruct := func(header *types.Header, index int, result *fetchResult) (bool, error) {
+		i := index
+		if types.DeriveSha(types.Transactions(txLists[i])) != header.TxHash || types.CalcUncleHash(uncleLists[i]) != header.UncleHash {
+			// Try to search for the right result
+			found := false
+			for i = 0; i < len(txLists); i++ {
+				if types.DeriveSha(types.Transactions(txLists[i])) == header.TxHash || types.CalcUncleHash(uncleLists[i]) == header.UncleHash {
+					found = true
+					break
+				}
+
 			}
-			if types.CalcUncleHash(uncleLists[index]) != header.UncleHash {
-				fmt.Printf("due to wrong uncle hash\n")
+			if !found {
+				fmt.Printf("INVALID body %d ", header.Number.Uint64())
+				return false, errInvalidBody
 			}
-			fmt.Printf("%s\n", debug.Stack())
-			//types.DeriveSha1(types.Transactions(txLists[index]))
-			return errInvalidBody
 		}
-		result.Transactions = txLists[index]
-		result.Uncles = uncleLists[index]
-		return nil
+		result.Transactions = txLists[i]
+		result.Uncles = uncleLists[i]
+		return true, nil
 	}
 	return q.deliver(id, q.blockTaskPool, q.blockTaskQueue, q.blockPendPool, q.blockDonePool, bodyReqTimer, len(txLists), reconstruct)
 }
@@ -797,13 +799,13 @@ func (q *queue) DeliverReceipts(id string, receiptList [][]*types.Receipt) (int,
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
-	reconstruct := func(header *types.Header, index int, result *fetchResult) error {
+	reconstruct := func(header *types.Header, index int, result *fetchResult) (bool, error) {
 		if types.DeriveSha(types.Receipts(receiptList[index])) != header.ReceiptHash {
 			fmt.Printf("INVALID repeipt\n")
-			return errInvalidReceipt
+			return false, errInvalidReceipt
 		}
 		result.Receipts = receiptList[index]
-		return nil
+		return true, nil
 	}
 	return q.deliver(id, q.receiptTaskPool, q.receiptTaskQueue, q.receiptPendPool, q.receiptDonePool, receiptReqTimer, len(receiptList), reconstruct)
 }
@@ -815,7 +817,7 @@ func (q *queue) DeliverReceipts(id string, receiptList [][]*types.Receipt) (int,
 // to access the queue, so they already need a lock anyway.
 func (q *queue) deliver(id string, taskPool map[common.Hash]struct{}, taskQueue *prque.Prque,
 	pendPool map[string]*fetchRequest, donePool map[common.Hash]struct{}, reqTimer metrics.Timer,
-	results int, reconstruct func(header *types.Header, index int, result *fetchResult) error) (int, error) {
+	results int, reconstruct func(header *types.Header, index int, result *fetchResult) (bool, error)) (int, error) {
 
 	// Short circuit if the data was never requested
 	request := pendPool[id]
@@ -848,9 +850,11 @@ func (q *queue) deliver(id string, taskPool map[common.Hash]struct{}, taskQueue 
 			failure = errInvalidChain
 			break
 		}
-		if err := reconstruct(header, i, q.resultCache[index]); err != nil {
+		if success, err := reconstruct(header, i, q.resultCache[index]); err != nil {
 			failure = err
 			break
+		} else if !success {
+			continue
 		}
 		hash := header.Hash()
 

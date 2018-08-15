@@ -43,6 +43,7 @@ type EthBlockByNumberResult struct {
 	Difficulty   hexutil.Big      `json:"difficulty"`
 	Miner        common.Address   `json:"miner"`
 	Transactions []EthTransaction `json:"transactions"`
+	TxRoot       common.Hash      `json:"transactionsRoot"`
 }
 
 type EthBlockByNumber struct {
@@ -218,8 +219,7 @@ func compareModifiedAccounts(ma, mag *DebugModifiedAccounts) bool {
 	return true
 }
 
-func main() {
-	fmt.Printf("Hello, world!\n")
+func bench1() {
 	var client = &http.Client{
 		Timeout: time.Second * 600,
 	}
@@ -241,7 +241,7 @@ func main() {
 	lastBlock := blockNumber.Number.ToInt().Int64()
 	fmt.Printf("Last block: %d\n", lastBlock)
 	accounts := make(map[common.Address]struct{})
-	firstBn := 200000-2
+	firstBn := 1000000-2
 	prevBn := firstBn
 	for bn := firstBn; bn <= int(lastBlock); bn++ {
 		template := `
@@ -358,4 +358,8 @@ func main() {
 			prevBn = bn
 		}
 	}
+}
+
+func main() {
+	bench1()
 }
