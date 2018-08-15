@@ -781,7 +781,7 @@ func (q *queue) DeliverBodies(id string, txLists [][]*types.Transaction, uncleLi
 			}
 			if !found {
 				fmt.Printf("Could not find body for %d\n", header.Number.Uint64())
-				return false, errInvalidBody
+				return false, nil
 			} else {
 				fmt.Printf("Fixed up body %d\n", header.Number.Uint64())
 			}
