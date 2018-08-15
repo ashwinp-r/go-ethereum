@@ -409,7 +409,7 @@ func (api *PrivateDebugAPI) StorageRangeAt(ctx context.Context, blockHash common
 	if err != nil {
 		return StorageRangeResult{}, err
 	}
-	dbstate.SetBlockNr(block.NumberU64())
+	//dbstate.SetBlockNr(block.NumberU64())
 	statedb.Commit(api.eth.chainConfig.IsEIP158(block.Number()), dbstate)
 	return storageRangeAt(dbstate, contractAddress, keyStart, maxResult)
 }
@@ -432,7 +432,7 @@ func storageRangeAt(dbstate *state.DbState, contractAddress common.Address, star
 		}
 		resultCount++
 		return resultCount <= maxResult
-	})
+	}, maxResult+1)
 	return result, nil
 }
 

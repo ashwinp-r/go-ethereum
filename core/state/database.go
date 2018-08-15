@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	lru "github.com/hashicorp/golang-lru"
+	"github.com/petar/GoLLRB/llrb"
 )
 
 // Trie cache generation limit after which to evict trie nodes from memory.
@@ -65,16 +66,27 @@ type StateWriter interface {
 	WriteAccountStorage(address common.Address, key, value *common.Hash) error
 }
 
+type storageItem struct {
+	key, seckey, value common.Hash
+}
+
+func (a *storageItem) Less(b llrb.Item) bool {
+	bi := b.(*storageItem)
+	return bytes.Compare(a.seckey[:], bi.seckey[:]) < 0
+}
+
 // Implements StateReader by wrapping database only, without trie
 type DbState struct {
 	db ethdb.Getter
 	blockNr uint64
+	storage map[common.Address]*llrb.LLRB
 }
 
 func NewDbState(db ethdb.Getter, blockNr uint64) *DbState {
 	return &DbState{
 		db: db,
 		blockNr: blockNr,
+		storage: make(map[common.Address]*llrb.LLRB),
 	}
 }
 
@@ -82,19 +94,52 @@ func (dbs *DbState) SetBlockNr(blockNr uint64) {
 	dbs.blockNr = blockNr
 }
 
-func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(key, seckey, value common.Hash) bool) {
-	var s [32]byte
-	copy(s[:], start)
-	dbs.db.WalkAsOf(addr[:], s[:], 0, dbs.blockNr, func(ks, vs []byte) (bool, error) {
+func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(key, seckey, value common.Hash) bool, maxResults int) {
+	st := llrb.New()
+	var s [20+32]byte
+	copy(s[:], addr[:])
+	copy(s[20:], start)
+	var lastSecKey common.Hash
+	dbs.db.WalkAsOf(StorageHistoryBucket, s[:], 0, dbs.blockNr, func(ks, vs []byte) (bool, error) {
+		if !bytes.HasPrefix(ks, addr[:]) {
+			return false, nil
+		}
 		if vs == nil || len(vs) == 0 {
 			// Skip deleted entries
 			return true, nil
 		}
-		key, err := dbs.db.Get(trie.SecureKeyPrefix, ks)
+		seckey := ks[20:]
+		key, err := dbs.db.Get(trie.SecureKeyPrefix, seckey)
 		if err != nil {
 			return false, err
 		}
-		return cb(common.BytesToHash(key), common.BytesToHash(ks), common.BytesToHash(vs)), nil
+		si := storageItem{}
+		copy(si.key[:], key)
+		copy(si.seckey[:], seckey)
+		si.value.SetBytes(vs)
+		copy(lastSecKey[:], ks)
+		st.ReplaceOrInsert(&si)
+		return st.Len() < maxResults, nil
+	})
+	// Override
+	min := &storageItem{seckey: common.BytesToHash(start)}
+	if t, ok := dbs.storage[addr]; ok {
+		t.AscendGreaterOrEqual1(min, func(i llrb.Item) bool {
+			item := i.(*storageItem)
+			if bytes.Compare(item.seckey[:], lastSecKey[:]) > 0 {
+				// Overriding further will cause the result set grow beyond maxResults
+				return false
+			}
+			st.ReplaceOrInsert(item)
+			return true
+		})
+	}
+	results := 0
+	st.AscendGreaterOrEqual1(min, func(i llrb.Item) bool {
+		item := i.(*storageItem)
+		cb(item.key, item.seckey, item.value)
+		results++
+		return results < maxResults
 	})
 }
 
@@ -163,6 +208,12 @@ func (dbs *DbState) UpdateAccountCode(codeHash common.Hash, code []byte) error {
 }
 
 func (dbs *DbState) WriteAccountStorage(address common.Address, key, value *common.Hash) error {
+	t, ok := dbs.storage[address]
+	if !ok {
+		t = llrb.New()
+		dbs.storage[address] = t
+	}
+	t.ReplaceOrInsert(&storageItem{key: *key, seckey: crypto.Keccak256Hash(key[:]), value: *value})
 	return nil
 }
 

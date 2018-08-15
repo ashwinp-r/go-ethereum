@@ -261,7 +261,7 @@ func bench1() {
 	lastBlock := blockNumber.Number.ToInt().Int64()
 	fmt.Printf("Last block: %d\n", lastBlock)
 	accounts := make(map[common.Address]struct{})
-	firstBn := 1000000-2
+	firstBn := 1720000-2
 	prevBn := firstBn
 	for bn := firstBn; bn <= int(lastBlock); bn++ {
 		template := `
@@ -338,6 +338,9 @@ func bench1() {
 					}
 				}
 				fmt.Printf("storageRange: %d\n", len(sm))
+				if len(smg) != len(sm) {
+					return
+				}
 			}
 			/*
 			template =`
