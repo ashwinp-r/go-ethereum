@@ -101,6 +101,7 @@ type DebugStorageRange struct {
 }
 
 func post(client *http.Client, url, request string, response interface{}) error {
+	start := time.Now()
 	r, err := client.Post(url, "application/json", strings.NewReader(request))
 	if err != nil {
 		return err
@@ -110,7 +111,9 @@ func post(client *http.Client, url, request string, response interface{}) error 
 	}
 	decoder := json.NewDecoder(r.Body)
 	defer r.Body.Close()
-	return decoder.Decode(response)
+	err = decoder.Decode(response)
+	fmt.Printf("%s %s %f\n", url, request, time.Since(start).Seconds())
+	return err
 }
 
 func print(client *http.Client, url, request string) {
@@ -229,11 +232,39 @@ func compareModifiedAccounts(ma, mag *DebugModifiedAccounts) bool {
 	for _, a := range r {
 		if _, ok := rsetg[a]; !ok {
 			fmt.Printf("%x not present in rg\n", a)
+			// We tolerate that
+			//return false
 		}
 	}
 	for _, a := range rg {
 		if _, ok := rset[a]; !ok {
 			fmt.Printf("%x not present in r\n", a)
+			return false
+		}
+	}
+	return true
+}
+
+func compareStorageRanges(sm, smg map[common.Hash]storageEntry) bool {
+	for k, v := range sm {
+		if vg, ok := smg[k]; !ok {
+			fmt.Printf("%x not present in smg\n", k)
+			return false
+		} else {
+			if *v.Key != *vg.Key {
+				fmt.Printf("Different keys for %x: %x %x\n", k, *v.Key, *vg.Key)
+				return false
+			}
+			if v.Value != vg.Value {
+				fmt.Printf("Different values for %x: %x %x\n", k, v.Value, vg.Value)
+				return false				
+			}
+		}
+	}
+	for k, _ := range smg {
+		if _, ok := sm[k]; !ok {
+			fmt.Printf("%x not present in sm\n", k)
+			return false
 		}
 	}
 	return true
@@ -243,14 +274,16 @@ func bench1() {
 	var client = &http.Client{
 		Timeout: time.Second * 600,
 	}
+	req_id := 0
 	geth_url := "http://192.168.1.96:8545"
 	//geth_url := "http://localhost:8545"
 	turbogeth_url := "http://localhost:8545"
-	request := `
-{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":83}
+	req_id++
+	template := `
+{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":%d}
 `
 	var blockNumber EthBlockNumber
-	if err := post(client, turbogeth_url, request, &blockNumber); err != nil {
+	if err := post(client, turbogeth_url, fmt.Sprintf(template, req_id), &blockNumber); err != nil {
 		fmt.Printf("Could not get block number: %v\n", err)
 		return
 	}
@@ -264,11 +297,12 @@ func bench1() {
 	firstBn := 1720000-2
 	prevBn := firstBn
 	for bn := firstBn; bn <= int(lastBlock); bn++ {
+		req_id++
 		template := `
-{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x%x", true],"id":83}
+{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x%x",true],"id":%d}
 `
 		var b EthBlockByNumber
-		if err := post(client, turbogeth_url, fmt.Sprintf(template, bn), &b); err != nil {
+		if err := post(client, turbogeth_url, fmt.Sprintf(template, bn, req_id), &b); err != nil {
 			fmt.Printf("Could not retrieve block %d: %v\n", bn, err)
 			return
 		}
@@ -276,7 +310,7 @@ func bench1() {
 			fmt.Printf("Error retrieving block: %d %s\n", b.Error.Code, b.Error.Message)
 		}
 		var bg EthBlockByNumber
-		if err := post(client, geth_url, fmt.Sprintf(template, bn), &bg); err != nil {
+		if err := post(client, geth_url, fmt.Sprintf(template, bn, req_id), &bg); err != nil {
 			fmt.Printf("Could not retrieve block g %d: %v\n", bn, err)
 			return
 		}
@@ -297,34 +331,16 @@ func bench1() {
 			if tx.To != nil && tx.Gas.ToInt().Uint64() > 21000 {
 				// Request storage range
 				// blockHash common.Hash, txIndex int, contractAddress common.Address, keyStart hexutil.Bytes, maxResult int
+				req_id++
 				template = `
-	{"jsonrpc":"2.0","method":"debug_storageRangeAt","params":["0x%x", %d, "0x%x", "0x%x", %d],"id":83}
+	{"jsonrpc":"2.0","method":"debug_storageRangeAt","params":["0x%x", %d,"0x%x","0x%x",%d],"id":%d}
 	`
-				var srg DebugStorageRange
-				smg := make(map[common.Hash]storageEntry)
-				nextKey := &common.Hash{}
-				for nextKey != nil {
-					if err := post(client, geth_url, fmt.Sprintf(template, b.Result.Hash, i, tx.To, *nextKey, 16), &srg); err != nil {
-						fmt.Printf("Could not get storageRange g: %d %d: %v\n", bn, i, err)
-						return
-					}
-					if srg.Error != nil {
-						fmt.Printf("Error getting storageRange g: %d %s\n", srg.Error.Code, srg.Error.Message)
-						break
-					} else {
-						nextKey = srg.Result.NextKey
-						for k, v := range srg.Result.Storage {
-							smg[k] = v
-						}
-					}
-				}
-				fmt.Printf("storageRange g: %d\n", len(smg))
 				var sr DebugStorageRange
 				sm := make(map[common.Hash]storageEntry)
-				nextKey = &common.Hash{}
+				nextKey := &common.Hash{}
 				for nextKey != nil {
-					if err := post(client, turbogeth_url, fmt.Sprintf(template, b.Result.Hash, i, tx.To, *nextKey, 16), &sr); err != nil {
-						fmt.Printf("Could not get storageRange: %d %d: %v\n", bn, i, err)
+					if err := post(client, turbogeth_url, fmt.Sprintf(template, b.Result.Hash, i, tx.To, *nextKey, 16, req_id), &sr); err != nil {
+						fmt.Printf("Could not get storageRange: %x: %v\n", tx.Hash, err)
 						return
 					}
 					if sr.Error != nil {
@@ -338,16 +354,36 @@ func bench1() {
 					}
 				}
 				fmt.Printf("storageRange: %d\n", len(sm))
-				if len(smg) != len(sm) {
+				var srg DebugStorageRange
+				smg := make(map[common.Hash]storageEntry)
+				nextKey = &common.Hash{}
+				for nextKey != nil {
+					if err := post(client, geth_url, fmt.Sprintf(template, b.Result.Hash, i, tx.To, *nextKey, 16, req_id), &srg); err != nil {
+						fmt.Printf("Could not get storageRange g: %x: %v\n", tx.Hash, err)
+						return
+					}
+					if srg.Error != nil {
+						fmt.Printf("Error getting storageRange g: %d %s\n", srg.Error.Code, srg.Error.Message)
+						break
+					} else {
+						nextKey = srg.Result.NextKey
+						for k, v := range srg.Result.Storage {
+							smg[k] = v
+						}
+					}
+				}
+				fmt.Printf("storageRange g: %d\n", len(smg))
+				if !compareStorageRanges(sm, smg) {
+					fmt.Printf("Different in storage ranges tx %x\n", tx.Hash)
 					return
 				}
 			}
-			/*
+			req_id++
 			template =`
-{"jsonrpc":"2.0","method":"debug_traceTransaction","params":["%s"],"id":83}
+{"jsonrpc":"2.0","method":"debug_traceTransaction","params":["%s"],"id":%d}
 `
 			var trace EthTxTrace
-			if err := post(client, turbogeth_url, fmt.Sprintf(template, tx.Hash), &trace); err != nil {
+			if err := post(client, turbogeth_url, fmt.Sprintf(template, tx.Hash, req_id), &trace); err != nil {
 				fmt.Printf("Could not trace transaction %s: %v\n", tx.Hash, err)
 				print(client, turbogeth_url, fmt.Sprintf(template, tx.Hash))
 				return
@@ -356,7 +392,7 @@ func bench1() {
 				fmt.Printf("Error tracing transaction: %d %s\n", trace.Error.Code, trace.Error.Message)
 			}
 			var traceg EthTxTrace
-			if err := post(client, geth_url, fmt.Sprintf(template, tx.Hash), &traceg); err != nil {
+			if err := post(client, geth_url, fmt.Sprintf(template, tx.Hash, req_id), &traceg); err != nil {
 				fmt.Printf("Could not trace transaction g %s: %v\n", tx.Hash, err)
 				print(client, geth_url, fmt.Sprintf(template, tx.Hash))
 				return
@@ -369,13 +405,13 @@ func bench1() {
 				fmt.Printf("Different traces block %d, tx %s\n", bn, tx.Hash)
 				return
 			}
-			*/
 		}
+		req_id++
 		template = `
-{"jsonrpc":"2.0","method":"eth_getBalance","params":["0x%x", "0x%x"],"id":83}
+{"jsonrpc":"2.0","method":"eth_getBalance","params":["0x%x", "0x%x"],"id":%d}
 `
 		var balance EthBalance
-		if err := post(client, turbogeth_url, fmt.Sprintf(template, b.Result.Miner, bn), &balance); err != nil {
+		if err := post(client, turbogeth_url, fmt.Sprintf(template, b.Result.Miner, bn, req_id), &balance); err != nil {
 			fmt.Printf("Could not get account balance: %v\n", err)
 			return
 		}
@@ -384,7 +420,7 @@ func bench1() {
 			return
 		}
 		var balanceg EthBalance
-		if err := post(client, geth_url, fmt.Sprintf(template, b.Result.Miner, bn), &balanceg); err != nil {
+		if err := post(client, geth_url, fmt.Sprintf(template, b.Result.Miner, bn, req_id), &balanceg); err != nil {
 			fmt.Printf("Could not get account balance g: %v\n", err)
 			return
 		}
@@ -398,11 +434,12 @@ func bench1() {
 		}
 		if prevBn < bn && bn % 1000 == 0 {
 			// Checking modified accounts
+			req_id++
 			template = `
-{"jsonrpc":"2.0","method":"debug_getModifiedAccountsByNumber","params":[%d, %d],"id":83}
+{"jsonrpc":"2.0","method":"debug_getModifiedAccountsByNumber","params":[%d, %d],"id":%d}
 `
 			var ma DebugModifiedAccounts
-			if err := post(client, turbogeth_url, fmt.Sprintf(template, prevBn, bn), &ma); err != nil {
+			if err := post(client, turbogeth_url, fmt.Sprintf(template, prevBn, bn, req_id), &ma); err != nil {
 				fmt.Printf("Could not get modified accounts: %v\n", err)
 				return
 			}
@@ -411,7 +448,7 @@ func bench1() {
 				return
 			}
 			var mag DebugModifiedAccounts
-			if err := post(client, geth_url, fmt.Sprintf(template, prevBn, bn), &mag); err != nil {
+			if err := post(client, geth_url, fmt.Sprintf(template, prevBn, bn, req_id), &mag); err != nil {
 				fmt.Printf("Could not get modified accounts g: %v\n", err)
 				return
 			}
