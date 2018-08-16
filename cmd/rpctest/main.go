@@ -10,6 +10,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 type EthError struct {
@@ -335,11 +336,11 @@ func bench1() {
 				template = `
 	{"jsonrpc":"2.0","method":"debug_storageRangeAt","params":["0x%x", %d,"0x%x","0x%x",%d],"id":%d}
 	`
-				var sr DebugStorageRange
 				sm := make(map[common.Hash]storageEntry)
 				nextKey := &common.Hash{}
 				for nextKey != nil {
-					if err := post(client, turbogeth_url, fmt.Sprintf(template, b.Result.Hash, i, tx.To, *nextKey, 16, req_id), &sr); err != nil {
+					var sr DebugStorageRange
+					if err := post(client, turbogeth_url, fmt.Sprintf(template, b.Result.Hash, i, tx.To, *nextKey, 1024, req_id), &sr); err != nil {
 						fmt.Printf("Could not get storageRange: %x: %v\n", tx.Hash, err)
 						return
 					}
@@ -354,11 +355,11 @@ func bench1() {
 					}
 				}
 				fmt.Printf("storageRange: %d\n", len(sm))
-				var srg DebugStorageRange
 				smg := make(map[common.Hash]storageEntry)
 				nextKey = &common.Hash{}
 				for nextKey != nil {
-					if err := post(client, geth_url, fmt.Sprintf(template, b.Result.Hash, i, tx.To, *nextKey, 16, req_id), &srg); err != nil {
+					var srg DebugStorageRange
+					if err := post(client, geth_url, fmt.Sprintf(template, b.Result.Hash, i, tx.To, *nextKey, 1024, req_id), &srg); err != nil {
 						fmt.Printf("Could not get storageRange g: %x: %v\n", tx.Hash, err)
 						return
 					}
@@ -461,6 +462,97 @@ func bench1() {
 				return
 			}
 			fmt.Printf("Done blocks %d-%d, modified accounts: %d (%d)\n", prevBn, bn, len(ma.Result), len(mag.Result))
+			prevBn = bn
+		}
+	}
+}
+
+func bench2() {
+	var client = &http.Client{
+		Timeout: time.Second * 600,
+	}
+	req_id := 0
+	turbogeth_url := "http://localhost:8545"
+	req_id++
+	template := `
+{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":%d}
+`
+	var blockNumber EthBlockNumber
+	if err := post(client, turbogeth_url, fmt.Sprintf(template, req_id), &blockNumber); err != nil {
+		fmt.Printf("Could not get block number: %v\n", err)
+		return
+	}
+	if blockNumber.Error != nil {
+		fmt.Printf("Error getting block number: %d %s\n", blockNumber.Error.Code, blockNumber.Error.Message)
+		return
+	}
+	lastBlock := blockNumber.Number.ToInt().Int64()
+	fmt.Printf("Last block: %d\n", lastBlock)
+	firstBn := 1720000-2
+	prevBn := firstBn
+	for bn := firstBn; bn <= int(lastBlock); bn++ {
+		req_id++
+		template := `
+{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x%x",true],"id":%d}
+`
+		var b EthBlockByNumber
+		if err := post(client, turbogeth_url, fmt.Sprintf(template, bn, req_id), &b); err != nil {
+			fmt.Printf("Could not retrieve block %d: %v\n", bn, err)
+			return
+		}
+		if b.Error != nil {
+			fmt.Printf("Error retrieving block: %d %s\n", b.Error.Code, b.Error.Message)
+		}
+		for i, tx := range b.Result.Transactions {
+			if tx.To != nil && tx.Gas.ToInt().Uint64() > 21000 {
+				// Request storage range
+				// blockHash common.Hash, txIndex int, contractAddress common.Address, keyStart hexutil.Bytes, maxResult int
+				req_id++
+				template = `
+	{"jsonrpc":"2.0","method":"debug_storageRangeAt","params":["0x%x", %d,"0x%x","0x%x",%d],"id":%d}
+	`
+				sm := make(map[common.Hash]storageEntry)
+				nextKey := &common.Hash{}
+				for nextKey != nil {
+					var sr DebugStorageRange
+					if err := post(client, turbogeth_url, fmt.Sprintf(template, b.Result.Hash, i, tx.To, *nextKey, 1024, req_id), &sr); err != nil {
+						fmt.Printf("Could not get storageRange: %x: %v\n", tx.Hash, err)
+						return
+					}
+					if sr.Error != nil {
+						fmt.Printf("Error getting storageRange: %d %s\n", sr.Error.Code, sr.Error.Message)
+						break
+					} else {
+						nextKey = sr.Result.NextKey
+						for k, v := range sr.Result.Storage {
+							sm[k] = v
+							if k != crypto.Keccak256Hash(v.Key[:]) {
+								fmt.Printf("Different sec key: %x %x (%x)\n", k, crypto.Keccak256Hash(v.Key[:]), *(v.Key))
+							} else {
+								//fmt.Printf("Keys: %x %x\n", *(v.Key), k)
+							}
+						}
+					}
+				}
+				fmt.Printf("storageRange: %d\n", len(sm))
+			}
+		}
+		if prevBn < bn && bn % 1000 == 0 {
+			// Checking modified accounts
+			req_id++
+			template = `
+{"jsonrpc":"2.0","method":"debug_getModifiedAccountsByNumber","params":[%d, %d],"id":%d}
+`
+			var ma DebugModifiedAccounts
+			if err := post(client, turbogeth_url, fmt.Sprintf(template, prevBn, bn, req_id), &ma); err != nil {
+				fmt.Printf("Could not get modified accounts: %v\n", err)
+				return
+			}
+			if ma.Error != nil {
+				fmt.Printf("Error getting modified accounts: %d %d\n", ma.Error.Code, ma.Error.Message)
+				return
+			}
+			fmt.Printf("Done blocks %d-%d, modified accounts: %d\n", prevBn, bn, len(ma.Result))
 			prevBn = bn
 		}
 	}
