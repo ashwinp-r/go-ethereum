@@ -527,9 +527,9 @@ func bench2() {
 							if v.Key == nil {
 								fmt.Printf("No key for sec key: %x\n", k)
 							} else if k != crypto.Keccak256Hash(v.Key[:]) {
-								fmt.Printf("Different sec key: %x %x (%x)\n", k, crypto.Keccak256Hash(v.Key[:]), *(v.Key))
+								fmt.Printf("Different sec key: %x %x (%x), value %x\n", k, crypto.Keccak256Hash(v.Key[:]), *(v.Key), v.Value)
 							} else {
-								fmt.Printf("Keys: %x %x\n", *(v.Key), k)
+								fmt.Printf("Keys: %x %x, value %x\n", *(v.Key), k, v.Value)
 							}
 						}
 					}
@@ -577,7 +577,7 @@ func bench3() {
 	if b.Error != nil {
 		fmt.Printf("Error retrieving block: %d %s\n", b.Error.Code, b.Error.Message)
 	}
-	for txindex := 0; txindex < 6; txindex++ {
+	for txindex := 0; txindex < 18; txindex++ {
 		txhash := b.Result.Transactions[txindex].Hash
 		req_id++
 		template =`
@@ -602,21 +602,21 @@ func bench3() {
 			fmt.Printf("Error tracing transaction g: %d %s\n", traceg.Error.Code, traceg.Error.Message)
 			return
 		}
-		print(client, turbogeth_url, fmt.Sprintf(template, txhash, req_id))
+		//print(client, turbogeth_url, fmt.Sprintf(template, txhash, req_id))
 		if !compareTraces(&trace, &traceg) {
 			fmt.Printf("Different traces block %d, tx %s\n", 1720000, txhash)
 			return
 		}
 	}
-	to := common.HexToAddress("0x8b3b3b624c3c0397d3da8fd861512393d51dcbac")
+	to := common.HexToAddress("0xbb9bc244d798123fde783fcc1c72d3bb8c189413")
 	sm := make(map[common.Hash]storageEntry)
-	start := common.HexToHash("0xa283ff49a55f86420a4acd5835658d8f45180db430c7b0d7ae98da5c64f620dc")
+	start := common.HexToHash("0x5aa12c260b07325d83f0c9170a2c667948d0247cad4ad999cd00148658b0552d")
 
 	req_id++
 	template = `
 {"jsonrpc":"2.0","method":"debug_storageRangeAt","params":["0x%x", %d,"0x%x","0x%x",%d],"id":%d}
 	`
-	i := 6
+	i := 18
 	nextKey := &start
 	for nextKey != nil {
 		var sr DebugStorageRange
@@ -664,7 +664,7 @@ func bench4() {
 	var client = &http.Client{
 		Timeout: time.Second * 600,
 	}
-	turbogeth_url := "http://localhost:8545"
+	turbogeth_url := "http://localhost:9545"
 	blockhash := common.HexToHash("0xdf15213766f00680c6a20ba76ba2cc9534435e19bc490039f3a7ef42095c8d13")
 	req_id := 1
 	template := `

@@ -115,6 +115,7 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 			return overrideCounter < maxResults
 		})
 	}
+	numDeletes := st.Len() - overrideCounter
 	dbs.db.WalkAsOf(StorageHistoryBucket, s[:], 0, dbs.blockNr, func(ks, vs []byte) (bool, error) {
 		if !bytes.HasPrefix(ks, addr[:]) {
 			return false, nil
@@ -124,21 +125,23 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 			return true, nil
 		}
 		seckey := ks[20:]
+		si := storageItem{}
+		copy(si.seckey[:], seckey)
 		key, err := dbs.db.Get(trie.SecureKeyPrefix, seckey)
 		if err != nil {
 			return false, err
 		}
-		si := storageItem{}
-		copy(si.seckey[:], seckey)
-		existing := st.Get(&si)
+		if st.Has(&si) {
+			return true, nil
+		}
 		copy(si.key[:], key)
 		si.value.SetBytes(vs)
 		st.InsertNoReplace(&si)
 		if bytes.Compare(seckey[:], lastSecKey[:]) > 0 {
 			// Beyond overrides
-			return st.Len() < maxResults, nil
+			return st.Len() < maxResults + numDeletes, nil
 		}
-		return true, nil
+		return st.Len() < maxResults + overrideCounter + numDeletes, nil
 	})
 	results := 0
 	st.AscendGreaterOrEqual1(min, func(i llrb.Item) bool {
