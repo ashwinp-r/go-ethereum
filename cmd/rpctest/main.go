@@ -128,7 +128,7 @@ func print(client *http.Client, url, request string) {
 		return
 	}
 	fmt.Printf("ContentLength: %d\n", r.ContentLength)
-	buf := make([]byte, 20000)
+	buf := make([]byte, 2000000)
 	l, err := r.Body.Read(buf)
 	if err != nil && err != io.EOF {
 		fmt.Printf("Could not read response: %v\n", err)
@@ -252,12 +252,12 @@ func compareStorageRanges(sm, smg map[common.Hash]storageEntry) bool {
 			fmt.Printf("%x not present in smg\n", k)
 			return false
 		} else {
-			if *v.Key != *vg.Key {
-				fmt.Printf("Different keys for %x: %x %x\n", k, *v.Key, *vg.Key)
+			if k != crypto.Keccak256Hash(v.Key[:]){
+				fmt.Printf("Sec key %x does not match key %x\n", k, *v.Key)
 				return false
 			}
 			if v.Value != vg.Value {
-				fmt.Printf("Different values for %x: %x %x\n", k, v.Value, vg.Value)
+				fmt.Printf("Different values for %x: %x %x [%x]\n", k, v.Value, vg.Value, *v.Key)
 				return false				
 			}
 		}
@@ -276,9 +276,9 @@ func bench1() {
 		Timeout: time.Second * 600,
 	}
 	req_id := 0
-	geth_url := "http://192.168.1.96:8545"
-	//geth_url := "http://localhost:8545"
-	turbogeth_url := "http://localhost:8545"
+	//geth_url := "http://192.168.1.96:8545"
+	geth_url := "http://localhost:8545"
+	turbogeth_url := "http://localhost:9545"
 	req_id++
 	template := `
 {"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":%d}
@@ -295,7 +295,7 @@ func bench1() {
 	lastBlock := blockNumber.Number.ToInt().Int64()
 	fmt.Printf("Last block: %d\n", lastBlock)
 	accounts := make(map[common.Address]struct{})
-	firstBn := 1720000-2
+	firstBn := 1720000
 	prevBn := firstBn
 	for bn := firstBn; bn <= int(lastBlock); bn++ {
 		req_id++
@@ -330,8 +330,6 @@ func bench1() {
 				accounts[*tx.To] = struct{}{}
 			}
 			if tx.To != nil && tx.Gas.ToInt().Uint64() > 21000 {
-				// Request storage range
-				// blockHash common.Hash, txIndex int, contractAddress common.Address, keyStart hexutil.Bytes, maxResult int
 				req_id++
 				template = `
 	{"jsonrpc":"2.0","method":"debug_storageRangeAt","params":["0x%x", %d,"0x%x","0x%x",%d],"id":%d}
@@ -341,7 +339,7 @@ func bench1() {
 				for nextKey != nil {
 					var sr DebugStorageRange
 					if err := post(client, turbogeth_url, fmt.Sprintf(template, b.Result.Hash, i, tx.To, *nextKey, 1024, req_id), &sr); err != nil {
-						fmt.Printf("Could not get storageRange: %x: %v\n", tx.Hash, err)
+						fmt.Printf("Could not get storageRange: %s: %v\n", tx.Hash, err)
 						return
 					}
 					if sr.Error != nil {
@@ -360,7 +358,7 @@ func bench1() {
 				for nextKey != nil {
 					var srg DebugStorageRange
 					if err := post(client, geth_url, fmt.Sprintf(template, b.Result.Hash, i, tx.To, *nextKey, 1024, req_id), &srg); err != nil {
-						fmt.Printf("Could not get storageRange g: %x: %v\n", tx.Hash, err)
+						fmt.Printf("Could not get storageRange g: %s: %v\n", tx.Hash, err)
 						return
 					}
 					if srg.Error != nil {
@@ -375,7 +373,7 @@ func bench1() {
 				}
 				fmt.Printf("storageRange g: %d\n", len(smg))
 				if !compareStorageRanges(sm, smg) {
-					fmt.Printf("Different in storage ranges tx %x\n", tx.Hash)
+					fmt.Printf("Different in storage ranges tx %s\n", tx.Hash)
 					return
 				}
 			}
@@ -526,10 +524,12 @@ func bench2() {
 						nextKey = sr.Result.NextKey
 						for k, v := range sr.Result.Storage {
 							sm[k] = v
-							if k != crypto.Keccak256Hash(v.Key[:]) {
+							if v.Key == nil {
+								fmt.Printf("No key for sec key: %x\n", k)
+							} else if k != crypto.Keccak256Hash(v.Key[:]) {
 								fmt.Printf("Different sec key: %x %x (%x)\n", k, crypto.Keccak256Hash(v.Key[:]), *(v.Key))
 							} else {
-								//fmt.Printf("Keys: %x %x\n", *(v.Key), k)
+								fmt.Printf("Keys: %x %x\n", *(v.Key), k)
 							}
 						}
 					}
@@ -558,6 +558,108 @@ func bench2() {
 	}
 }
 
+func bench3() {
+	var client = &http.Client{
+		Timeout: time.Second * 600,
+	}
+	geth_url := "http://localhost:8545"
+	turbogeth_url := "http://localhost:9545"
+	blockhash := common.HexToHash("0xdf15213766f00680c6a20ba76ba2cc9534435e19bc490039f3a7ef42095c8d13")
+	req_id := 1
+	template := `
+{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x%x",true],"id":%d}
+`
+	var b EthBlockByNumber
+	if err := post(client, turbogeth_url, fmt.Sprintf(template, 1720000, req_id), &b); err != nil {
+		fmt.Printf("Could not retrieve block %d: %v\n", 1720000, err)
+		return
+	}
+	if b.Error != nil {
+		fmt.Printf("Error retrieving block: %d %s\n", b.Error.Code, b.Error.Message)
+	}
+	for txindex := 0; txindex < 6; txindex++ {
+		txhash := b.Result.Transactions[txindex].Hash
+		req_id++
+		template =`
+{"jsonrpc":"2.0","method":"debug_traceTransaction","params":["%s"],"id":%d}
+	`
+		var trace EthTxTrace
+		if err := post(client, turbogeth_url, fmt.Sprintf(template, txhash, req_id), &trace); err != nil {
+			fmt.Printf("Could not trace transaction %s: %v\n", txhash, err)
+			print(client, turbogeth_url, fmt.Sprintf(template, txhash, req_id))
+			return
+		}
+		if trace.Error != nil {
+			fmt.Printf("Error tracing transaction: %d %s\n", trace.Error.Code, trace.Error.Message)
+		}
+		var traceg EthTxTrace
+		if err := post(client, geth_url, fmt.Sprintf(template, txhash, req_id), &traceg); err != nil {
+			fmt.Printf("Could not trace transaction g %s: %v\n", txhash, err)
+			print(client, geth_url, fmt.Sprintf(template, txhash, req_id))
+			return
+		}
+		if traceg.Error != nil {
+			fmt.Printf("Error tracing transaction g: %d %s\n", traceg.Error.Code, traceg.Error.Message)
+			return
+		}
+		print(client, turbogeth_url, fmt.Sprintf(template, txhash, req_id))
+		if !compareTraces(&trace, &traceg) {
+			fmt.Printf("Different traces block %d, tx %s\n", 1720000, txhash)
+			return
+		}
+	}
+	to := common.HexToAddress("0x8b3b3b624c3c0397d3da8fd861512393d51dcbac")
+	sm := make(map[common.Hash]storageEntry)
+	start := common.HexToHash("0xa283ff49a55f86420a4acd5835658d8f45180db430c7b0d7ae98da5c64f620dc")
+
+	req_id++
+	template = `
+{"jsonrpc":"2.0","method":"debug_storageRangeAt","params":["0x%x", %d,"0x%x","0x%x",%d],"id":%d}
+	`
+	i := 6
+	nextKey := &start
+	for nextKey != nil {
+		var sr DebugStorageRange
+		if err := post(client, turbogeth_url, fmt.Sprintf(template, blockhash, i, to, *nextKey, 1024, req_id), &sr); err != nil {
+			fmt.Printf("Could not get storageRange: %v\n", err)
+			return
+		}
+		if sr.Error != nil {
+			fmt.Printf("Error getting storageRange: %d %s\n", sr.Error.Code, sr.Error.Message)
+			break
+		} else {
+			nextKey = sr.Result.NextKey
+			for k, v := range sr.Result.Storage {
+				sm[k] = v
+			}
+		}
+	}
+	fmt.Printf("storageRange: %d\n", len(sm))
+	smg := make(map[common.Hash]storageEntry)
+	nextKey = &start
+	for nextKey != nil {
+		var srg DebugStorageRange
+		if err := post(client, geth_url, fmt.Sprintf(template, blockhash, i, to, *nextKey, 1024, req_id), &srg); err != nil {
+			fmt.Printf("Could not get storageRange g: %v\n", err)
+			return
+		}
+		if srg.Error != nil {
+			fmt.Printf("Error getting storageRange g: %d %s\n", srg.Error.Code, srg.Error.Message)
+			break
+		} else {
+			nextKey = srg.Result.NextKey
+			for k, v := range srg.Result.Storage {
+				smg[k] = v
+			}
+		}
+	}
+	fmt.Printf("storageRange g: %d\n", len(smg))
+	if !compareStorageRanges(sm, smg) {
+		fmt.Printf("Different in storage ranges tx\n")
+		return
+	}
+}
+
 func main() {
-	bench1()
+	bench3()
 }

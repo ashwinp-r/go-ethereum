@@ -405,12 +405,12 @@ func (api *PrivateDebugAPI) StorageRangeAt(ctx context.Context, blockHash common
 	if block == nil {
 		return StorageRangeResult{}, fmt.Errorf("block %x not found", blockHash)
 	}
-	_, _, statedb, dbstate, _, err := api.computeTxEnv(blockHash, txIndex, 0)
+	_, _, _, dbstate, _, err := api.computeTxEnv(blockHash, txIndex, 0)
 	if err != nil {
 		return StorageRangeResult{}, err
 	}
 	//dbstate.SetBlockNr(block.NumberU64())
-	statedb.Commit(api.eth.chainConfig.IsEIP158(block.Number()), dbstate)
+	//statedb.Commit(api.eth.chainConfig.IsEIP158(block.Number()), dbstate)
 	return storageRangeAt(dbstate, contractAddress, keyStart, maxResult)
 }
 
