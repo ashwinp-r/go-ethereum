@@ -117,7 +117,7 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 		copy(si.key[:], key)
 		copy(si.seckey[:], seckey)
 		si.value.SetBytes(vs)
-		copy(lastSecKey[:], ks)
+		copy(lastSecKey[:], seckey)
 		st.ReplaceOrInsert(&si)
 		return st.Len() < maxResults, nil
 	})
