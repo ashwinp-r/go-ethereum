@@ -100,6 +100,21 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 	copy(s[:], addr[:])
 	copy(s[20:], start)
 	var lastSecKey common.Hash
+	overrideCounter := 0
+	emptyHash := common.Hash{}
+	min := &storageItem{seckey: common.BytesToHash(start)}
+	if t, ok := dbs.storage[addr]; ok {
+		t.AscendGreaterOrEqual1(min, func(i llrb.Item) bool {
+			item := i.(*storageItem)
+			st.ReplaceOrInsert(item)
+			if item.value != emptyHash{
+				copy(lastSecKey[:], item.seckey[:])
+				// Only count non-zero items
+				overrideCounter++
+			}
+			return overrideCounter < maxResults
+		})
+	}
 	dbs.db.WalkAsOf(StorageHistoryBucket, s[:], 0, dbs.blockNr, func(ks, vs []byte) (bool, error) {
 		if !bytes.HasPrefix(ks, addr[:]) {
 			return false, nil
@@ -114,31 +129,25 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 			return false, err
 		}
 		si := storageItem{}
-		copy(si.key[:], key)
 		copy(si.seckey[:], seckey)
+		existing := st.Get(&si)
+		copy(si.key[:], key)
 		si.value.SetBytes(vs)
-		copy(lastSecKey[:], seckey)
-		st.ReplaceOrInsert(&si)
-		return st.Len() < maxResults, nil
+		st.InsertNoReplace(&si)
+		if bytes.Compare(seckey[:], lastSecKey[:]) > 0 {
+			// Beyond overrides
+			return st.Len() < maxResults, nil
+		}
+		return true, nil
 	})
-	// Override
-	min := &storageItem{seckey: common.BytesToHash(start)}
-	if t, ok := dbs.storage[addr]; ok {
-		t.AscendGreaterOrEqual1(min, func(i llrb.Item) bool {
-			item := i.(*storageItem)
-			if bytes.Compare(item.seckey[:], lastSecKey[:]) > 0 {
-				// Overriding further will cause the result set grow beyond maxResults
-				return false
-			}
-			st.ReplaceOrInsert(item)
-			return true
-		})
-	}
 	results := 0
 	st.AscendGreaterOrEqual1(min, func(i llrb.Item) bool {
 		item := i.(*storageItem)
-		cb(item.key, item.seckey, item.value)
-		results++
+		if item.value != emptyHash {
+			// Skip if value == 0
+			cb(item.key, item.seckey, item.value)
+			results++
+		}
 		return results < maxResults
 	})
 }
