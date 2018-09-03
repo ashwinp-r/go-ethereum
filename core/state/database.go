@@ -127,14 +127,9 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 		seckey := ks[20:]
 		si := storageItem{}
 		copy(si.seckey[:], seckey)
-		key, err := dbs.db.Get(trie.SecureKeyPrefix, seckey)
-		if err != nil {
-			return false, err
-		}
 		if st.Has(&si) {
 			return true, nil
 		}
-		copy(si.key[:], key)
 		si.value.SetBytes(vs)
 		st.InsertNoReplace(&si)
 		if bytes.Compare(seckey[:], lastSecKey[:]) > 0 {
@@ -148,6 +143,14 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 		item := i.(*storageItem)
 		if item.value != emptyHash {
 			// Skip if value == 0
+			if item.key == emptyHash {
+				key, err := dbs.db.Get(trie.SecureKeyPrefix, item.seckey[:])
+				if err == nil {
+					copy(item.key[:], key)
+				} else {
+					log.Error("Error getting preimage", "err", err)
+				}
+			}
 			cb(item.key, item.seckey, item.value)
 			results++
 		}
