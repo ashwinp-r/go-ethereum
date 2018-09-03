@@ -23,6 +23,9 @@ func (l *List) Len() int {
 }
 
 func (l *List) PushToBack(n nodep) {
+	if n.next() != nil || n.prev() != nil {
+		panic("Invariant failed")
+	}
 	n.setprev(l.sentinel.prev())
 	n.setnext(&l.sentinel)
 	l.sentinel.prev().setnext(n)
