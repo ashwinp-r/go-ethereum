@@ -86,10 +86,10 @@ func encodeTimestamp(timestamp uint64) []byte {
 			suffix = make([]byte, bytecount)
 			b := timestamp
 			for i := bytecount - 1; i > 0; i-- {
-				suffix[i] = byte(b&0xff)^0xff
+				suffix[i] = byte(b&0xff)
 				b >>= 8
 			}
-			suffix[0] = (byte(b) | (byte(bytecount)<<5))^0xff // 3 most significant bits of the first byte are bytecount
+			suffix[0] = byte(b) | (byte(bytecount)<<5) // 3 most significant bits of the first byte are bytecount
 			break
 		}
 		limit <<= 8
@@ -98,10 +98,10 @@ func encodeTimestamp(timestamp uint64) []byte {
 }
 
 func decodeTimestamp(suffix []byte) (uint64, []byte) {
-	bytecount := int((suffix[0]^0xff)>>5)
-	timestamp := uint64((suffix[0]^0xff)&0x1f)
+	bytecount := int(suffix[0]>>5)
+	timestamp := uint64(suffix[0]&0x1f)
 	for i := 1; i < bytecount; i++ {
-		timestamp = (timestamp<<8) | uint64(suffix[i]^0xff)
+		timestamp = (timestamp<<8) | uint64(suffix[i])
 	}
 	return timestamp, suffix[bytecount:]
 }

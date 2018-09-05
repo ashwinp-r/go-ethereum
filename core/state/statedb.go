@@ -529,7 +529,7 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool, stateWriter StateWriter) err
 		}
 
 		if stateObject.suicided || (deleteEmptyObjects && stateObject.empty()) {
-			if err := stateWriter.DeleteAccount(addr); err != nil {
+			if err := stateWriter.DeleteAccount(addr, &stateObject.original); err != nil {
 				return err
 			}
 			stateObject.deleted = true
@@ -559,7 +559,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool, stateWriter StateWriter) error
 		//fmt.Printf("%x %d %x %x\n", addr[:], stateObject.data.Balance, stateObject.data.CodeHash, stateObject.data.Root[:])
 
 		if stateObject.suicided || (isDirty && deleteEmptyObjects && stateObject.empty()) {
-			if err := stateWriter.DeleteAccount(addr); err != nil {
+			if err := stateWriter.DeleteAccount(addr, &stateObject.original); err != nil {
 				return err
 			}
 			stateObject.deleted = true

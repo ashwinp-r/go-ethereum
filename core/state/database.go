@@ -62,8 +62,8 @@ type StateReader interface {
 type StateWriter interface {
 	UpdateAccountData(address common.Address, original, account *Account) error
 	UpdateAccountCode(codeHash common.Hash, code []byte) error
-	DeleteAccount(address common.Address) error
-	WriteAccountStorage(address common.Address, key, value *common.Hash) error
+	DeleteAccount(address common.Address, original *Account) error
+	WriteAccountStorage(address common.Address, key, original, value *common.Hash) error
 }
 
 type storageItem struct {
@@ -107,7 +107,7 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 		t.AscendGreaterOrEqual1(min, func(i llrb.Item) bool {
 			item := i.(*storageItem)
 			st.ReplaceOrInsert(item)
-			if item.value != emptyHash{
+			if item.value != emptyHash {
 				copy(lastSecKey[:], item.seckey[:])
 				// Only count non-zero items
 				overrideCounter++
@@ -214,7 +214,7 @@ func (dbs *DbState) UpdateAccountData(address common.Address, original, account 
 	return nil
 }
 
-func (dbs *DbState) DeleteAccount(address common.Address) error {
+func (dbs *DbState) DeleteAccount(address common.Address, original *Account) error {
 	return nil
 }
 
@@ -222,7 +222,7 @@ func (dbs *DbState) UpdateAccountCode(codeHash common.Hash, code []byte) error {
 	return nil
 }
 
-func (dbs *DbState) WriteAccountStorage(address common.Address, key, value *common.Hash) error {
+func (dbs *DbState) WriteAccountStorage(address common.Address, key, original, value *common.Hash) error {
 	t, ok := dbs.storage[address]
 	if !ok {
 		t = llrb.New()
@@ -529,6 +529,30 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64, commit bool) error {
 	return nil
 }
 
+func accountToEncoding(account *Account) ([]byte, error) {
+	var data []byte
+	var err error
+	if (account.CodeHash == nil || bytes.Equal(account.CodeHash, emptyCodeHash)) && (account.Root == emptyRoot || account.Root == common.Hash{}) {
+		if (account.Balance == nil || account.Balance.Sign() == 0) && account.Nonce == 0 {
+			data = []byte{byte(192)}
+		} else {
+			var extAccount ExtAccount
+			extAccount.Nonce = account.Nonce
+			extAccount.Balance = account.Balance
+			data, err = rlp.EncodeToBytes(extAccount)
+			if err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		data, err = rlp.EncodeToBytes(account)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return data, err
+}
+
 func encodingToAccount(enc []byte) (*Account, error) {
 	if enc == nil || len(enc) == 0 {
 		return nil, nil
@@ -708,7 +732,31 @@ func (tds *TrieDbState) DbStateWriter() *DbStateWriter {
 var emptyRoot = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
 
 func accountsEqual(a1, a2 *Account) bool {
-	return a1.Nonce == a2.Nonce && a1.Balance.Cmp(a2.Balance) == 0 && a1.Root == a2.Root && bytes.Equal(a1.CodeHash, a2.CodeHash)
+	if a1.Nonce != a2.Nonce {
+		return false
+	}
+	if a1.Balance == nil {
+		if a2.Balance != nil {
+			return false
+		}
+	} else if a2.Balance == nil {
+		return false
+	} else if a1.Balance.Cmp(a2.Balance) != 0 {
+		return false
+	}
+	if a1.Root != a2.Root {
+		return false
+	}
+	if a1.CodeHash == nil {
+		if a2.CodeHash != nil {
+			return false
+		}
+	} else if a2.CodeHash == nil {
+		return false
+	} else if !bytes.Equal(a1.CodeHash, a2.CodeHash) {
+		return false
+	}
+	return true
 }
 
 func (tsw *TrieStateWriter) UpdateAccountData(address common.Address, original, account *Account) error {
@@ -721,25 +769,9 @@ func (tsw *TrieStateWriter) UpdateAccountData(address common.Address, original, 
 }
 
 func (dsw *DbStateWriter) UpdateAccountData(address common.Address, original, account *Account) error {
-	var data []byte
-	var err error
-	if bytes.Equal(account.CodeHash, emptyCodeHash) && (account.Root == emptyRoot || account.Root == common.Hash{}) {
-		if account.Balance.Sign() == 0 && account.Nonce == 0 {
-			data = []byte{byte(192)}
-		} else {
-			var extAccount ExtAccount
-			extAccount.Nonce = account.Nonce
-			extAccount.Balance = account.Balance
-			data, err = rlp.EncodeToBytes(extAccount)
-			if err != nil {
-				return err
-			}
-		}
-	} else {
-		data, err = rlp.EncodeToBytes(account)
-		if err != nil {
-			return err
-		}
+	data, err := accountToEncoding(account)
+	if err != nil {
+		return err
 	}
 	addrHash, err := dsw.tds.HashAddress(address, true /*save*/)
 	if err != nil {
@@ -752,10 +784,14 @@ func (dsw *DbStateWriter) UpdateAccountData(address common.Address, original, ac
 	if accountsEqual(original, account) {
 		return nil
 	}
-	return dsw.tds.db.PutS(AccountsHistoryBucket, addrHash[:], data, dsw.tds.blockNr)
+	originalData, err := accountToEncoding(original)
+	if err != nil {
+		return err
+	}
+	return dsw.tds.db.PutS(AccountsHistoryBucket, addrHash[:], originalData, dsw.tds.blockNr)
 }
 
-func (tsw *TrieStateWriter) DeleteAccount(address common.Address) error {
+func (tsw *TrieStateWriter) DeleteAccount(address common.Address, original *Account) error {
 	addrHash, err := tsw.tds.HashAddress(address, false /*save*/)
 	if err != err {
 		return err
@@ -765,7 +801,7 @@ func (tsw *TrieStateWriter) DeleteAccount(address common.Address) error {
 	return nil
 }
 
-func (dsw *DbStateWriter) DeleteAccount(address common.Address) error {
+func (dsw *DbStateWriter) DeleteAccount(address common.Address, original *Account) error {
 	addrHash, err := dsw.tds.HashAddress(address, false /*save*/)
 	if err != nil {
 		return err
@@ -773,7 +809,11 @@ func (dsw *DbStateWriter) DeleteAccount(address common.Address) error {
 	if err := dsw.tds.db.Delete(AccountsBucket, addrHash[:]); err != nil {
 		return err
 	}
-	return dsw.tds.db.PutS(AccountsHistoryBucket, addrHash[:], []byte{}, dsw.tds.blockNr)
+	originalData, err := accountToEncoding(original)
+	if err != nil {
+		return err
+	}
+	return dsw.tds.db.PutS(AccountsHistoryBucket, addrHash[:], originalData, dsw.tds.blockNr)
 }
 
 func (tsw *TrieStateWriter) UpdateAccountCode(codeHash common.Hash, code []byte) error {
@@ -784,7 +824,7 @@ func (dsw *DbStateWriter) UpdateAccountCode(codeHash common.Hash, code []byte) e
 	return dsw.tds.db.Put(CodeBucket, codeHash[:], code)
 }
 
-func (tsw *TrieStateWriter) WriteAccountStorage(address common.Address, key, value *common.Hash) error {
+func (tsw *TrieStateWriter) WriteAccountStorage(address common.Address, key, original, value *common.Hash) error {
 	v := bytes.TrimLeft(value[:], "\x00")
 	m, ok := tsw.tds.storageUpdates[address]
 	if !ok {
@@ -803,7 +843,7 @@ func (tsw *TrieStateWriter) WriteAccountStorage(address common.Address, key, val
 	return nil
 }
 
-func (dsw *DbStateWriter) WriteAccountStorage(address common.Address, key, value *common.Hash) error {
+func (dsw *DbStateWriter) WriteAccountStorage(address common.Address, key, original, value *common.Hash) error {
 	seckey, err := dsw.tds.HashKey(*key, true /*save*/)
 	if err != nil {
 		return err
@@ -820,7 +860,10 @@ func (dsw *DbStateWriter) WriteAccountStorage(address common.Address, key, value
 	if err != nil {
 		return err
 	}
-	return dsw.tds.db.PutS(StorageHistoryBucket, compositeKey, vv, dsw.tds.blockNr)
+	o := bytes.TrimLeft(original[:], "\x00")
+	oo := make([]byte, len(o))
+	copy(oo, o)
+	return dsw.tds.db.PutS(StorageHistoryBucket, compositeKey, oo, dsw.tds.blockNr)
 }
 
 // Database wraps access to tries and contract code.

@@ -204,7 +204,8 @@ func (self *stateObject) setState(key, value common.Hash, dirty bool) {
 // updateTrie writes cached storage modifications into the object's storage trie.
 func (self *stateObject) updateTrie(stateWriter StateWriter) error {
 	for key, value := range self.dirtyStorage {
-		if err := stateWriter.WriteAccountStorage(self.address, &key, &value); err != nil {
+		original := self.originStorage[key]
+		if err := stateWriter.WriteAccountStorage(self.address, &key, &original, &value); err != nil {
 			return err
 		}
 	}
