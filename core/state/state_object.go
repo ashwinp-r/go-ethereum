@@ -109,6 +109,7 @@ type Account struct {
 
 // newObject creates a state object.
 func newObject(db *StateDB, address common.Address, data Account) *stateObject {
+	original := data
 	if data.Balance == nil {
 		data.Balance = new(big.Int)
 	}
@@ -120,7 +121,7 @@ func newObject(db *StateDB, address common.Address, data Account) *stateObject {
 		address:       address,
 		addrHash:      crypto.Keccak256Hash(address[:]),
 		data:          data,
-		original:      data,
+		original:      original,
 		originStorage: make(Storage),
 		dirtyStorage:  make(Storage),
 	}
