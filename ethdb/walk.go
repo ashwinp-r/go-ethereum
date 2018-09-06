@@ -141,13 +141,10 @@ func multiWalkAsOf(db Getter, bucket []byte, startkeys [][]byte, fixedbits []uin
 func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, key, value []byte) error) error {
 	// Collect list of buckets and keys that need to be considered
 	m := make(map[string]*llrb.LLRB)
-	suffixSrc := encodeTimestamp(timestampSrc)
-	if err := db.Walk(SuffixBucket, suffixSrc, 0, func (k, v []byte) ([]byte, WalkAction, error) {
+	suffixDst := encodeTimestamp(timestampDst)
+	if err := db.Walk(SuffixBucket, suffixDst, 0, func (k, v []byte) ([]byte, WalkAction, error) {
 		timestamp, bucket := decodeTimestamp(k)
-		//if timestamp > timestampSrc {
-		//	return nil, WalkActionNext, nil
-		//}
-		if timestamp <= timestampDst {
+		if timestamp > timestampSrc {
 			return nil, WalkActionStop, nil
 		}
 		var t *llrb.LLRB
@@ -225,7 +222,9 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 		var extErr error
 		t.AscendGreaterOrEqual1(min, func(i llrb.Item) bool {
 			item := i.(*PutItem)
-			value, err := db.GetAsOf(bucket, item.key, timestampDst)
+			//preimage, _ := db.Get([]byte("secure-key-"), item.key)
+			//fmt.Printf("bucket: %s, key: %x\n", bucketStr, preimage)
+			value, err := db.GetAsOf(bucket[1:], bucket, item.key, timestampDst+1)
 			if err != nil {
 				value = nil
 			}

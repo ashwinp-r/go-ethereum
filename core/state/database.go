@@ -116,7 +116,7 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 		})
 	}
 	numDeletes := st.Len() - overrideCounter
-	dbs.db.WalkAsOf(StorageHistoryBucket, s[:], 0, dbs.blockNr, func(ks, vs []byte) (bool, error) {
+	dbs.db.WalkAsOf(StorageBucket, StorageHistoryBucket, s[:], 0, dbs.blockNr, func(ks, vs []byte) (bool, error) {
 		if !bytes.HasPrefix(ks, addr[:]) {
 			return false, nil
 		}
@@ -159,7 +159,7 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 }
 
 func (dbs *DbState) ReadAccountData(addrHash common.Hash) (*Account, error) {
-	enc, err := dbs.db.GetAsOf(AccountsHistoryBucket, addrHash[:], dbs.blockNr)
+	enc, err := dbs.db.GetAsOf(AccountsBucket, AccountsHistoryBucket, addrHash[:], dbs.blockNr)
 	if err != nil || enc == nil || len(enc) == 0 {
 		return nil, nil
 	}
@@ -188,7 +188,7 @@ func (dbs *DbState) ReadAccountData(addrHash common.Hash) (*Account, error) {
 
 func (dbs *DbState) ReadAccountStorage(address common.Address, key *common.Hash) ([]byte, error) {
 	seckey := crypto.Keccak256Hash(key[:])
-	enc, err := dbs.db.GetAsOf(StorageHistoryBucket, append(address[:], seckey[:]...), dbs.blockNr)
+	enc, err := dbs.db.GetAsOf(StorageBucket, StorageHistoryBucket, append(address[:], seckey[:]...), dbs.blockNr)
 	if err != nil || enc == nil {
 		return nil, nil
 	}
@@ -484,6 +484,7 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64, commit bool) error {
 					return err
 				}
 			} else {
+				fmt.Printf("Deleted account\n")
 				tds.accountUpdates[addrHash] = nil
 				tds.deleted[addrHash] = struct{}{}
 				err = batch.Delete(AccountsBucket, key)
@@ -505,6 +506,7 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64, commit bool) error {
 			if len(value) > 0 {
 				batch.Put(StorageBucket, key, value)
 			} else {
+				fmt.Printf("Deleted storage item\n")
 				batch.Delete(StorageBucket, key)
 			}
 		}

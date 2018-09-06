@@ -22,7 +22,6 @@ import (
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
@@ -46,7 +45,7 @@ func (self *TrieDbState) RawDump() Dump {
 		Accounts: make(map[string]DumpAccount),
 	}
 	var prefix [32]byte
-	err := self.db.WalkAsOf(AccountsBucket, prefix[:], 0, self.blockNr, func(k, v []byte) (bool, error) {
+	err := self.db.WalkAsOf(AccountsBucket, AccountsHistoryBucket, prefix[:], 0, self.blockNr, func(k, v []byte) (bool, error) {
 		addr := self.GetKey(k)
 		var data Account
 		var err error
@@ -67,8 +66,7 @@ func (self *TrieDbState) RawDump() Dump {
 			Code:     common.Bytes2Hex(code),
 			Storage:  make(map[string]string),
 		}
-		addrHash := crypto.Keccak256Hash(addr)
-		err = self.db.WalkAsOf(addrHash[:], []byte{}, 0, self.blockNr, func(ks, vs []byte) (bool, error) {
+		err = self.db.WalkAsOf(StorageBucket, StorageHistoryBucket, addr, uint(len(addr)*8), self.blockNr, func(ks, vs []byte) (bool, error) {
 			account.Storage[common.Bytes2Hex(self.GetKey(ks))] = common.Bytes2Hex(vs)
 			return true, nil
 		})

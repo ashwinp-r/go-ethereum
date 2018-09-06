@@ -668,8 +668,8 @@ func trieChart() {
 }
 
 func testRewind() {
-	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 16)
-	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata", 16)
+	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 16)
+	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata", 16)
 	check(err)
 	defer ethDb.Close()
 	db := ethDb.NewBatch()
@@ -693,7 +693,7 @@ func testRewind() {
 	check(err)
 	fmt.Printf("Rebuit root hash: %x\n", rebuiltRoot)
 	startTime = time.Now()
-	rewindLen := uint64(1)
+	rewindLen := uint64(3)
 	err = tds.UnwindTo(currentBlockNr - rewindLen, false)
 	fmt.Printf("Unwind done in %v\n", time.Since(startTime))
 	check(err)
@@ -905,7 +905,7 @@ func main() {
  	//bucketStats(db)
  	//mychart()
  	//testRebuild()
- 	//testRewind()
+ 	testRewind()
  	//hashFile()
  	//buildHashFromFile()
  	//testResolve()
@@ -919,6 +919,6 @@ func main() {
  	//}
  	//testBlockHashes()
  	//printBuckets(db)
- 	printTxHashes()
+ 	//printTxHashes()
 }
 

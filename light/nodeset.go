@@ -81,7 +81,7 @@ func (db *NodeSet) Get(bucket, key []byte) ([]byte, error) {
 	return nil, errors.New("not found")
 }
 
-func (db *NodeSet) GetAsOf(bucket, key []byte, timestamp uint64) ([]byte, error) {
+func (db *NodeSet) GetAsOf(bucket, hBucket, key []byte, timestamp uint64) ([]byte, error) {
 	return nil, nil
 }
 

@@ -345,7 +345,7 @@ func (t *Trie) relistNodes(n node, level int) {
 
 func (t *Trie) tryGet(dbr DatabaseReader, origNode node, key []byte, pos int, blockNr uint64) (value []byte, err error) {
 	if t.historical {
-		value, err = dbr.GetAsOf(t.bucket, append(t.prefix, key...), blockNr)
+		value, err = dbr.GetAsOf(t.bucket[1:], t.bucket, append(t.prefix, key...), blockNr)
 	} else {
 		value, err = dbr.Get(t.bucket, append(t.prefix, key...))
 	}

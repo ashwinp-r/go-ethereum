@@ -127,6 +127,10 @@ func (t *Trie) Rebuild(db ethdb.Database, blockNr uint64) hashNode {
 		t.root = root
 		log.Info("Successfuly loaded from hashfile", "nodes", t.nodeList.Len(), "root hash", roothash)
 	} else {
+		empty := common.Hash{}
+		for i := 0; i < ethdb.HeapSize/32; i++ {
+			db.PutHash(uint32(i), empty[:])
+		}
 		_, hn, err := t.rebuildHashes(db, nil, 0, blockNr, true, n)
 		if err != nil {
 			panic(err)
