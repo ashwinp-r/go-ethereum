@@ -116,7 +116,7 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 		})
 	}
 	numDeletes := st.Len() - overrideCounter
-	dbs.db.WalkAsOf(StorageBucket, StorageHistoryBucket, s[:], 0, dbs.blockNr, func(ks, vs []byte) (bool, error) {
+	dbs.db.WalkAsOf(StorageBucket, StorageHistoryBucket, s[:], 0, dbs.blockNr+1, func(ks, vs []byte) (bool, error) {
 		if !bytes.HasPrefix(ks, addr[:]) {
 			return false, nil
 		}
@@ -159,7 +159,7 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 }
 
 func (dbs *DbState) ReadAccountData(addrHash common.Hash) (*Account, error) {
-	enc, err := dbs.db.GetAsOf(AccountsBucket, AccountsHistoryBucket, addrHash[:], dbs.blockNr)
+	enc, err := dbs.db.GetAsOf(AccountsBucket, AccountsHistoryBucket, addrHash[:], dbs.blockNr+1)
 	if err != nil || enc == nil || len(enc) == 0 {
 		return nil, nil
 	}
@@ -188,7 +188,7 @@ func (dbs *DbState) ReadAccountData(addrHash common.Hash) (*Account, error) {
 
 func (dbs *DbState) ReadAccountStorage(address common.Address, key *common.Hash) ([]byte, error) {
 	seckey := crypto.Keccak256Hash(key[:])
-	enc, err := dbs.db.GetAsOf(StorageBucket, StorageHistoryBucket, append(address[:], seckey[:]...), dbs.blockNr)
+	enc, err := dbs.db.GetAsOf(StorageBucket, StorageHistoryBucket, append(address[:], seckey[:]...), dbs.blockNr+1)
 	if err != nil || enc == nil {
 		return nil, nil
 	}
