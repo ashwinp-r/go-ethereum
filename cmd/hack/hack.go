@@ -693,7 +693,7 @@ func testRewind() {
 	check(err)
 	fmt.Printf("Rebuit root hash: %x\n", rebuiltRoot)
 	startTime = time.Now()
-	rewindLen := uint64(3)
+	rewindLen := uint64(20)
 	err = tds.UnwindTo(currentBlockNr - rewindLen, false)
 	fmt.Printf("Unwind done in %v\n", time.Since(startTime))
 	check(err)

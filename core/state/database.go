@@ -484,7 +484,7 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64, commit bool) error {
 					return err
 				}
 			} else {
-				fmt.Printf("Deleted account\n")
+				//fmt.Printf("Deleted account\n")
 				tds.accountUpdates[addrHash] = nil
 				tds.deleted[addrHash] = struct{}{}
 				err = batch.Delete(AccountsBucket, key)
@@ -506,7 +506,7 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64, commit bool) error {
 			if len(value) > 0 {
 				batch.Put(StorageBucket, key, value)
 			} else {
-				fmt.Printf("Deleted storage item\n")
+				//fmt.Printf("Deleted storage item\n")
 				batch.Delete(StorageBucket, key)
 			}
 		}
@@ -541,13 +541,26 @@ func accountToEncoding(account *Account) ([]byte, error) {
 			var extAccount ExtAccount
 			extAccount.Nonce = account.Nonce
 			extAccount.Balance = account.Balance
+			if extAccount.Balance == nil {
+				extAccount.Balance = new(big.Int)
+			}
 			data, err = rlp.EncodeToBytes(extAccount)
 			if err != nil {
 				return nil, err
 			}
 		}
 	} else {
-		data, err = rlp.EncodeToBytes(account)
+		a := *account
+		if a.Balance == nil {
+			a.Balance = new(big.Int)
+		}
+		if a.CodeHash == nil {
+			a.CodeHash = emptyCodeHash
+		}
+		if a.Root == (common.Hash{}) {
+			a.Root = emptyRoot
+		}
+		data, err = rlp.EncodeToBytes(a)
 		if err != nil {
 			return nil, err
 		}
@@ -786,9 +799,14 @@ func (dsw *DbStateWriter) UpdateAccountData(address common.Address, original, ac
 	if accountsEqual(original, account) {
 		return nil
 	}
-	originalData, err := accountToEncoding(original)
-	if err != nil {
-		return err
+	var originalData []byte
+	if original.Balance == nil {
+		originalData = []byte{}
+	} else {
+		originalData, err = accountToEncoding(original)
+		if err != nil {
+			return err
+		}
 	}
 	return dsw.tds.db.PutS(AccountsHistoryBucket, addrHash[:], originalData, dsw.tds.blockNr)
 }
