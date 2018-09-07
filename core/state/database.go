@@ -117,6 +117,7 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 	}
 	numDeletes := st.Len() - overrideCounter
 	dbs.db.WalkAsOf(StorageBucket, StorageHistoryBucket, s[:], 0, dbs.blockNr+1, func(ks, vs []byte) (bool, error) {
+		fmt.Printf("ks %x, vs %x\n", ks, vs)
 		if !bytes.HasPrefix(ks, addr[:]) {
 			return false, nil
 		}
@@ -125,6 +126,7 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 			return true, nil
 		}
 		seckey := ks[20:]
+		//fmt.Printf("seckey: %x\n", seckey)
 		si := storageItem{}
 		copy(si.seckey[:], seckey)
 		if st.Has(&si) {

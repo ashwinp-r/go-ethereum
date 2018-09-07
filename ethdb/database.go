@@ -19,6 +19,7 @@ package ethdb
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path"
 	"sync"
@@ -397,6 +398,7 @@ func (db *LDBDatabase) WalkAsOf(bucket, hBucket, startkey []byte, fixedbits uint
 	fixedbytes, mask := bytesmask(fixedbits)
 	suffix := encodeTimestamp(timestamp)
 	l := len(startkey)
+	sl := l + len(suffix)
 	keyBuffer := make([]byte, l+len(EndSuffix))
 	err := db.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucket)
@@ -429,7 +431,7 @@ func (db *LDBDatabase) WalkAsOf(bucket, hBucket, startkey []byte, fixedbits uint
 			if hK != nil && bytes.Compare(hK[:l], suffix) < 0 {
 				copy(keyBuffer, hK[:l])
 				copy(keyBuffer[l:], suffix)
-				hK, hV = hC.Seek(keyBuffer)
+				hK, hV = hC.Seek(keyBuffer[:sl])
 				continue
 			}
 			var cmp int
@@ -446,9 +448,11 @@ func (db *LDBDatabase) WalkAsOf(bucket, hBucket, startkey []byte, fixedbits uint
 				cmp = bytes.Compare(k, hK[:l])
 			}
 			if cmp < 0 {
+				fmt.Printf("Current\n")
 				goOn, err = walker(k, v)
 			} else {
-				goOn, err = walker(hK, hV)
+				fmt.Printf("Historical\n")
+				goOn, err = walker(hK[:l], hV)
 			}
 			if goOn {
 				if cmp <= 0 {
