@@ -117,7 +117,6 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 	}
 	numDeletes := st.Len() - overrideCounter
 	dbs.db.WalkAsOf(StorageBucket, StorageHistoryBucket, s[:], 0, dbs.blockNr+1, func(ks, vs []byte) (bool, error) {
-		fmt.Printf("ks %x, vs %x\n", ks, vs)
 		if !bytes.HasPrefix(ks, addr[:]) {
 			return false, nil
 		}
@@ -824,7 +823,7 @@ func (tsw *TrieStateWriter) DeleteAccount(address common.Address, original *Acco
 }
 
 func (dsw *DbStateWriter) DeleteAccount(address common.Address, original *Account) error {
-	addrHash, err := dsw.tds.HashAddress(address, false /*save*/)
+	addrHash, err := dsw.tds.HashAddress(address, true /*save*/)
 	if err != nil {
 		return err
 	}

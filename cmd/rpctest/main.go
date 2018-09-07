@@ -295,7 +295,7 @@ func bench1() {
 	lastBlock := blockNumber.Number.ToInt().Int64()
 	fmt.Printf("Last block: %d\n", lastBlock)
 	accounts := make(map[common.Address]struct{})
-	firstBn := 900000
+	firstBn := 900000-1
 	prevBn := firstBn
 	for bn := firstBn; bn <= int(lastBlock); bn++ {
 		req_id++

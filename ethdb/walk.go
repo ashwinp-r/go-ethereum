@@ -200,13 +200,13 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 
 func GetModifiedAccounts(db Getter, starttimestamp, endtimestamp uint64) ([]common.Address, error) {
 	t := llrb.New()
-	endCode := encodeTimestamp(endtimestamp)
-	if err := db.Walk(SuffixBucket, endCode, 0, func (k, v []byte) ([]byte, WalkAction, error) {
+	startCode := encodeTimestamp(starttimestamp)
+	if err := db.Walk(SuffixBucket, startCode, 0, func (k, v []byte) ([]byte, WalkAction, error) {
 		timestamp, bucket := decodeTimestamp(k)
 		if !bytes.Equal(bucket, []byte("hAT")) {
 			return nil, WalkActionNext, nil
 		}
-		if timestamp <= starttimestamp {
+		if timestamp > endtimestamp {
 			return nil, WalkActionStop, nil
 		}
 		keycount := int(binary.BigEndian.Uint32(v))
