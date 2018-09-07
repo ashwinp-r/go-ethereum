@@ -693,7 +693,7 @@ func testRewind() {
 	check(err)
 	fmt.Printf("Rebuit root hash: %x\n", rebuiltRoot)
 	startTime = time.Now()
-	rewindLen := uint64(20)
+	rewindLen := uint64(60)
 	err = tds.UnwindTo(currentBlockNr - rewindLen, false)
 	fmt.Printf("Unwind done in %v\n", time.Since(startTime))
 	check(err)
@@ -845,24 +845,6 @@ func testRewindTests() {
 	ethdb.TestRewindData1Bucket()
 	fmt.Printf("2 buckets\n")
 	ethdb.TestRewindData2Bucket()
-}
-
-func testReset(timestamp uint64) {
-	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024)
-	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata", 1024)
-	check(err)
-	defer ethDb.Close()
-	startTime := time.Now()
-	err = ethDb.ResetTo(timestamp)
-	fmt.Printf("Time slice created in %v\n", time.Since(startTime))
-	check(err)
-	m := ethDb.NewBatch()
-	hash := rawdb.ReadCanonicalHash(m, timestamp)
-	rawdb.WriteHeadBlockHash(m, hash)
-	rawdb.WriteHeadFastBlockHash(m, hash)
-	rawdb.WriteHeadHeaderHash(m, hash)
-	err = m.Commit()
-	check(err)
 }
 
 func testBlockHashes() {

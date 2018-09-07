@@ -466,14 +466,7 @@ func (db *LDBDatabase) WalkAsOf(bucket, hBucket, startkey []byte, fixedbits uint
 		return err
 	})
 	return err
-	//return walkAsOf(db, hBucket, startkey, fixedbits, timestamp, walker)
 }
-
-/*
-func (db *LDBDatabase) WalkAsOf(hBucket, startkey []byte, fixedbits uint, timestamp uint64, walker func([]byte, []byte) (bool, error)) error {
-	return walkAsOf(db, hBucket, startkey, fixedbits, timestamp, walker)
-}
-*/
 
 func (db *LDBDatabase) MultiWalkAsOf(hBucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
 	return multiWalkAsOf(db, hBucket, startkeys, fixedbits, timestamp, walker)
@@ -600,64 +593,6 @@ type mutation struct {
 	hashes map[uint32]Hash
 	mu sync.RWMutex
 	db Database
-}
-
-func (db *LDBDatabase) ResetTo(timestamp uint64) error {
-	m := &mutation{
-		db: db, // Don't want to read from underlying DB
-		puts: make(map[string]*llrb.LLRB),
-		suffixkeys: make(map[uint64]map[string][][]byte),
-		hashes: make(map[uint32]Hash),
-	}
-	bucketList := [][]byte{}
-	if err := db.db.View(func(tx *bolt.Tx) error {
-		err := tx.ForEach(func(name []byte, b *bolt.Bucket) error {
-			if len(name) == 21 {
-				bucketList = append(bucketList, common.CopyBytes(name[1:]))
-			}
-			return nil
-		})
-		return err
-	}); err != nil {
-		return err
-	}
-	bucketList = append(bucketList, []byte("AT"))
-	for _, bucket := range bucketList {
-		db.DeleteBucket(bucket)
-	}
-	startkey := make([]byte, 52)
-	itemCount := 0
-	var t *llrb.LLRB
-	var ok bool
-	for _, bucket := range bucketList {
-		if t, ok = m.puts[string(bucket)]; !ok {
-			t = llrb.New()
-			m.puts[string(bucket)] = t
-		}	
-		if err := walkAsOf(db, append([]byte("h"), bucket...), startkey, 0, timestamp, func(key []byte, value []byte) (bool, error) {
-			t.ReplaceOrInsert(&PutItem{key: common.CopyBytes(key), value: common.CopyBytes(value)})
-			itemCount++
-			if itemCount >= 100000 {
-				if err := m.Commit(); err != nil {
-					return false, err
-				}
-				itemCount = 0
-				if t, ok = m.puts[string(bucket)]; !ok {
-					t = llrb.New()
-					m.puts[string(bucket)] = t
-				}
-			}
-			return true, nil
-		}); err != nil {
-			return err
-		}		
-	}
-	if itemCount > 0 {
-		if err := m.Commit(); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (db *LDBDatabase) NewBatch() Mutation {
