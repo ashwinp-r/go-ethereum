@@ -797,6 +797,7 @@ func (dsw *DbStateWriter) UpdateAccountData(address common.Address, original, ac
 		return err
 	}
 	// Don't write historical record if the account did not change
+	/*
 	if accountsEqual(original, account) {
 		return nil
 	}
@@ -809,7 +810,9 @@ func (dsw *DbStateWriter) UpdateAccountData(address common.Address, original, ac
 			return err
 		}
 	}
-	return dsw.tds.db.PutS(AccountsHistoryBucket, addrHash[:], originalData, dsw.tds.blockNr)
+	*/
+	return nil
+	//return dsw.tds.db.PutS(AccountsHistoryBucket, addrHash[:], originalData, dsw.tds.blockNr)
 }
 
 func (tsw *TrieStateWriter) DeleteAccount(address common.Address, original *Account) error {
@@ -830,11 +833,14 @@ func (dsw *DbStateWriter) DeleteAccount(address common.Address, original *Accoun
 	if err := dsw.tds.db.Delete(AccountsBucket, addrHash[:]); err != nil {
 		return err
 	}
+	/*
 	originalData, err := accountToEncoding(original)
 	if err != nil {
 		return err
 	}
-	return dsw.tds.db.PutS(AccountsHistoryBucket, addrHash[:], originalData, dsw.tds.blockNr)
+	*/
+	return nil
+	//return dsw.tds.db.PutS(AccountsHistoryBucket, addrHash[:], originalData, dsw.tds.blockNr)
 }
 
 func (tsw *TrieStateWriter) UpdateAccountCode(codeHash common.Hash, code []byte) error {
@@ -884,7 +890,8 @@ func (dsw *DbStateWriter) WriteAccountStorage(address common.Address, key, origi
 	o := bytes.TrimLeft(original[:], "\x00")
 	oo := make([]byte, len(o))
 	copy(oo, o)
-	return dsw.tds.db.PutS(StorageHistoryBucket, compositeKey, oo, dsw.tds.blockNr)
+	return nil
+	//return dsw.tds.db.PutS(StorageHistoryBucket, compositeKey, oo, dsw.tds.blockNr)
 }
 
 // Database wraps access to tries and contract code.

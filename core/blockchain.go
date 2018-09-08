@@ -853,7 +853,7 @@ func (bc *BlockChain) WriteBlockWithState(block *types.Block, receipts []*types.
 		return NonStatTy, err
 	}
 
-	rawdb.WriteReceipts(bc.db, block.Hash(), block.NumberU64(), receipts)
+	//rawdb.WriteReceipts(bc.db, block.Hash(), block.NumberU64(), receipts)
 
 	// If the total difficulty is higher than our known, add it to the canonical chain
 	// Second clause in the if statement reduces the vulnerability to selfish mining.
