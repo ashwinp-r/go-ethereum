@@ -861,10 +861,15 @@ func printTxHashes() {
 	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024)
 	check(err)
 	defer ethDb.Close()
-	for b := uint64(0); b < uint64(2400000); b++ {
+	for b := uint64(2300000); b < uint64(2400000); b++ {
 		hash := rawdb.ReadCanonicalHash(ethDb, b)
-		header := rawdb.ReadHeader(ethDb, hash, b)
-		fmt.Printf("%d %x\n", b, header.TxHash)
+		block := rawdb.ReadBlock(ethDb, hash, b)
+		if block == nil {
+			break
+		}
+		for _, tx := range block.Transactions() {
+			fmt.Printf("%x\n", tx.Hash())
+		}
 	}
 }
 
@@ -922,7 +927,7 @@ func main() {
  	//}
  	//testBlockHashes()
  	//printBuckets(db)
- 	//printTxHashes()
- 	relayoutKeys()
+ 	printTxHashes()
+ 	//relayoutKeys()
 }
 
