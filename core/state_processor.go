@@ -137,9 +137,16 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tds
 		if cfg.Debug {
 			fmt.Printf("DEBUG!\n")
 		}
-		receipt, _, err := ApplyTransaction(p.config, p.bc, nil, gp, statedb, tds, header, tx, usedGas, cfg)
+		receipt, _, err := ApplyTransaction(p.config, p.bc, nil, gp, statedb, tds.TrieStateWriter(), header, tx, usedGas, cfg)
 		if err != nil {
 			return nil, nil, 0, err
+		}
+		if !p.config.IsByzantium(header.Number) {
+			rootHash, err := tds.TrieRoot()
+			if err != nil {
+				return nil, nil, 0, err
+			}
+			receipt.PostState = rootHash.Bytes()
 		}
 		/*
 		if cfg.Tracer != nil {
@@ -172,7 +179,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tds
 // and uses the input parameters for its environment. It returns the receipt
 // for the transaction, gas used and an error if the transaction failed,
 // indicating the block was invalid.
-func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *common.Address, gp *GasPool, statedb *state.StateDB, tds *state.TrieDbState, header *types.Header, tx *types.Transaction, usedGas *uint64, cfg vm.Config) (*types.Receipt, uint64, error) {
+func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *common.Address, gp *GasPool, statedb *state.StateDB, stateWriter state.StateWriter, header *types.Header, tx *types.Transaction, usedGas *uint64, cfg vm.Config) (*types.Receipt, uint64, error) {
 	msg, err := tx.AsMessage(types.MakeSigner(config, header.Number))
 	if err != nil {
 		return nil, 0, err
@@ -188,22 +195,13 @@ func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *commo
 		return nil, 0, err
 	}
 	// Update the state with pending changes
-	var root []byte
-	if config.IsByzantium(header.Number) {
-		statedb.Finalise(true, tds.TrieStateWriter())
-		//tds.TrieRoot()
-	} else {
-		rootHash, err := tds.IntermediateRoot(statedb, config.IsEIP158(header.Number))
-		if err != nil {
-			return nil, 0, err
-		}
-		root = rootHash.Bytes()
-	}
+	statedb.Finalise(config.IsEIP158(header.Number), stateWriter)
+
 	*usedGas += gas
 
 	// Create a new receipt for the transaction, storing the intermediate root and gas used by the tx
 	// based on the eip phase, we're passing wether the root touch-delete accounts.
-	receipt := types.NewReceipt(root, failed, *usedGas)
+	receipt := types.NewReceipt(failed, *usedGas)
 	receipt.TxHash = tx.Hash()
 	receipt.GasUsed = gas
 	// if the transaction created a contract, store the creation address in the receipt.

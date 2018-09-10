@@ -868,6 +868,27 @@ func printTxHashes() {
 	}
 }
 
+func relayoutKeys() {
+	//db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+ 	check(err)
+ 	defer db.Close()
+ 	var count int
+ 	err = db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("SUFFIX"))
+		if b == nil {
+			return nil
+		}
+		c := b.Cursor()
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
+			count++
+		}
+		return nil
+ 	})
+ 	check(err)
+ 	fmt.Printf("Records: %d\n", count)
+}
+
 func main() {
 	flag.Parse()
     if *cpuprofile != "" {
@@ -887,7 +908,7 @@ func main() {
  	//bucketStats(db)
  	//mychart()
  	//testRebuild()
- 	testRewind()
+ 	//testRewind()
  	//hashFile()
  	//buildHashFromFile()
  	//testResolve()
@@ -902,5 +923,6 @@ func main() {
  	//testBlockHashes()
  	//printBuckets(db)
  	//printTxHashes()
+ 	relayoutKeys()
 }
 
