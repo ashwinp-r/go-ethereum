@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -141,7 +143,7 @@ type Receipt struct {
 
 	// Implementation fields (don't reorder!)
 	TxHash          common.Hash    `json:"transactionHash" gencodec:"required"`
-	ContractAddress common.Address `json:"contractAddress"`
+	ContractAddress *common.Address `json:"contractAddress"`
 	GasUsed         hexutil.Uint64 `json:"gasUsed" gencodec:"required"`
 }
 
@@ -347,14 +349,14 @@ func compareReceipts(receipt, receiptg *EthReceipt) bool {
 		return false
 	}
 	if r.Status != rg.Status {
-		fmt.Printf("Different status: %d %d\n", r.Status, rg.Status)
-		return false
+		//fmt.Printf("Different status: %d %d\n", r.Status, rg.Status)
+		//return false
 	}
 	if r.CumulativeGasUsed != rg.CumulativeGasUsed {
 		fmt.Printf("Different cumulativeGasUsed: %d %d\n", r.CumulativeGasUsed, rg.CumulativeGasUsed)
 		return false
 	}
-	if !bytes.Equal(r.Bloom,rg.Bloom) {
+	if !bytes.Equal(r.Bloom, rg.Bloom) {
 		fmt.Printf("Different blooms: %x %x\n", r.Bloom, rg.Bloom)
 		return false
 	}
@@ -387,7 +389,7 @@ func compareReceipts(receipt, receiptg *EthReceipt) bool {
 				return false
 			}
 		}
-		if bytes.Equal(l.Data, lg.Data) {
+		if !bytes.Equal(l.Data, lg.Data) {
 			fmt.Printf("Different log %d data: %x %x\n", i, l.Data, lg.Data)
 			return false
 		}
@@ -395,7 +397,7 @@ func compareReceipts(receipt, receiptg *EthReceipt) bool {
 	return true
 }
 
-func bench1() {
+func bench1(storage bool) {
 	var client = &http.Client{
 		Timeout: time.Second * 600,
 	}
@@ -404,9 +406,7 @@ func bench1() {
 	geth_url := "http://localhost:8545"
 	turbogeth_url := "http://localhost:9545"
 	req_id++
-	template := `
-{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":%d}
-`
+	template := `{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":%d}`
 	var blockNumber EthBlockNumber
 	if err := post(client, turbogeth_url, fmt.Sprintf(template, req_id), &blockNumber); err != nil {
 		fmt.Printf("Could not get block number: %v\n", err)
@@ -419,13 +419,11 @@ func bench1() {
 	lastBlock := blockNumber.Number.ToInt().Int64()
 	fmt.Printf("Last block: %d\n", lastBlock)
 	accounts := make(map[common.Address]struct{})
-	firstBn := 900000-1
+	firstBn := 1000000
 	prevBn := firstBn
 	for bn := firstBn; bn <= int(lastBlock); bn++ {
 		req_id++
-		template := `
-{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x%x",true],"id":%d}
-`
+		template := `{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x%x",true],"id":%d}`
 		var b EthBlockByNumber
 		if err := post(client, turbogeth_url, fmt.Sprintf(template, bn, req_id), &b); err != nil {
 			fmt.Printf("Could not retrieve block %d: %v\n", bn, err)
@@ -453,11 +451,9 @@ func bench1() {
 			if tx.To != nil {
 				accounts[*tx.To] = struct{}{}
 			}
-			if tx.To != nil && tx.Gas.ToInt().Uint64() > 21000 {
+			if tx.To != nil && tx.Gas.ToInt().Uint64() > 21000 && storage {
 				req_id++
-				template = `
-	{"jsonrpc":"2.0","method":"debug_storageRangeAt","params":["0x%x", %d,"0x%x","0x%x",%d],"id":%d}
-	`
+				template = `{"jsonrpc":"2.0","method":"debug_storageRangeAt","params":["0x%x", %d,"0x%x","0x%x",%d],"id":%d}`
 				sm := make(map[common.Hash]storageEntry)
 				nextKey := &common.Hash{}
 				for nextKey != nil {
@@ -502,9 +498,7 @@ func bench1() {
 				}
 			}
 			req_id++
-			template =`
-{"jsonrpc":"2.0","method":"debug_traceTransaction","params":["%s"],"id":%d}
-`
+			template =`{"jsonrpc":"2.0","method":"debug_traceTransaction","params":["%s"],"id":%d}`
 			var trace EthTxTrace
 			if err := post(client, turbogeth_url, fmt.Sprintf(template, tx.Hash, req_id), &trace); err != nil {
 				fmt.Printf("Could not trace transaction %s: %v\n", tx.Hash, err)
@@ -529,9 +523,7 @@ func bench1() {
 				return
 			}
 			req_id++
-			template = `
-{"jsonrpc":"2.0","method":"eth_getTransactionReceipt","params":["%s"],"id":%d}
-`
+			template = `{"jsonrpc":"2.0","method":"eth_getTransactionReceipt","params":["%s"],"id":%d}`
 			var receipt EthReceipt
 			if err := post(client, turbogeth_url, fmt.Sprintf(template, tx.Hash, req_id), &receipt); err != nil {
 				fmt.Printf("Count not get receipt: %s: %v\n", tx.Hash, err)
@@ -554,13 +546,13 @@ func bench1() {
 			}
 			if !compareReceipts(&receipt, &receiptg) {
 				fmt.Printf("Different receipts block %d, tx %s\n", bn, tx.Hash)
+				print(client, turbogeth_url, fmt.Sprintf(template, tx.Hash, req_id))
+				print(client, geth_url, fmt.Sprintf(template, tx.Hash, req_id))
 				return
 			}
 		}
 		req_id++
-		template = `
-{"jsonrpc":"2.0","method":"eth_getBalance","params":["0x%x", "0x%x"],"id":%d}
-`
+		template = `{"jsonrpc":"2.0","method":"eth_getBalance","params":["0x%x", "0x%x"],"id":%d}`
 		var balance EthBalance
 		if err := post(client, turbogeth_url, fmt.Sprintf(template, b.Result.Miner, bn, req_id), &balance); err != nil {
 			fmt.Printf("Could not get account balance: %v\n", err)
@@ -586,9 +578,7 @@ func bench1() {
 		if prevBn < bn && bn % 1000 == 0 {
 			// Checking modified accounts
 			req_id++
-			template = `
-{"jsonrpc":"2.0","method":"debug_getModifiedAccountsByNumber","params":[%d, %d],"id":%d}
-`
+			template = `{"jsonrpc":"2.0","method":"debug_getModifiedAccountsByNumber","params":[%d, %d],"id":%d}`
 			var ma DebugModifiedAccounts
 			if err := post(client, turbogeth_url, fmt.Sprintf(template, prevBn, bn, req_id), &ma); err != nil {
 				fmt.Printf("Could not get modified accounts: %v\n", err)
@@ -876,6 +866,36 @@ func bench4() {
 	fmt.Printf("storageRange: %d\n", len(sm))
 }
 
+func bench5() {
+	var client = &http.Client{
+		Timeout: time.Second * 600,
+	}
+	turbogeth_url := "http://localhost:9545"
+	file, err := os.Open("txs.txt")
+	if err != nil {
+		panic(err)
+	}
+	req_id := 0
+	template := `{"jsonrpc":"2.0","method":"eth_getTransactionReceipt","params":["0x%s"],"id":%d}`
+	var receipt EthReceipt
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		req_id++
+		if err := post(client, turbogeth_url, fmt.Sprintf(template, scanner.Text(), req_id), &receipt); err != nil {
+			fmt.Printf("Count not get receipt: %s: %v\n", scanner.Text(), err)
+			return
+		}
+		if receipt.Error != nil {
+			fmt.Printf("Error getting receipt: %d %s\n", receipt.Error.Code, receipt.Error.Message)
+			return
+		}
+	}
+	err = scanner.Err()
+	if err != nil {
+		panic(err)
+	}
+}
+
 func main() {
-	bench1()
+	bench5()
 }
