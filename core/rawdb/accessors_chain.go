@@ -218,11 +218,15 @@ func ReadBody(db DatabaseReader, hash common.Hash, number uint64) *types.Body {
 		log.Error("Invalid block body RLP", "hash", hash, "err", err)
 		return nil
 	}
+	// Post-processing
+	body.SendersToTxs()
 	return body
 }
 
 // WriteBody storea a block body into the database.
 func WriteBody(db DatabaseWriter, hash common.Hash, number uint64, body *types.Body) {
+	// Pre-processing
+	body.SendersFromTxs()
 	data, err := rlp.EncodeToBytes(body)
 	if err != nil {
 		log.Crit("Failed to RLP encode body", "err", err)

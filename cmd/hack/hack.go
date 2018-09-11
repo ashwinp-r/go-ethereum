@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
+	"math/big"
 	"fmt"
 	"strings"
 	"strconv"
@@ -23,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
@@ -861,7 +864,7 @@ func printTxHashes() {
 	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024)
 	check(err)
 	defer ethDb.Close()
-	for b := uint64(2300000); b < uint64(2400000); b++ {
+	for b := uint64(0); b < uint64(100000); b++ {
 		hash := rawdb.ReadCanonicalHash(ethDb, b)
 		block := rawdb.ReadBlock(ethDb, hash, b)
 		if block == nil {
@@ -892,6 +895,54 @@ func relayoutKeys() {
  	})
  	check(err)
  	fmt.Printf("Records: %d\n", count)
+}
+
+func upgradeBlocks() {
+	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024)
+	check(err)
+	defer ethDb.Close()
+	start := []byte{}
+	var keys [][]byte
+	if err := ethDb.Walk([]byte("b"), start, 0, func (k, v []byte) ([]byte, ethdb.WalkAction, error) {
+		if len(keys) % 1000 == 0 {
+			fmt.Printf("Collected keys: %d\n", len(keys))
+		}
+		keys = append(keys, common.CopyBytes(k))
+		return nil, ethdb.WalkActionNext, nil
+	}); err != nil {
+		panic(err)
+	}
+	for i, key := range keys {
+		v, err := ethDb.Get([]byte("b"), key)
+		if err != nil {
+			panic(err)
+		}
+		smallBody := new(types.Body) // To be changed to SmallBody
+		if err := rlp.Decode(bytes.NewReader(v), smallBody); err != nil {
+			panic(err)
+		}
+		body := new(types.Body)
+		blockNum := binary.BigEndian.Uint64(key[:8])
+		signer := types.MakeSigner(params.MainnetChainConfig, big.NewInt(int64(blockNum)))
+		body.Senders = make([]common.Address, len(smallBody.Transactions))
+		for j, tx := range smallBody.Transactions {
+			addr, err := signer.Sender(tx)
+			if err != nil {
+				panic(err)
+			}
+			body.Senders[j] = addr
+		}
+		body.Transactions = smallBody.Transactions
+		body.Uncles = smallBody.Uncles
+		newV, err := rlp.EncodeToBytes(body)
+		if err != nil {
+			panic(err)
+		}
+		ethDb.Put([]byte("b"), key, newV)
+		if i % 1000 == 0 {
+			fmt.Printf("Upgraded keys: %d\n", i)
+		}
+	}
 }
 
 func main() {
@@ -927,7 +978,8 @@ func main() {
  	//}
  	//testBlockHashes()
  	//printBuckets(db)
- 	printTxHashes()
+ 	//printTxHashes()
  	//relayoutKeys()
+ 	upgradeBlocks()
 }
 
