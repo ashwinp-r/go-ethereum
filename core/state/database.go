@@ -19,6 +19,7 @@ package state
 import (
 	"bytes"
 	"fmt"
+	"hash"
 	"runtime"
 	"math/big"
 	//"runtime/debug"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/sha3"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -53,7 +55,7 @@ const (
 )
 
 type StateReader interface {
-	ReadAccountData(addrHash common.Hash) (*Account, error)
+	ReadAccountData(address common.Address) (*Account, error)
 	ReadAccountStorage(address common.Address, key *common.Hash) ([]byte, error)
 	ReadAccountCode(codeHash common.Hash) ([]byte, error)
 	ReadAccountCodeSize(codeHash common.Hash) (int, error)
@@ -64,6 +66,14 @@ type StateWriter interface {
 	UpdateAccountCode(codeHash common.Hash, code []byte) error
 	DeleteAccount(address common.Address, original *Account) error
 	WriteAccountStorage(address common.Address, key, original, value *common.Hash) error
+}
+
+// keccakState wraps sha3.state. In addition to the usual hash methods, it also supports
+// Read to get a variable amount of data from the hash state. Read is faster than Sum
+// because it doesn't copy the internal state, but also modifies the internal state.
+type keccakState interface {
+	hash.Hash
+	Read([]byte) (int, error)
 }
 
 type storageItem struct {
@@ -80,6 +90,8 @@ type DbState struct {
 	db ethdb.Getter
 	blockNr uint64
 	storage map[common.Address]*llrb.LLRB
+	h keccakState
+	buf common.Hash
 }
 
 func NewDbState(db ethdb.Getter, blockNr uint64) *DbState {
@@ -87,6 +99,7 @@ func NewDbState(db ethdb.Getter, blockNr uint64) *DbState {
 		db: db,
 		blockNr: blockNr,
 		storage: make(map[common.Address]*llrb.LLRB),
+		h: sha3.NewKeccak256().(keccakState),
 	}
 }
 
@@ -159,8 +172,11 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 	})
 }
 
-func (dbs *DbState) ReadAccountData(addrHash common.Hash) (*Account, error) {
-	enc, err := dbs.db.GetAsOf(AccountsBucket, AccountsHistoryBucket, addrHash[:], dbs.blockNr+1)
+func (dbs *DbState) ReadAccountData(address common.Address) (*Account, error) {
+	dbs.h.Reset()
+	dbs.h.Write(address[:])
+	dbs.h.Read(dbs.buf[:])
+	enc, err := dbs.db.GetAsOf(AccountsBucket, AccountsHistoryBucket, dbs.buf[:], dbs.blockNr+1)
 	if err != nil || enc == nil || len(enc) == 0 {
 		return nil, nil
 	}
@@ -188,8 +204,10 @@ func (dbs *DbState) ReadAccountData(addrHash common.Hash) (*Account, error) {
 }
 
 func (dbs *DbState) ReadAccountStorage(address common.Address, key *common.Hash) ([]byte, error) {
-	seckey := crypto.Keccak256Hash(key[:])
-	enc, err := dbs.db.GetAsOf(StorageBucket, StorageHistoryBucket, append(address[:], seckey[:]...), dbs.blockNr+1)
+	dbs.h.Reset()
+	dbs.h.Write(key[:])
+	dbs.h.Read(dbs.buf[:])
+	enc, err := dbs.db.GetAsOf(StorageBucket, StorageHistoryBucket, append(address[:], dbs.buf[:]...), dbs.blockNr+1)
 	if err != nil || enc == nil {
 		return nil, nil
 	}
@@ -229,7 +247,10 @@ func (dbs *DbState) WriteAccountStorage(address common.Address, key, original, v
 		t = llrb.New()
 		dbs.storage[address] = t
 	}
-	t.ReplaceOrInsert(&storageItem{key: *key, seckey: crypto.Keccak256Hash(key[:]), value: *value})
+	dbs.h.Reset()
+	dbs.h.Write(key[:])
+	dbs.h.Read(dbs.buf[:])
+	t.ReplaceOrInsert(&storageItem{key: *key, seckey: dbs.buf, value: *value})
 	return nil
 }
 
@@ -248,6 +269,8 @@ type TrieDbState struct {
 	codeCache        *lru.Cache
 	codeSizeCache    *lru.Cache
 	historical       bool
+	h keccakState
+	buf common.Hash
 }
 
 func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieDbState, error) {
@@ -281,6 +304,7 @@ func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieD
 		deleted: make(map[common.Hash]struct{}),
 		codeCache: cc,
 		codeSizeCache: csc,
+		h: sha3.NewKeccak256().(keccakState),
 	}
 	t.MakeListed(tds.nodeList)
 	return &tds, nil
@@ -596,8 +620,11 @@ func encodingToAccount(enc []byte) (*Account, error) {
 	return &data, nil
 }
 
-func (tds *TrieDbState) ReadAccountData(addrHash common.Hash) (*Account, error) {
-	enc, _, err := tds.t.TryGet(tds.db, addrHash[:], tds.blockNr)
+func (tds *TrieDbState) ReadAccountData(address common.Address) (*Account, error) {
+	tds.h.Reset()
+	tds.h.Write(address[:])
+	tds.h.Read(tds.buf[:])
+	enc, _, err := tds.t.TryGet(tds.db, tds.buf[:], tds.blockNr)
 	if err != nil {
 		return nil, err
 	}
@@ -641,7 +668,7 @@ func (tds *TrieDbState) GetKey(shaKey []byte) []byte {
 func (tds *TrieDbState) getStorageTrie(address common.Address, addrHash common.Hash, create bool) (*trie.Trie, error) {
 	t, ok := tds.storageTries[addrHash]
 	if !ok && create {
-		account, err := tds.ReadAccountData(addrHash)
+		account, err := tds.ReadAccountData(address)
 		if err != nil {
 			return nil, err
 		}

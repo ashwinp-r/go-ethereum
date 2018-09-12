@@ -329,7 +329,7 @@ func (self *StateDB) getStateObject(addr common.Address) (stateObject *stateObje
 	if _, ok := self.nilAccounts[addr]; ok {
 		return nil
 	}
-	account, err := self.stateReader.ReadAccountData(crypto.Keccak256Hash(addr[:]))
+	account, err := self.stateReader.ReadAccountData(addr)
 	if err != nil {
 		self.setError(err)
 		return nil
