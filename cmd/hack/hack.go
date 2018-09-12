@@ -899,7 +899,8 @@ func relayoutKeys() {
 }
 
 func upgradeBlocks() {
-	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024)
+	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024)
+	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata", 1024)
 	check(err)
 	defer ethDb.Close()
 	start := []byte{}
@@ -918,7 +919,7 @@ func upgradeBlocks() {
 		if err != nil {
 			panic(err)
 		}
-		smallBody := new(types.Body) // To be changed to SmallBody
+		smallBody := new(types.SmallBody) // To be changed to SmallBody
 		if err := rlp.Decode(bytes.NewReader(v), smallBody); err != nil {
 			panic(err)
 		}
@@ -995,6 +996,7 @@ func main() {
  	//printBuckets(db)
  	//printTxHashes()
  	//relayoutKeys()
- 	testRedis()
+ 	//testRedis()
+ 	upgradeBlocks()
 }
 
