@@ -139,8 +139,12 @@ func (t *Trie) Get(db ethdb.Database, key []byte, blockNr uint64) []byte {
 // If a node was not found in the database, a MissingNodeError is returned.
 func (t *Trie) TryGet(db ethdb.Database, key []byte, blockNr uint64) (value []byte, gotValue bool, err error) {
 	k := keybytesToHex(key)
-	value, gotValue = t.tryGet1(db, t.root, k, 0, blockNr)
-	if t.nodeList != nil {
+	var touched []Touch
+	value, gotValue, touched = t.tryGet1(t.root, k, 0, blockNr, nil)
+	if t.nodeList != nil && gotValue {
+		for _, touch := range touched {
+			t.touch(db, touch.np, touch.key, touch.pos)
+		}
 		t.relistNodes(t.root, 0)
 	}
 	if !gotValue {
@@ -355,35 +359,35 @@ func (t *Trie) tryGet(dbr DatabaseReader, origNode node, key []byte, pos int, bl
 	return
 }
 
-func (t *Trie) tryGet1(db ethdb.Database, origNode node, key []byte, pos int, blockNr uint64) (value []byte, gotValue bool) {
+func (t *Trie) tryGet1(origNode node, key []byte, pos int, blockNr uint64, tin []Touch) (value []byte, gotValue bool, touched []Touch) {
 	if np, ok := origNode.(nodep); ok {
-		t.touch(nil, np, key, pos)
+		touched = append(tin, Touch{np: np, key: key, pos: pos})
 	}
 	switch n := (origNode).(type) {
 	case nil:
-		return nil, true
+		return nil, true, touched
 	case valueNode:
-		return n, true
+		return n, true, touched
 	case *shortNode:
 		nKey := compactToHex(n.Key)
 		if len(key)-pos < len(nKey) || !bytes.Equal(nKey, key[pos:pos+len(nKey)]) {
-			return nil, true
+			return nil, true, touched
 		}
-		return t.tryGet1(db, n.Val, key, pos+len(nKey), blockNr)
+		return t.tryGet1(n.Val, key, pos+len(nKey), blockNr, touched)
 	case *duoNode:
 		i1, i2 := n.childrenIdx()
 		switch key[pos] {
 		case i1:
-			return t.tryGet1(db, n.child1, key, pos+1, blockNr)
+			return t.tryGet1(n.child1, key, pos+1, blockNr, touched)
 		case i2:
-			return t.tryGet1(db, n.child2, key, pos+1, blockNr)
+			return t.tryGet1(n.child2, key, pos+1, blockNr, touched)
 		default:
-			return nil, true
+			return nil, true, touched
 		}
 	case *fullNode:
-		return t.tryGet1(db, n.Children[key[pos]], key, pos+1, blockNr)
+		return t.tryGet1(n.Children[key[pos]], key, pos+1, blockNr, touched)
 	case hashNode:
-		return nil, false
+		return nil, false, touched
 	default:
 		panic(fmt.Sprintf("%T: invalid node: %v", origNode, origNode))
 	}
