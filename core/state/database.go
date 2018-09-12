@@ -26,7 +26,6 @@ import (
 	//"sort"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/sha3"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
@@ -644,7 +643,10 @@ func (tds *TrieDbState) HashAddress(address common.Address, save bool) (common.H
 		copy(hash[:], cached.([]byte))
 		return hash, tds.savePreimage(save, hash[:], address[:])
 	}
-	hash := crypto.Keccak256Hash(address[:])
+	tds.h.Reset()
+	tds.h.Write(address[:])
+	tds.h.Read(tds.buf[:])
+	hash := tds.buf
 	tds.addrHashCache.Add(address, hash[:])
 	return hash, tds.savePreimage(save, hash[:], address[:])
 }
@@ -655,7 +657,10 @@ func (tds *TrieDbState) HashKey(key common.Hash, save bool) (common.Hash, error)
 		copy(hash[:], cached.([]byte))
 		return hash, tds.savePreimage(save, hash[:], key[:])
 	}
-	hash := crypto.Keccak256Hash(key[:])
+	tds.h.Reset()
+	tds.h.Write(key[:])
+	tds.h.Read(tds.buf[:])
+	hash := tds.buf
 	tds.keyHashCache.Add(key, hash[:])
 	return hash, tds.savePreimage(save, hash[:], key[:])
 }
