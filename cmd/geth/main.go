@@ -130,6 +130,7 @@ var (
 		utils.NoCompactionFlag,
 		utils.GpoBlocksFlag,
 		utils.GpoPercentileFlag,
+		utils.RedisFlag,
 		configFileFlag,
 	}
 

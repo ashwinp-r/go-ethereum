@@ -18,7 +18,6 @@ import (
 	"github.com/boltdb/bolt"
 	"github.com/wcharczuk/go-chart"
 	util "github.com/wcharczuk/go-chart/util"
-	"github.com/go-redis/redis"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/common"
@@ -397,8 +396,8 @@ func printOccupancies(t *trie.Trie, db ethdb.Database, blockNr uint64) {
 }
 
 func trieStats() {
-	//db, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata", 4096)
-	db, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 4096)
+	//db, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
+	db, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
 	if err != nil {
 		panic(err)
 	}
@@ -672,8 +671,8 @@ func trieChart() {
 }
 
 func testRewind() {
-	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 16)
-	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata", 16)
+	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
+	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
 	check(err)
 	defer ethDb.Close()
 	db := ethDb.NewBatch()
@@ -711,8 +710,8 @@ func testRewind() {
 
 func testStartup() {
 	startTime := time.Now()
-	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024)
-	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata", 16)
+	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
+	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
 	check(err)
 	defer ethDb.Close()
 	bc, err := core.NewBlockChain(ethDb, nil, params.MainnetChainConfig, ethash.NewFaker(), vm.Config{})
@@ -736,8 +735,8 @@ func testStartup() {
 
 func testResolve() {
 	startTime := time.Now()
-	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata", 16)
-	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 16)
+	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
+	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
 	check(err)
 	defer ethDb.Close()
 	treePrefix := common.FromHex("1194e966965418c7d73a42cceeb254d875860356")
@@ -852,7 +851,7 @@ func testRewindTests() {
 }
 
 func testBlockHashes() {
-	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024)
+	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
 	check(err)
 	hash := rawdb.ReadCanonicalHash(ethDb, 823144)
 	fmt.Printf("Canonical hash: %x\n", hash)
@@ -862,7 +861,7 @@ func testBlockHashes() {
 }
 
 func printTxHashes() {
-	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024)
+	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
 	check(err)
 	defer ethDb.Close()
 	for b := uint64(0); b < uint64(100000); b++ {
@@ -899,8 +898,8 @@ func relayoutKeys() {
 }
 
 func upgradeBlocks() {
-	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 1024)
-	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata", 1024)
+	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
+	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
 	check(err)
 	defer ethDb.Close()
 	start := []byte{}
@@ -945,20 +944,6 @@ func upgradeBlocks() {
 			fmt.Printf("Upgraded keys: %d\n", i)
 		}
 	}
-}
-
-func testRedis() {
-	redisdb := redis.NewClient(&redis.Options{Addr: ":6379"})
-	redisdb.WrapProcess(func(old func(cmd redis.Cmder) error) func(cmd redis.Cmder) error {
-		return func(cmd redis.Cmder) error {
-			fmt.Printf("starting processing: <%s>\n", cmd)
-			err := old(cmd)
-			fmt.Printf("finished processing: <%s>\n", cmd)
-			return err
-		}
-		})
-
-	redisdb.Ping()
 }
 
 func main() {

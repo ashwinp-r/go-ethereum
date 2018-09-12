@@ -85,14 +85,8 @@ func openHashFile(file string) (*os.File, []byte, error) {
 }
 
 // NewLDBDatabase returns a LevelDB wrapped object.
-func NewLDBDatabase(file string, cache int) (*LDBDatabase, error) {
+func NewLDBDatabase(file string) (*LDBDatabase, error) {
 	logger := log.New("database", file)
-
-	// Ensure we have some minimal caching and file guarantees
-	if cache < 16 {
-		cache = 16
-	}
-	logger.Info("Allocated cache and file handles", "cache", cache)
 
 	// Create necessary directories
 	if err := os.MkdirAll(path.Dir(file), os.ModePerm); err != nil {
