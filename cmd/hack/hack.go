@@ -18,6 +18,7 @@ import (
 	"github.com/boltdb/bolt"
 	"github.com/wcharczuk/go-chart"
 	util "github.com/wcharczuk/go-chart/util"
+	"github.com/go-redis/redis"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/common"
@@ -945,6 +946,20 @@ func upgradeBlocks() {
 	}
 }
 
+func testRedis() {
+	redisdb := redis.NewClient(&redis.Options{Addr: ":6379"})
+	redisdb.WrapProcess(func(old func(cmd redis.Cmder) error) func(cmd redis.Cmder) error {
+		return func(cmd redis.Cmder) error {
+			fmt.Printf("starting processing: <%s>\n", cmd)
+			err := old(cmd)
+			fmt.Printf("finished processing: <%s>\n", cmd)
+			return err
+		}
+		})
+
+	redisdb.Ping()
+}
+
 func main() {
 	flag.Parse()
     if *cpuprofile != "" {
@@ -980,6 +995,6 @@ func main() {
  	//printBuckets(db)
  	//printTxHashes()
  	//relayoutKeys()
- 	upgradeBlocks()
+ 	testRedis()
 }
 
