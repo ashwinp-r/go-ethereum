@@ -360,7 +360,15 @@ func compareReceipts(receipt, receiptg *EthReceipt) bool {
 		fmt.Printf("Different blooms: %x %x\n", r.Bloom, rg.Bloom)
 		return false
 	}
-	if r.ContractAddress != rg.ContractAddress {
+	if r.ContractAddress == nil && rg.ContractAddress != nil {
+		fmt.Printf("Different contract addresses: nil %x\n", rg.ContractAddress)
+		return false
+	}
+	if r.ContractAddress != nil && rg.ContractAddress == nil {
+		fmt.Printf("Different contract addresses: %x nil\n", r.ContractAddress)
+		return false
+	}
+	if r.ContractAddress != nil && rg.ContractAddress != nil && *r.ContractAddress != *rg.ContractAddress {
 		fmt.Printf("Different contract addresses: %x %x\n", r.ContractAddress, rg.ContractAddress)
 		return false
 	}
@@ -897,5 +905,5 @@ func bench5() {
 }
 
 func main() {
-	bench5()
+	bench1(false)
 }
