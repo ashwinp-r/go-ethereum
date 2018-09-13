@@ -623,7 +623,7 @@ func (tds *TrieDbState) ReadAccountData(address common.Address) (*Account, error
 	tds.h.Reset()
 	tds.h.Write(address[:])
 	tds.h.Read(tds.buf[:])
-	enc, _, err := tds.t.TryGet(tds.db, tds.buf[:], tds.blockNr)
+	enc, err := tds.t.TryGet(tds.db, tds.buf[:], tds.blockNr)
 	if err != nil {
 		return nil, err
 	}
@@ -702,7 +702,7 @@ func (tds *TrieDbState) ReadAccountStorage(address common.Address, key *common.H
 	if err != nil {
 		return nil, err
 	}
-	enc, _, err := t.TryGet(tds.db, seckey[:], tds.blockNr)
+	enc, err := t.TryGet(tds.db, seckey[:], tds.blockNr)
 	if err != nil {
 		return nil, err
 	}

@@ -35,7 +35,6 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/trie"
 	"github.com/syndtr/goleveldb/leveldb/util"
 	"gopkg.in/urfave/cli.v1"
 )
@@ -258,9 +257,6 @@ func importChain(ctx *cli.Context) error {
 		utils.Fatalf("Failed to read database iostats: %v", err)
 	}
 	fmt.Println(ioStats)
-
-	fmt.Printf("Trie cache misses:  %d\n", trie.CacheMisses())
-	fmt.Printf("Trie cache unloads: %d\n\n", trie.CacheUnloads())
 
 	// Print the memory statistics used by the importing
 	mem := new(runtime.MemStats)
