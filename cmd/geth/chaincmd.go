@@ -35,7 +35,6 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/syndtr/goleveldb/leveldb/util"
 	"gopkg.in/urfave/cli.v1"
 )
 
@@ -190,7 +189,7 @@ func initGenesis(ctx *cli.Context) error {
 	// Open an initialise both full and light databases
 	stack := makeFullNode(ctx)
 	for _, name := range []string{"chaindata", "lightchaindata"} {
-		chaindb, err := stack.OpenDatabase(name, 0, 0)
+		chaindb, err := stack.OpenDatabase(name)
 		if err != nil {
 			utils.Fatalf("Failed to open database: %v", err)
 		}
@@ -243,21 +242,6 @@ func importChain(ctx *cli.Context) error {
 	chain.Stop()
 	fmt.Printf("Import done in %v.\n\n", time.Since(start))
 
-	// Output pre-compaction stats mostly to see the import trashing
-	db := chainDb.(*ethdb.LDBDatabase)
-
-	stats, err := db.LDB().GetProperty("leveldb.stats")
-	if err != nil {
-		utils.Fatalf("Failed to read database stats: %v", err)
-	}
-	fmt.Println(stats)
-
-	ioStats, err := db.LDB().GetProperty("leveldb.iostats")
-	if err != nil {
-		utils.Fatalf("Failed to read database iostats: %v", err)
-	}
-	fmt.Println(ioStats)
-
 	// Print the memory statistics used by the importing
 	mem := new(runtime.MemStats)
 	runtime.ReadMemStats(mem)
@@ -266,30 +250,6 @@ func importChain(ctx *cli.Context) error {
 	fmt.Printf("System memory: %.3f MB current, %.3f MB peak\n", float64(mem.Sys)/1024/1024, float64(atomic.LoadUint64(&peakMemSys))/1024/1024)
 	fmt.Printf("Allocations:   %.3f million\n", float64(mem.Mallocs)/1000000)
 	fmt.Printf("GC pause:      %v\n\n", time.Duration(mem.PauseTotalNs))
-
-	if ctx.GlobalIsSet(utils.NoCompactionFlag.Name) {
-		return nil
-	}
-
-	// Compact the entire database to more accurately measure disk io and print the stats
-	start = time.Now()
-	fmt.Println("Compacting entire database...")
-	if err = db.LDB().CompactRange(util.Range{}); err != nil {
-		utils.Fatalf("Compaction failed: %v", err)
-	}
-	fmt.Printf("Compaction done in %v.\n\n", time.Since(start))
-
-	stats, err = db.LDB().GetProperty("leveldb.stats")
-	if err != nil {
-		utils.Fatalf("Failed to read database stats: %v", err)
-	}
-	fmt.Println(stats)
-
-	ioStats, err = db.LDB().GetProperty("leveldb.iostats")
-	if err != nil {
-		utils.Fatalf("Failed to read database iostats: %v", err)
-	}
-	fmt.Println(ioStats)
 
 	return nil
 }
@@ -371,7 +331,7 @@ func copyDb(ctx *cli.Context) error {
 	dl := downloader.New(syncmode, chainDb, new(event.TypeMux), chain, nil, nil)
 
 	// Create a source peer to satisfy downloader requests from
-	db, err := ethdb.NewLDBDatabase(ctx.Args().First(), ctx.GlobalInt(utils.CacheFlag.Name))
+	db, err := ethdb.NewLDBDatabase(ctx.Args().First())
 	if err != nil {
 		return err
 	}
@@ -394,14 +354,6 @@ func copyDb(ctx *cli.Context) error {
 		time.Sleep(10 * time.Millisecond)
 	}
 	fmt.Printf("Database copy done in %v\n", time.Since(start))
-
-	// Compact the entire database to remove any sync overhead
-	start = time.Now()
-	fmt.Println("Compacting entire database...")
-	if err = chainDb.(*ethdb.LDBDatabase).LDB().CompactRange(util.Range{}); err != nil {
-		utils.Fatalf("Compaction failed: %v", err)
-	}
-	fmt.Printf("Compaction done in %v.\n\n", time.Since(start))
 
 	return nil
 }

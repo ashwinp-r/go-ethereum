@@ -1310,15 +1310,11 @@ func SetupMetrics(ctx *cli.Context) {
 
 // MakeChainDatabase open an LevelDB using the flags passed to the client and will hard crash if it fails.
 func MakeChainDatabase(ctx *cli.Context, stack *node.Node) ethdb.Database {
-	var (
-		cache   = ctx.GlobalInt(CacheFlag.Name) * ctx.GlobalInt(CacheDatabaseFlag.Name) / 100
-		handles = makeDatabaseHandles()
-	)
 	name := "chaindata"
 	if ctx.GlobalString(SyncModeFlag.Name) == "light" {
 		name = "lightchaindata"
 	}
-	chainDb, err := stack.OpenDatabase(name, cache, handles)
+	chainDb, err := stack.OpenDatabase(name)
 	if err != nil {
 		Fatalf("Could not open database: %v", err)
 	}
