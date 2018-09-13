@@ -39,17 +39,11 @@ type ServiceContext struct {
 // OpenDatabase opens an existing database with the given name (or creates one
 // if no previous can be found) from within the node's data directory. If the
 // node is an ephemeral one, a memory database is returned.
-func (ctx *ServiceContext) OpenDatabase(name string) (ethdb.Database, error) {
+func (ctx *ServiceContext) OpenDatabase(name string, cache int, handles int) (ethdb.Database, error) {
 	if ctx.config.DataDir == "" {
 		return ethdb.NewMemDatabase(), nil
 	}
-	var db ethdb.Database
-	var err error
-	if name == "chaindata" && ctx.config.RedisAddress != "" {
-		db, err = ethdb.NewRedisDatabase(ctx.config.RedisAddress)
-	} else {
-		db, err = ethdb.NewLDBDatabase(ctx.config.ResolvePath(name))
-	}
+	db, err := ethdb.NewLDBDatabase(ctx.config.ResolvePath(name), cache)
 	if err != nil {
 		return nil, err
 	}
