@@ -119,7 +119,7 @@ func (t *Trie) Get(db ethdb.Database, key []byte, blockNr uint64) []byte {
 // If a node was not found in the database, a MissingNodeError is returned.
 func (t *Trie) TryGet(db ethdb.Database, key []byte, blockNr uint64) (value []byte, err error) {
 	k := keybytesToHex(key)
-	value, gotValue := t.tryGet1(t.root, k, 0, blockNr)
+	value, gotValue, _ := t.tryGet1(t.root, k, 0, blockNr, func(uint64) {}, func(uint64) {})
 	if !gotValue {
 		value, err = t.tryGet(db, t.root, key, 0, blockNr)
 	}
@@ -332,32 +332,41 @@ func (t *Trie) tryGet(dbr DatabaseReader, origNode node, key []byte, pos int, bl
 	return
 }
 
-func (t *Trie) tryGet1(origNode node, key []byte, pos int, blockNr uint64) (value []byte, gotValue bool) {
+func (t *Trie) tryGet1(origNode node, key []byte, pos int, blockNr uint64, inc, dec func(uint64)) (value []byte, gotValue bool, tod uint64) {
 	switch n := (origNode).(type) {
 	case nil:
-		return nil, true
+		return nil, true, blockNr
 	case valueNode:
-		return n, true
+		return n, true, blockNr
 	case *shortNode:
+		if n.flags.t != blockNr {
+			dec(n.flags.t)
+			inc(blockNr)
+			n.flags.t = blockNr
+		}
 		nKey := compactToHex(n.Key)
 		if len(key)-pos < len(nKey) || !bytes.Equal(nKey, key[pos:pos+len(nKey)]) {
-			return nil, true
+			return nil, true, blockNr
 		}
-		return t.tryGet1(n.Val, key, pos+len(nKey), blockNr)
+		value, gotValue, tod = t.tryGet1(n.Val, key, pos+len(nKey), blockNr, inc, dec)
+		return value, gotValue, tod
 	case *duoNode:
 		i1, i2 := n.childrenIdx()
 		switch key[pos] {
 		case i1:
-			return t.tryGet1(n.child1, key, pos+1, blockNr)
+			value, gotValue, tod = t.tryGet1(n.child1, key, pos+1, blockNr, inc, dec)
+			return value, gotValue, tod
 		case i2:
-			return t.tryGet1(n.child2, key, pos+1, blockNr)
+			value, gotValue, tod = t.tryGet1(n.child2, key, pos+1, blockNr, inc, dec)
+			return value, gotValue, tod
 		default:
-			return nil, true
+			return nil, true, blockNr
 		}
 	case *fullNode:
-		return t.tryGet1(n.Children[key[pos]], key, pos+1, blockNr)
+		value, gotValue, tod = t.tryGet1(n.Children[key[pos]], key, pos+1, blockNr, inc, dec)
+		return value, gotValue, tod
 	case hashNode:
-		return nil, false
+		return nil, false, blockNr
 	default:
 		panic(fmt.Sprintf("%T: invalid node: %v", origNode, origNode))
 	}

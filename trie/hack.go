@@ -73,28 +73,6 @@ func ShortNode2() {
 }
 
 func hashRoot(n node, title string) {
-	hOld := newHasherOld(false)
-	hOld1 := newHasherOld(true)
-	defer returnHasherToPoolOld(hOld)
-	defer returnHasherToPoolOld(hOld1)
-	n.makedirty()
-	hnOld, err := hOld.hash(n, true)
-	if err != nil {
-		panic(err)
-	}
-	if _, ok := hnOld.(hashNode); !ok {
-		panic("expected hashNode")
-	}
-	fmt.Printf("%s Old noencode: %s\n", title, hnOld)
-	n.makedirty()
-	hnOld, err = hOld1.hash(n, true)
-	if err != nil {
-		panic(err)
-	}
-	if _, ok := hnOld.(hashNode); !ok {
-		panic("expected hashNode")
-	}
-	fmt.Printf("%s Old encode: %s\n", title, hnOld)
 	h := newHasher(false)
 	h1 := newHasher(true)
 	defer returnHasherToPool(h)

@@ -164,6 +164,8 @@ func (n *shortNode) copy() *shortNode {
 
 // nodeFlag contains caching-related metadata about a node.
 type nodeFlag struct {
+	t           uint64       // Touch time of the node
+	tod         uint64       // Touch time of the Oldest Decendent
 	next, prev  nodep        // list element for efficient disposing of nodes
 	hash        common.Hash  // cached hash of the node
 	dirty       bool         // whether the hash field represent the true hash
