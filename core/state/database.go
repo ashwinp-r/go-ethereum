@@ -268,8 +268,8 @@ type TrieDbState struct {
 	codeCache        *lru.Cache
 	codeSizeCache    *lru.Cache
 	historical       bool
-	h keccakState
-	buf common.Hash
+	h                keccakState
+	buf              common.Hash
 }
 
 func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieDbState, error) {
@@ -305,7 +305,7 @@ func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieD
 		codeSizeCache: csc,
 		h: sha3.NewKeccak256().(keccakState),
 	}
-	t.MakeListed(tds.nodeList)
+	t.MakeListed(tds.nodeList, tds.joinGeneration, tds.leftGeneration)
 	return &tds, nil
 }
 
@@ -389,7 +389,7 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 	for len(oldContinuations) > 0 {
 		var resolver *trie.TrieResolver
 		for _, c := range oldContinuations {
-			if !c.RunWithDb(tds.db) {
+			if !c.RunWithDb(tds.db, tds.blockNr) {
 				newContinuations = append(newContinuations, c)
 				if resolver == nil {
 					resolver = trie.NewResolver(tds.db, false, false)
@@ -452,7 +452,7 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 	for len(oldContinuations) > 0 {
 		var resolver *trie.TrieResolver
 		for _, c := range oldContinuations {
-			if !c.RunWithDb(tds.db) {
+			if !c.RunWithDb(tds.db, tds.blockNr) {
 				newContinuations = append(newContinuations, c)
 				if resolver == nil {
 					resolver = trie.NewResolver(tds.db, false, true)
@@ -619,6 +619,14 @@ func encodingToAccount(enc []byte) (*Account, error) {
 	return &data, nil
 }
 
+func (tds *TrieDbState) joinGeneration(gen uint64) {
+
+}
+
+func (tds *TrieDbState) leftGeneration(gen uint64) {
+
+}
+
 func (tds *TrieDbState) ReadAccountData(address common.Address) (*Account, error) {
 	tds.h.Reset()
 	tds.h.Write(address[:])
@@ -683,7 +691,7 @@ func (tds *TrieDbState) getStorageTrie(address common.Address, addrHash common.H
 			t = trie.New(account.Root, StorageBucket, address[:], true)
 		}
 		t.SetHistorical(tds.historical)
-		t.MakeListed(tds.nodeList)
+		t.MakeListed(tds.nodeList, tds.joinGeneration, tds.leftGeneration)
 		tds.storageTries[addrHash] = t
 	}
 	return t, nil
@@ -949,9 +957,6 @@ type Trie interface {
 	Hash() common.Hash
 	NodeIterator(db ethdb.Database, startKey []byte, blockNr uint64) trie.NodeIterator
 	GetKey(trie.DatabaseReader, []byte) []byte // TODO(fjl): remove this when SecureTrie is removed
-	PrintTrie()
-	MakeListed(*trie.List)
-	Unlink()
 }
 
 // NewDatabase creates a backing store for state. The returned database is safe for

@@ -981,9 +981,6 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		return 0, events, coalescedLogs, nil
 	}
 
-	// Start a parallel signature recovery (signer will fluke on fork transition, minimal perf loss)
-	senderCacher.recoverFromBlocks(types.MakeSigner(bc.chainConfig, chain[0].Number()), chain)
-
 	// Find correct insertion point for this chain
 	preBlocks := []*types.Block{}
 	parentNumber := chain[0].NumberU64() - 1
@@ -1013,6 +1010,9 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 	if offset > 0 {
 		chain = append(preBlocks, chain...)
 	}
+	// Start a parallel signature recovery (signer will fluke on fork transition, minimal perf loss)
+	senderCacher.recoverFromBlocks(types.MakeSigner(bc.chainConfig, chain[0].Number()), chain)
+
 	// Iterate over the blocks and insert when the verifier permits
 	for i, block := range chain {
 		k := 0

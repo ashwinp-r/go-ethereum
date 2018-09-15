@@ -62,10 +62,6 @@ func NewSecure(root common.Hash, bucket []byte, prefix []byte, encodeToBytes boo
 	return &SecureTrie{trie: *trie, hashKeyCache: hashKeyCache}, nil
 }
 
-func (t *SecureTrie) MakeListed(nodeList *List) {
-	t.trie.MakeListed(nodeList)
-}
-
 // Get returns the value for key stored in the trie.
 // The value bytes must not be modified by the caller.
 func (t *SecureTrie) Get(db ethdb.Database, key []byte, blockNr uint64) []byte {
@@ -179,14 +175,6 @@ func (t *SecureTrie) HashKey(key []byte) []byte {
 	return buf
 }
 
-func (t *SecureTrie) PrintTrie() {
-	t.trie.PrintTrie()
-}
-
 func (t *SecureTrie) GetTrie() *Trie {
 	return &t.trie
-}
-
-func (t *SecureTrie) Unlink() {
-	t.trie.Unlink()
 }

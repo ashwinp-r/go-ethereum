@@ -33,6 +33,7 @@ type node interface {
 	dirty() bool
 	hash() []byte
 	makedirty()
+	tod(def uint64) uint64 // Read Touch time of the Oldest Decendant
 }
 
 type nodep interface {
@@ -231,6 +232,75 @@ func (n duoNode) String() string   { return n.fstring("") }
 func (n shortNode) String() string { return n.fstring("") }
 func (n hashNode) String() string   { return n.fstring("") }
 func (n valueNode) String() string  { return n.fstring("") }
+
+func (n hashNode) tod(def uint64) uint64 { return def }
+func (n valueNode) tod(def uint64) uint64 { return def }
+func (n *fullNode) tod(def uint64) uint64 { return n.flags.tod }
+func (n *duoNode) tod(def uint64) uint64 { return n.flags.tod }
+func (n *shortNode) tod(def uint64) uint64 { return n.flags.tod }
+
+func (n *fullNode) updateT(t uint64, joinGeneration, leftGeneration func(uint64)) {
+	if n.flags.t != t {
+		leftGeneration(n.flags.t)
+		joinGeneration(t)
+		n.flags.t = t
+	}
+}
+
+func (n *fullNode) adjustTod(def uint64) {
+	tod := def
+	for _, node := range &n.Children {
+		if node != nil {
+			nodeTod := node.tod(def)
+			if nodeTod < tod {
+				tod = nodeTod
+			}
+		}
+	}
+	n.flags.tod = tod
+}
+
+func (n *duoNode) updateT(t uint64, joinGeneration, leftGeneration func(uint64)) {
+	if n.flags.t != t {
+		leftGeneration(n.flags.t)
+		joinGeneration(t)
+		n.flags.t = t
+	}
+}
+
+func (n *duoNode) adjustTod(def uint64) {
+	tod := def
+	if n.child1 != nil {
+		nodeTod := n.child1.tod(def)
+		if nodeTod < tod {
+			tod = nodeTod
+		}
+	}
+	if n.child2 != nil {
+		nodeTod := n.child2.tod(def)
+		if nodeTod < tod {
+			tod = nodeTod
+		}
+	}
+	n.flags.tod = tod
+}
+
+func (n *shortNode) updateT(t uint64, joinGeneration, leftGeneration func(uint64)) {
+	if n.flags.t != t {
+		leftGeneration(n.flags.t)
+		joinGeneration(t)
+		n.flags.t = t
+	}
+}
+
+func (n *shortNode) adjustTod(def uint64) {
+	tod := def
+	nodeTod := n.Val.tod(def)
+	if nodeTod < tod {
+		tod = nodeTod
+	}
+	n.flags.tod = tod
+}
 
 func (n *fullNode) fstring(ind string) string {
 	resp := fmt.Sprintf("full\n%s  ", ind)

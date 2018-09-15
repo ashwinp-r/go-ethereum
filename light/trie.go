@@ -98,9 +98,6 @@ type odrTrie struct {
 	prefix []byte
 }
 
-func (t *odrTrie) PrintTrie() {
-}
-
 func (t *odrTrie) TryGet(db ethdb.Database, key []byte, blockNr uint64) ([]byte, error) {
 	key = crypto.Keccak256(key)
 	var res []byte
@@ -151,12 +148,6 @@ func (t *odrTrie) Prove(db ethdb.Database, key []byte, fromLevel uint, proofDb e
 func (t *odrTrie) HashKey(key []byte) []byte {
 	return nil
 }
-
-func (t *odrTrie) MakeListed(nodeList *trie.List) {
-	t.trie.MakeListed(nodeList)
-}
-
-func (t *odrTrie) Unlink() {}
 
 // do tries and retries to execute a function until it returns with no error or
 // an error type other than MissingNodeError
