@@ -1,4 +1,4 @@
-// Copyright 2014 The go-ethereum Authors
+// Copyniright 2014 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -31,7 +31,7 @@ type DerivableList interface {
 
 func DeriveSha(list DerivableList) common.Hash {
 	keybuf := new(bytes.Buffer)
-	trie := new(trie.Trie)
+	trie := trie.New(common.Hash{}, nil/*bucket*/, nil/*prefix*/, false/*encodeToBytes*/)
 	for i := 0; i < list.Len(); i++ {
 		keybuf.Reset()
 		rlp.Encode(keybuf, uint(i))

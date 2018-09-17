@@ -270,6 +270,9 @@ type TrieDbState struct {
 	historical       bool
 	h                keccakState
 	buf              common.Hash
+	generationCounts map[uint64]int
+	nodeCount        int
+	oldestGeneration uint64
 }
 
 func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieDbState, error) {
@@ -306,6 +309,8 @@ func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieD
 		h: sha3.NewKeccak256().(keccakState),
 	}
 	t.MakeListed(tds.nodeList, tds.joinGeneration, tds.leftGeneration)
+	tds.generationCounts = make(map[uint64]int, 4096)
+	tds.oldestGeneration = blockNr
 	return &tds, nil
 }
 
@@ -620,11 +625,14 @@ func encodingToAccount(enc []byte) (*Account, error) {
 }
 
 func (tds *TrieDbState) joinGeneration(gen uint64) {
+	tds.nodeCount++
+	tds.generationCounts[gen]++
 
 }
 
 func (tds *TrieDbState) leftGeneration(gen uint64) {
-
+	tds.nodeCount--
+	tds.generationCounts[gen]--
 }
 
 func (tds *TrieDbState) ReadAccountData(address common.Address) (*Account, error) {
