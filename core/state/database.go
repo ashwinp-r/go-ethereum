@@ -448,6 +448,7 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 		if deleteStorageTrie && storageTrie != nil {
 			storageTrie.Unlink()
 			delete(tds.storageTries, addrHash)
+			tds.nodeCount -= storageTrie.CountNodes()
 		}
 		oldContinuations = append(oldContinuations, c)
 	}

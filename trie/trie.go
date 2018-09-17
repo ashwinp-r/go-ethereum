@@ -757,11 +757,12 @@ func (t *Trie) convertToShortNode(key []byte, keyStart int, child node, pos uint
 			c.touched = append(c.touched, Touch{np: cnode, key: rkey, pos: keyStart+1})
 			k := append([]byte{byte(pos)}, compactToHex(cnode.Key)...)
 			newshort := &shortNode{Key: hexToCompact(k)}
+			t.leftGeneration(blockNr)
 			newshort.Val = cnode.Val
 			newshort.flags.dirty = true
 			newshort.flags.t = blockNr
 			newshort.flags.tod = blockNr
-			t.joinGeneration(blockNr)
+			// cnode gets removed, but newshort gets added
 			c.updated = true
 			c.n = newshort
 			return done
@@ -774,7 +775,6 @@ func (t *Trie) convertToShortNode(key []byte, keyStart int, child node, pos uint
 	newshort.flags.dirty = true
 	newshort.flags.t = blockNr
 	newshort.flags.tod = blockNr
-	t.joinGeneration(blockNr)
 	c.updated = true
 	c.n = newshort
 	return done
@@ -830,7 +830,8 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 						newnode.flags.dirty = true
 						newnode.flags.t = blockNr
 						newnode.adjustTod(blockNr)
-						// We do not increase generation count here, because one short node comes, but another one goes
+						// We do not increase generation count here, because one short node comes, but another one 
+						t.leftGeneration(blockNr) // But shortChild goes away
 						c.touched = append(c.touched, Touch{np: shortChild, key: key, pos: keyStart+len(nKey)})
 						c.n = newnode
 					} else {
@@ -977,7 +978,6 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 				duo.flags.t = blockNr
 				duo.adjustTod(blockNr)
 				adjust = false
-				t.joinGeneration(blockNr)
 				c.updated = true
 				c.n = duo
 			}
@@ -1041,23 +1041,29 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 func (t *Trie) timestampSubTree(n node, blockNr uint64) {
 	switch n := n.(type) {
 	case *shortNode:
-		n.flags.t = blockNr
-		n.flags.tod = blockNr
-		t.joinGeneration(blockNr)
-		t.timestampSubTree(n.Val, blockNr)
+		if n.flags.t == 0 {
+			n.flags.t = blockNr
+			n.flags.tod = blockNr
+			t.joinGeneration(blockNr)
+			t.timestampSubTree(n.Val, blockNr)
+		}
 	case *duoNode:
-		n.flags.t = blockNr
-		n.flags.tod = blockNr
-		t.joinGeneration(blockNr)
-		t.timestampSubTree(n.child1, blockNr)
-		t.timestampSubTree(n.child2, blockNr)
+		if n.flags.t == 0 {
+			n.flags.t = blockNr
+			n.flags.tod = blockNr
+			t.joinGeneration(blockNr)
+			t.timestampSubTree(n.child1, blockNr)
+			t.timestampSubTree(n.child2, blockNr)
+		}
 	case *fullNode:
-		n.flags.t = blockNr
-		n.flags.tod = blockNr
-		t.joinGeneration(blockNr)
-		for _, child := range n.Children {
-			if child != nil {
-				t.timestampSubTree(child, blockNr)
+		if n.flags.t == 0 {
+			n.flags.t = blockNr
+			n.flags.tod = blockNr
+			t.joinGeneration(blockNr)
+			for _, child := range n.Children {
+				if child != nil {
+					t.timestampSubTree(child, blockNr)
+				}
 			}
 		}
 	}
