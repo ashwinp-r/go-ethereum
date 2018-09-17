@@ -754,6 +754,36 @@ func (tds *TrieDbState) ReadAccountCodeSize(codeHash common.Hash) (int, error) {
 var prevMemStats runtime.MemStats
 
 func (tds *TrieDbState) PruneTries() {
+	actual := 0
+	for _, storageTrie := range tds.storageTries {
+		actual += storageTrie.CountNodes()
+	}
+	actual += tds.t.CountNodes()
+	fmt.Printf("Actual node count: %d, accounted: %d\n", actual, tds.nodeCount)
+	if tds.nodeCount > int(MaxTrieCacheGen) {
+		toRemove := 0
+		excess := tds.nodeCount - int(MaxTrieCacheGen)
+		gen := tds.oldestGeneration
+		for excess > 0 {
+			excess -= tds.generationCounts[gen]
+			toRemove += tds.generationCounts[gen]
+			delete(tds.generationCounts, gen)
+			gen++
+		}
+		// Unload all nodes with touch timestamp < gen
+		for addrHash, storageTrie := range tds.storageTries {
+			empty := storageTrie.UnloadOlderThan(gen)
+			if empty {
+				delete(tds.storageTries, addrHash)
+			}
+		}
+		tds.t.UnloadOlderThan(gen)
+		tds.oldestGeneration = gen
+		tds.nodeCount -= toRemove
+	}
+}
+
+func (tds *TrieDbState) PruneTries_old() {
 	listLen := tds.nodeList.Len()
 	if listLen > int(MaxTrieCacheGen) {
 		tds.nodeList.ShrinkTo(int(MaxTrieCacheGen))

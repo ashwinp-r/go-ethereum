@@ -1119,6 +1119,54 @@ func (t *Trie) unlink(n node) {
 	}
 }
 
+func (t *Trie) UnloadOlderThan(gen uint64) bool {
+	hn, unloaded := t.unloadOlderThan(t.root, gen)
+	if unloaded {
+		t.root = hn
+		return true
+	}
+	return false
+}
+
+func (t *Trie) unloadOlderThan(n node, gen uint64) (hn hashNode, unloaded bool) {
+	if n == nil {
+		return nil, false
+	}
+	switch n := (n).(type) {
+	case *shortNode:
+		if n.flags.tod >= gen {
+		}
+	case *duoNode:
+	case *fullNode:
+	}
+	return nil, false
+}
+
+func (t *Trie) CountNodes() int {
+	return t.countNodes(t.root)
+}
+
+func (t *Trie) countNodes(n node) int {
+	if n == nil {
+		return 0
+	}
+	switch n := (n).(type) {
+	case *shortNode:
+		return 1 + t.countNodes(n.Val)
+	case *duoNode:
+		return 1 + t.countNodes(n.child1) + t.countNodes(n.child2)
+	case *fullNode:
+		count := 1
+		for _, child := range n.Children {
+			if child != nil {
+				count += t.countNodes(child)
+			}
+		}
+		return count
+	}
+	return 0
+}
+
 // Return number of live nodes (not pruned)
 // Returns true if the root became hash node
 func (t *Trie) TryPrune() (int, bool) {

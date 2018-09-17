@@ -144,6 +144,7 @@ func (t *Trie) Rebuild(db ethdb.Database, blockNr uint64) hashNode {
 			log.Error(fmt.Sprintf("Could not rebuild %s vs %s\n", roothash, hn))
 		}
 	}
+	t.timestampSubTree(t.root, blockNr)
 	return roothash
 }
 
