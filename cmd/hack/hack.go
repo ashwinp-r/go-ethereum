@@ -671,8 +671,8 @@ func trieChart() {
 }
 
 func testRewind() {
-	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
-	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
+	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
+	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
 	check(err)
 	defer ethDb.Close()
 	db := ethDb.NewBatch()
@@ -696,7 +696,7 @@ func testRewind() {
 	check(err)
 	fmt.Printf("Rebuit root hash: %x\n", rebuiltRoot)
 	startTime = time.Now()
-	rewindLen := uint64(60)
+	rewindLen := uint64(17)
 	err = tds.UnwindTo(currentBlockNr - rewindLen, false)
 	fmt.Printf("Unwind done in %v\n", time.Since(startTime))
 	check(err)
@@ -963,14 +963,14 @@ func main() {
         }
         defer pprof.StopCPUProfile()
     }
-	db, err := bolt.Open("/home/akhounov/dbcopy/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	//db, err := bolt.Open("/home/akhounov/dbcopy/chaindata", 0600, &bolt.Options{ReadOnly: true})
 	//db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
  	check(err)
  	//defer db.Close()
- 	bucketStats(db)
+ 	//bucketStats(db)
  	//mychart()
  	//testRebuild()
- 	//testRewind()
+ 	testRewind()
  	//hashFile()
  	//buildHashFromFile()
  	//testResolve()
