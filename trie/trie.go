@@ -571,11 +571,10 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 			branch.mask = (1 << (nKey[matchlen])) | (1 << (key[pos+matchlen]))
 			branch.flags.dirty = true
 			branch.flags.t = blockNr
-			branch.flags.tod = blockNr
+			branch.adjustTod(blockNr)
 
 			// Replace this shortNode with the branch if it occurs at index 0.
 			if matchlen == 0 {
-				branch.adjustTod(blockNr)
 				c.n = branch // current node leaves the generation, but new node branch joins it
 			} else {
 				// Otherwise, replace it with a short node leading up to the branch.
@@ -761,7 +760,7 @@ func (t *Trie) convertToShortNode(key []byte, keyStart int, child node, pos uint
 			newshort.Val = cnode.Val
 			newshort.flags.dirty = true
 			newshort.flags.t = blockNr
-			newshort.flags.tod = blockNr
+			newshort.adjustTod(blockNr)
 			// cnode gets removed, but newshort gets added
 			c.updated = true
 			c.n = newshort
@@ -774,7 +773,7 @@ func (t *Trie) convertToShortNode(key []byte, keyStart int, child node, pos uint
 	newshort.Val = cnode
 	newshort.flags.dirty = true
 	newshort.flags.t = blockNr
-	newshort.flags.tod = blockNr
+	newshort.adjustTod(blockNr)
 	c.updated = true
 	c.n = newshort
 	return done
