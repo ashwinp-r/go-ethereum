@@ -757,7 +757,7 @@ func (t *Trie) convertToShortNode(key []byte, keyStart int, child node, pos uint
 			c.touched = append(c.touched, Touch{np: cnode, key: rkey, pos: keyStart+1})
 			k := append([]byte{byte(pos)}, compactToHex(cnode.Key)...)
 			newshort := &shortNode{Key: hexToCompact(k)}
-			t.leftGeneration(blockNr)
+			t.leftGeneration(cnode.flags.t)
 			newshort.Val = cnode.Val
 			newshort.flags.dirty = true
 			newshort.flags.t = blockNr
@@ -798,7 +798,7 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 			c.n = n
 			done = true // don't replace n on mismatch
 		} else if matchlen == len(key) - keyStart {
-			t.leftGeneration(blockNr)
+			t.leftGeneration(n.flags.t)
 			c.updated = true
 			c.n = nil
 			done = true // remove n entirely for whole matches
@@ -813,7 +813,7 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 			} else {
 				child := c.n
 				if child == nil {
-					t.leftGeneration(blockNr)
+					t.leftGeneration(n.flags.t)
 					c.n = nil
 					done = true
 				} else {
@@ -831,7 +831,7 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 						newnode.flags.t = blockNr
 						newnode.adjustTod(blockNr)
 						// We do not increase generation count here, because one short node comes, but another one 
-						t.leftGeneration(blockNr) // But shortChild goes away
+						t.leftGeneration(shortChild.flags.t) // But shortChild goes away
 						c.touched = append(c.touched, Touch{np: shortChild, key: key, pos: keyStart+len(nKey)})
 						c.n = newnode
 					} else {
@@ -863,7 +863,7 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 				if nn == nil {
 					if n.child2 == nil {
 						adjust = false
-						t.leftGeneration(blockNr)
+						t.leftGeneration(n.flags.t)
 						c.n = nil
 						c.updated = true
 					} else {
@@ -889,7 +889,7 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 				if nn == nil {
 					if n.child1 == nil {
 						adjust = false
-						t.leftGeneration(blockNr)
+						t.leftGeneration(n.flags.t)
 						c.n = nil
 						c.updated = true
 					} else {
@@ -955,7 +955,7 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 				}
 			}
 			if count == 0 {
-				t.leftGeneration(blockNr)
+				t.leftGeneration(n.flags.t)
 				c.n = nil
 				c.updated = true
 				done = true
@@ -1035,6 +1035,29 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 	default:
 		panic(fmt.Sprintf("%T: invalid node: %v (%v)", n, n, key[:keyStart]))
 	}
+}
+
+func (t *Trie) PrepareToRemove() {
+	t.prepareToRemove(t.root)
+}
+
+func (t *Trie) prepareToRemove(n node) {
+	switch n := n.(type) {
+	case *shortNode:
+		t.leftGeneration(n.flags.t)
+		t.prepareToRemove(n.Val)
+	case *duoNode:
+		t.leftGeneration(n.flags.t)
+		t.prepareToRemove(n.child1)
+		t.prepareToRemove(n.child2)
+	case *fullNode:
+		t.leftGeneration(n.flags.t)
+		for _, child := range n.Children {
+			if child != nil {
+				t.prepareToRemove(child)
+			}
+		}
+	}	
 }
 
 // Timestamp given node and all descendants
@@ -1148,26 +1171,32 @@ func (t *Trie) unloadOlderThan(n node, gen uint64) (hn hashNode, unloaded bool) 
 	return nil, false
 }
 
-func (t *Trie) CountNodes() int {
-	return t.countNodes(t.root)
+func (t *Trie) CountNodes(m map[uint64]int) int {
+	return t.countNodes(t.root, m)
 }
 
-func (t *Trie) countNodes(n node) int {
+func (t *Trie) countNodes(n node, m map[uint64]int) int {
 	if n == nil {
 		return 0
 	}
 	switch n := (n).(type) {
 	case *shortNode:
-		return 1 + t.countNodes(n.Val)
+		c := t.countNodes(n.Val, m)
+		m[n.flags.t]++
+		return 1 + c
 	case *duoNode:
-		return 1 + t.countNodes(n.child1) + t.countNodes(n.child2)
+		c1 := t.countNodes(n.child1, m)
+		c2 := t.countNodes(n.child2, m)
+		m[n.flags.t]++
+		return 1 + c1 + c2
 	case *fullNode:
 		count := 1
 		for _, child := range n.Children {
 			if child != nil {
-				count += t.countNodes(child)
+				count += t.countNodes(child, m)
 			}
 		}
+		m[n.flags.t]++
 		return count
 	}
 	return 0
