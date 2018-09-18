@@ -755,28 +755,6 @@ func (tds *TrieDbState) ReadAccountCodeSize(codeHash common.Hash) (int, error) {
 var prevMemStats runtime.MemStats
 
 func (tds *TrieDbState) PruneTries() {
-	actual := 0
-	actualM := make(map[uint64]int)
-	for _, storageTrie := range tds.storageTries {
-		actual += storageTrie.CountNodes(actualM)
-	}
-	actual += tds.t.CountNodes(actualM)
-	if actual != tds.nodeCount {
-		fmt.Printf("Actual node count: %d, accounted: %d\n", actual, tds.nodeCount)
-	}
-	if len(actualM) != len(tds.generationCounts) {
-		fmt.Printf("actual gen counts: %d, accounted: %d\n", len(actualM), len(tds.generationCounts))
-	}
-	for gen, count := range actualM {
-		if count != tds.generationCounts[gen] {
-			fmt.Printf("gen count[%d], actual: %d, accounted:%d\n", gen, count, tds.generationCounts[gen])
-		}
-	}
-	for gen, count := range tds.generationCounts {
-		if count != actualM[gen] {
-			fmt.Printf("gen count[%d], actual: %d, accounted:%d\n", gen, actualM[gen], count)
-		}
-	}
 	if tds.nodeCount > int(MaxTrieCacheGen) {
 		toRemove := 0
 		excess := tds.nodeCount - int(MaxTrieCacheGen)
@@ -797,6 +775,23 @@ func (tds *TrieDbState) PruneTries() {
 		tds.t.UnloadOlderThan(gen)
 		tds.oldestGeneration = gen
 		tds.nodeCount -= toRemove
+	}
+	actual := 0
+	actualM := make(map[uint64]int)
+	for _, storageTrie := range tds.storageTries {
+		actual += storageTrie.CountNodes(actualM)
+	}
+	actual += tds.t.CountNodes(actualM)
+	fmt.Printf("Actual node count: %d, accounted: %d\n", actual, tds.nodeCount)
+	for gen, count := range actualM {
+		if count != tds.generationCounts[gen] {
+			fmt.Printf("gen count[%d], actual: %d, accounted:%d\n", gen, count, tds.generationCounts[gen])
+		}
+	}
+	for gen, count := range tds.generationCounts {
+		if count != actualM[gen] {
+			fmt.Printf("gen count[%d], actual: %d, accounted:%d\n", gen, actualM[gen], count)
+		}
 	}
 }
 

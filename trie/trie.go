@@ -1149,7 +1149,7 @@ func (t *Trie) unlink(n node) {
 }
 
 func (t *Trie) UnloadOlderThan(gen uint64) bool {
-	hn, unloaded := t.unloadOlderThan(t.root, gen)
+	hn, unloaded := unloadOlderThan(t.root, gen)
 	if unloaded {
 		t.root = hn
 		return true
@@ -1157,43 +1157,70 @@ func (t *Trie) UnloadOlderThan(gen uint64) bool {
 	return false
 }
 
-func (t *Trie) unloadOlderThan(n node, gen uint64) (hn hashNode, unloaded bool) {
+func unloadOlderThan(n node, gen uint64) (hashNode, bool) {
 	if n == nil {
 		return nil, false
 	}
 	switch n := (n).(type) {
 	case *shortNode:
-		if n.flags.tod >= gen {
+		if n.flags.t < gen {
+			return hashNode(common.CopyBytes(n.hash())), true
+		}
+		if n.flags.tod < gen {
+			if hn, unloaded := unloadOlderThan(n.Val, gen); unloaded {
+				n.Val = hn
+			}
 		}
 	case *duoNode:
+		if n.flags.t < gen {
+			return hashNode(common.CopyBytes(n.hash())), true
+		}
+		if n.flags.tod < gen {
+			if hn, unloaded := unloadOlderThan(n.child1, gen); unloaded {
+				n.child1 = hn
+			}
+			if hn, unloaded := unloadOlderThan(n.child2, gen); unloaded {
+				n.child2 = hn
+			}
+		}
 	case *fullNode:
+		if n.flags.t < gen {
+			return hashNode(common.CopyBytes(n.hash())), true
+		}
+		for i, child := range n.Children {
+			if child != nil {
+				if hn, unloaded := unloadOlderThan(child, gen); unloaded {
+					n.Children[i] = hn
+				}
+			}
+		}
 	}
 	return nil, false
 }
 
 func (t *Trie) CountNodes(m map[uint64]int) int {
-	return t.countNodes(t.root, m)
+	return countNodes(t.root, m)
 }
 
-func (t *Trie) countNodes(n node, m map[uint64]int) int {
+func countNodes(n node, m map[uint64]int) int {
 	if n == nil {
 		return 0
 	}
 	switch n := (n).(type) {
 	case *shortNode:
-		c := t.countNodes(n.Val, m)
+		c := countNodes(n.Val, m)
 		m[n.flags.t]++
 		return 1 + c
 	case *duoNode:
-		c1 := t.countNodes(n.child1, m)
-		c2 := t.countNodes(n.child2, m)
+		c1 := countNodes(n.child1, m)
+		c2 := countNodes(n.child2, m)
 		m[n.flags.t]++
 		return 1 + c1 + c2
 	case *fullNode:
 		count := 1
 		for _, child := range n.Children {
 			if child != nil {
-				count += t.countNodes(child, m)
+				count += countNodes(child, m)
 			}
 		}
 		m[n.flags.t]++
