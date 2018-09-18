@@ -965,7 +965,7 @@ func main() {
     }
 	//db, err := bolt.Open("/home/akhounov/dbcopy/chaindata", 0600, &bolt.Options{ReadOnly: true})
 	//db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
- 	check(err)
+ 	//check(err)
  	//defer db.Close()
  	//bucketStats(db)
  	//mychart()
