@@ -146,7 +146,6 @@ func (t *SecureTrie) Root() []byte {
 // Copy returns a copy of SecureTrie.
 func (t *SecureTrie) Copy() *SecureTrie {
 	cpy := *t
-	cpy.trie.nodeList = nil
 	return &cpy
 }
 

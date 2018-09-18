@@ -123,9 +123,8 @@ func (t *Trie) Rebuild(db ethdb.Database, blockNr uint64) hashNode {
 	}
 	root, roothash := t.rebuildFromHashes(db)
 	if bytes.Equal(roothash, n) {
-		t.relistNodes(root, 0)
 		t.root = root
-		log.Info("Successfuly loaded from hashfile", "nodes", t.nodeList.Len(), "root hash", roothash)
+		log.Info("Successfuly loaded from hashfile", "root hash", roothash)
 	} else {
 		empty := common.Hash{}
 		for i := 0; i < ethdb.HeapSize/32; i++ {
@@ -137,9 +136,8 @@ func (t *Trie) Rebuild(db ethdb.Database, blockNr uint64) hashNode {
 		}
 		root, roothash = t.rebuildFromHashes(db)
 		if bytes.Equal(roothash, hn) {
-			t.relistNodes(root, 0)
 			t.root = root
-			log.Info("Rebuilt hashfile and verified", "nodes", t.nodeList.Len(), "root hash", roothash)
+			log.Info("Rebuilt hashfile and verified", "root hash", roothash)
 		} else {
 			log.Error(fmt.Sprintf("Could not rebuild %s vs %s\n", roothash, hn))
 		}

@@ -29,18 +29,10 @@ var indices = []string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b
 
 type node interface {
 	fstring(string) string
-	unlisted() bool
 	dirty() bool
 	hash() []byte
 	makedirty()
 	tod(def uint64) uint64 // Read Touch time of the Oldest Decendant
-}
-
-type nodep interface {
-	next() nodep
-	setnext(nodep)
-	prev() nodep
-	setprev(nodep)
 }
 
 type (
@@ -116,9 +108,6 @@ func (n *duoNode) childrenIdx() (i1 byte, i2 byte) {
 
 func (n *fullNode) copy() *fullNode   {
 	c := *n
-	c.flags.next = nil
-	c.flags.prev = nil
-	//c.flags.dirty = true
 	return &c
 }
 
@@ -143,23 +132,16 @@ func (n *fullNode) duoCopy() *duoNode {
 		copy(c.flags.hash[:], n.flags.hash[:])
 	}
 	c.flags.dirty = n.flags.dirty
-	//c.flags.dirty = true
 	return &c
 }
 
 func (n *duoNode) copy() *duoNode {
 	c := *n
-	c.flags.next = nil
-	c.flags.prev = nil
-	//c.flags.dirty = true
 	return &c
 }
 
 func (n *shortNode) copy() *shortNode {
 	c := *n
-	c.flags.next = nil
-	c.flags.prev = nil
-	//c.flags.dirty = true
 	return &c
 }
 
@@ -167,32 +149,9 @@ func (n *shortNode) copy() *shortNode {
 type nodeFlag struct {
 	t           uint64       // Touch time of the node
 	tod         uint64       // Touch time of the Oldest Decendent
-	next, prev  nodep        // list element for efficient disposing of nodes
 	hash        common.Hash  // cached hash of the node
 	dirty       bool         // whether the hash field represent the true hash
 }
-
-func (n *fullNode) unlisted() bool  { return n.flags.next == nil }
-func (n *duoNode) unlisted() bool   { return n.flags.next == nil }
-func (n *shortNode) unlisted() bool { return n.flags.next == nil }
-func (n hashNode) unlisted() bool   { return false }
-func (n valueNode) unlisted() bool  { return false }
-
-func (n *fullNode) next() nodep  { return n.flags.next }
-func (n *duoNode) next() nodep   { return n.flags.next }
-func (n *shortNode) next() nodep { return n.flags.next }
-
-func (n *fullNode) setnext(next nodep)  { n.flags.next = next }
-func (n *duoNode) setnext(next nodep)   { n.flags.next = next }
-func (n *shortNode) setnext(next nodep) { n.flags.next = next }
-
-func (n *fullNode) prev() nodep  { return n.flags.prev }
-func (n *duoNode) prev() nodep   { return n.flags.prev }
-func (n *shortNode) prev() nodep { return n.flags.prev }
-
-func (n *fullNode) setprev(prev nodep)  { n.flags.prev = prev }
-func (n *duoNode) setprev(prev nodep)   { n.flags.prev = prev }
-func (n *shortNode) setprev(prev nodep) { n.flags.prev = prev }
 
 func (n hashNode) dirty() bool { return false }
 func (n valueNode) dirty() bool { return true }

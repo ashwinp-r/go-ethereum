@@ -259,7 +259,6 @@ type TrieDbState struct {
 	addrHashCache    *lru.Cache
 	keyHashCache     *lru.Cache
 	db               ethdb.Database
-	nodeList         *trie.List
 	blockNr          uint64
 	storageTries     map[common.Hash]*trie.Trie
 	storageUpdates   map[common.Address]map[common.Hash][]byte
@@ -298,7 +297,6 @@ func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieD
 		addrHashCache: addrHashCache,
 		keyHashCache: keyHashCache,
 		db: db,
-		nodeList: trie.NewList(),
 		blockNr: blockNr,
 		storageTries: make(map[common.Hash]*trie.Trie),
 		storageUpdates: make(map[common.Address]map[common.Hash][]byte),
@@ -308,7 +306,7 @@ func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieD
 		codeSizeCache: csc,
 		h: sha3.NewKeccak256().(keccakState),
 	}
-	t.MakeListed(tds.nodeList, tds.joinGeneration, tds.leftGeneration)
+	t.MakeListed(tds.joinGeneration, tds.leftGeneration)
 	tds.generationCounts = make(map[uint64]int, 4096)
 	tds.oldestGeneration = blockNr
 	return &tds, nil
@@ -334,7 +332,6 @@ func (tds *TrieDbState) Copy() *TrieDbState {
 		addrHashCache: addrHashCache,
 		keyHashCache: keyHashCache,
 		db: tds.db,
-		nodeList: nil,
 		blockNr: tds.blockNr,
 		storageTries: make(map[common.Hash]*trie.Trie),
 		storageUpdates: make(map[common.Address]map[common.Hash][]byte),
@@ -414,9 +411,6 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 	if it > 3 {
 		fmt.Printf("Resolved storage in %d iterations\n", it)
 	}
-	for _, storageTrie := range relist {
-		storageTrie.Relist()
-	}
 	oldContinuations = []*trie.TrieContinuation{}
 	newContinuations = []*trie.TrieContinuation{}
 	tds.storageUpdates = make(map[common.Address]map[common.Hash][]byte)
@@ -446,7 +440,6 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 			c = tds.t.DeleteAction(addrHash[:])
 		}
 		if deleteStorageTrie && storageTrie != nil {
-			storageTrie.Unlink()
 			delete(tds.storageTries, addrHash)
 			storageTrie.PrepareToRemove()
 		}
@@ -479,8 +472,7 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 		fmt.Printf("Resolved in %d iterations\n", it)
 	}
 	hash := tds.t.Hash()
-	tds.t.SaveHashes(tds.db)
-	tds.t.Relist()
+	tds.t.SaveHashes(tds.db, tds.blockNr)
 	return hash, nil
 }
 
@@ -700,7 +692,7 @@ func (tds *TrieDbState) getStorageTrie(address common.Address, addrHash common.H
 			t = trie.New(account.Root, StorageBucket, address[:], true)
 		}
 		t.SetHistorical(tds.historical)
-		t.MakeListed(tds.nodeList, tds.joinGeneration, tds.leftGeneration)
+		t.MakeListed(tds.joinGeneration, tds.leftGeneration)
 		tds.storageTries[addrHash] = t
 	}
 	return t, nil
@@ -793,30 +785,9 @@ func (tds *TrieDbState) PruneTries() {
 			fmt.Printf("gen count[%d], actual: %d, accounted:%d\n", gen, actualM[gen], count)
 		}
 	}
-}
-
-func (tds *TrieDbState) PruneTries_old() {
-	listLen := tds.nodeList.Len()
-	if listLen > int(MaxTrieCacheGen) {
-		tds.nodeList.ShrinkTo(int(MaxTrieCacheGen))
-		nodeCount := 0
-		for addrHash, storageTrie := range tds.storageTries {
-			count, empty := storageTrie.TryPrune()
-			nodeCount += count
-			if empty {
-				delete(tds.storageTries, addrHash)
-			}
-		}
-		count, _ := tds.t.TryPrune()
-		nodeCount += count
-		log.Info("Nodes", "trie", nodeCount, "list", tds.nodeList.Len(), "list before pruning", listLen)
-	} else {
-		log.Info("Nodes", "list", tds.nodeList.Len())
-	}
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	log.Info("Memory", "alloc", int(m.Alloc / 1024), "sys", int(m.Sys / 1024), "numGC", int(m.NumGC))
-	prevMemStats = m
 }
 
 type TrieStateWriter struct {

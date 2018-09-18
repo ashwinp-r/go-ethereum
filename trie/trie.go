@@ -58,7 +58,6 @@ type Trie struct {
 	encodeToBytes 	bool
 	accounts        bool
 
-	nodeList        *List
 	historical      bool
 	joinGeneration  func(gen uint64)
 	leftGeneration  func(gen uint64)
@@ -103,11 +102,9 @@ func (t *Trie) SetHistorical(h bool) {
 	}
 }
 
-func (t *Trie) MakeListed(nodeList *List, joinGeneration, leftGeneration func (gen uint64)) {
-	t.nodeList = nodeList
+func (t *Trie) MakeListed(joinGeneration, leftGeneration func (gen uint64)) {
 	t.joinGeneration = joinGeneration
 	t.leftGeneration = leftGeneration
-	t.relistNodes(t.root, 0)
 }
 
 // NodeIterator returns an iterator that returns nodes of the trie. Iteration starts at
@@ -159,21 +156,18 @@ func (t *Trie) emptyFullHash(db ethdb.Database, level int, index uint32) {
 	db.PutHash(index, emptyHash[:])
 }
 
+func calcIndex(key []byte, pos int) uint32 {
+	var index uint32
+	for i := 0; i < pos; i++ {
+		index = (index << 4) + uint32(key[i])
+	}
+	return index
+}
+
 // Touching the node removes it from the nodeList
-func (t *Trie) touch(db ethdb.Database, np nodep, key []byte, pos int) {
-	if t.nodeList == nil {
+func (t *Trie) touch(db ethdb.Database, n node, key []byte, pos int) {
+	if n == nil {
 		return
-	}
-	if np == nil {
-		return
-	}
-	if np.next() != nil && np.prev() != nil {
-		if np.next() != np.prev() {
-			t.nodeList.Remove(np)
-		} else {
-			np.setnext(nil)
-			np.setprev(nil)
-		} 
 	}
 	// Zeroing out the places in the hashes
 	if db == nil {
@@ -188,17 +182,13 @@ func (t *Trie) touch(db ethdb.Database, np nodep, key []byte, pos int) {
 	if !t.accounts {
 		return
 	}
-	var index uint32
-	for i := 0; i < pos; i++ {
-		index = (index << 4) + uint32(key[i])
-	}
-	switch n := (np).(type) {
+	switch n := (n).(type) {
 	case *shortNode:
-		t.emptyShortHash(db, n, pos, index)
+		t.emptyShortHash(db, n, pos, calcIndex(key, pos))
 	case *duoNode:
-		t.emptyFullHash(db, pos, index)
+		t.emptyFullHash(db, pos, calcIndex(key, pos))
 	case *fullNode:
-		t.emptyFullHash(db, pos, index)
+		t.emptyFullHash(db, pos, calcIndex(key, pos))
 	}
 }
 
@@ -238,10 +228,10 @@ func (t *Trie) saveFullHash(db ethdb.Database, n node, level int, hashIdx uint32
 	return false
 }
 
-func (t *Trie) saveHashes(db ethdb.Database, n node, level int, index uint32, h *hasher) {
+func (t *Trie) saveHashes(db ethdb.Database, n node, level int, index uint32, h *hasher, blockNr uint64) {
 	switch n := (n).(type) {
 	case *shortNode:
-		if !n.unlisted() {
+		if n.flags.t < blockNr {
 			return
 		}
 		// First re-add the child, then self
@@ -256,19 +246,19 @@ func (t *Trie) saveHashes(db ethdb.Database, n node, level int, index uint32, h 
 				level1++
 			}
 		}
-		t.saveHashes(db, n.Val, level1, index1, h)
+		t.saveHashes(db, n.Val, level1, index1, h, blockNr)
 	case *duoNode:
-		if !n.unlisted() {
+		if n.flags.t < blockNr {
 			return
 		}
 		if !t.saveFullHash(db, n, level, index, h) {
 			return
 		}
 		i1, i2 := n.childrenIdx()
-		t.saveHashes(db, n.child1, level+1, (index<<4)+uint32(i1), h)
-		t.saveHashes(db, n.child2, level+1, (index<<4)+uint32(i2), h)
+		t.saveHashes(db, n.child1, level+1, (index<<4)+uint32(i1), h, blockNr)
+		t.saveHashes(db, n.child2, level+1, (index<<4)+uint32(i2), h, blockNr)
 	case *fullNode:
-		if !n.unlisted() {
+		if n.flags.t < blockNr {
 			return
 		}
 		// First re-add children, then self
@@ -277,57 +267,13 @@ func (t *Trie) saveHashes(db ethdb.Database, n node, level int, index uint32, h 
 		}
 		for i := 0; i<=16; i++ {
 			if n.Children[i] != nil {
-				t.saveHashes(db, n.Children[i], level+1, (index<<4)+uint32(i), h)
+				t.saveHashes(db, n.Children[i], level+1, (index<<4)+uint32(i), h, blockNr)
 			}
 		}
 	case hashNode:
 		if level == 6 {
 			//fmt.Printf("saveHash %x %s\n", index, n)
 			db.PutHash(index, n)
-		}
-	}
-}
-
-// Re-adds nodes to the nodeList after being touched (and therefore removed from the list)
-func (t *Trie) relistNodes(n node, level int) {
-	if n == nil {
-		return
-	}
-	if !n.unlisted() {
-		// Reached the node that has not been touched
-		return
-	}
-	switch n := (n).(type) {
-	case *shortNode:
-		// First re-add the child, then self
-		t.relistNodes(n.Val, level+compactLen(n.Key))
-		if !t.accounts || level > 5 {
-			t.nodeList.PushToBack(n)
-		} else {
-			n.setnext(n)
-			n.setprev(n)
-		}
-	case *duoNode:
-		t.relistNodes(n.child1, level+1)
-		t.relistNodes(n.child2, level+1)
-		if !t.accounts || level > 5 {
-			t.nodeList.PushToBack(n)
-		} else {
-			n.setnext(n)
-			n.setprev(n)
-		}
-	case *fullNode:
-		// First re-add children, then self
-		for i := 0; i<=16; i++ {
-			if n.Children[i] != nil {
-				t.relistNodes(n.Children[i], level+1)
-			}
-		}
-		if !t.accounts || level > 5 {
-			t.nodeList.PushToBack(n)
-		} else {
-			n.setnext(n)
-			n.setprev(n)
 		}
 	}
 }
@@ -430,8 +376,7 @@ func (t *Trie) TryUpdate(db ethdb.Database, key, value []byte, blockNr uint64) e
 		}
 	}
 	t.Hash()
-	t.SaveHashes(db)
-	t.Relist()
+	t.SaveHashes(db, blockNr)
 	return nil
 }
 
@@ -448,17 +393,11 @@ func (t *Trie) UpdateAction(key, value []byte) *TrieContinuation {
 	return &tc
 }
 
-func (t *Trie) SaveHashes(db ethdb.Database) {
+func (t *Trie) SaveHashes(db ethdb.Database, blockNr uint64) {
 	if t.accounts {
 		h := newHasher(t.encodeToBytes)
 		defer returnHasherToPool(h)
-		t.saveHashes(db, t.root, 0, 0, h)
-	}
-}
-
-func (t *Trie) Relist() {
-	if t.nodeList != nil {
-		t.relistNodes(t.root, 0)
+		t.saveHashes(db, t.root, 0, 0, h, blockNr)
 	}
 }
 
@@ -472,7 +411,7 @@ func (tc *TrieContinuation) RunWithDb(db ethdb.Database, blockNr uint64) bool {
 	}
 	if tc.updated {
 		for _, touch := range tc.touched {
-			tc.t.touch(db, touch.np, touch.key, touch.pos)
+			tc.t.touch(db, touch.n, touch.key, touch.pos)
 		}
 		tc.touched = []Touch{}
 		tc.t.root = tc.n
@@ -488,7 +427,7 @@ const (
 )
 
 type Touch struct {
-	np nodep
+	n node
 	key []byte
 	pos int
 }
@@ -517,9 +456,7 @@ func (tc *TrieContinuation) Print() {
 }
 
 func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieContinuation, blockNr uint64) bool {
-	if np, ok := origNode.(nodep); ok {
-		c.touched = append(c.touched, Touch{np: np, key: key, pos: pos})
-	}
+	c.touched = append(c.touched, Touch{n: origNode, key: key, pos: pos})
 	if len(key) == pos {
 		if v, ok := origNode.(valueNode); ok {
 			c.updated = !bytes.Equal(v, value.(valueNode))
@@ -530,9 +467,7 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 			}
 			return true
 		}
-		if vnp, ok := value.(nodep); ok {
-			c.touched = append(c.touched, Touch{np: vnp, key: key, pos: pos})
-		}
+		c.touched = append(c.touched, Touch{n: value, key: key, pos: pos})
 		c.updated = true
 		c.n = value
 		return true
@@ -712,7 +647,6 @@ func (t *Trie) TryDelete(db ethdb.Database, key []byte, blockNr uint64) error {
 			return err
 		}
 	}
-	t.Relist()
 	return nil
 }
 
@@ -753,7 +687,7 @@ func (t *Trie) convertToShortNode(key []byte, keyStart int, child node, pos uint
 			c.resolvePos = 0
 		}
 		if cnode, ok := cnode.(*shortNode); ok {
-			c.touched = append(c.touched, Touch{np: cnode, key: rkey, pos: keyStart+1})
+			c.touched = append(c.touched, Touch{n: cnode, key: rkey, pos: keyStart+1})
 			k := append([]byte{byte(pos)}, compactToHex(cnode.Key)...)
 			newshort := &shortNode{Key: hexToCompact(k)}
 			t.leftGeneration(cnode.flags.t)
@@ -783,9 +717,7 @@ func (t *Trie) convertToShortNode(key []byte, keyStart int, child node, pos uint
 // It reduces the trie to minimal form by simplifying
 // nodes on the way up after deleting recursively.
 func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuation, blockNr uint64) bool {
-	if np, ok := origNode.(nodep);ok {
-		c.touched = append(c.touched, Touch{np: np, key: key, pos: keyStart})
-	}
+	c.touched = append(c.touched, Touch{n: origNode, key: key, pos: keyStart})
 	switch n := origNode.(type) {
 	case *shortNode:
 		n.updateT(blockNr, t.joinGeneration, t.leftGeneration)
@@ -831,7 +763,7 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 						newnode.adjustTod(blockNr)
 						// We do not increase generation count here, because one short node comes, but another one 
 						t.leftGeneration(shortChild.flags.t) // But shortChild goes away
-						c.touched = append(c.touched, Touch{np: shortChild, key: key, pos: keyStart+len(nKey)})
+						c.touched = append(c.touched, Touch{n: shortChild, key: key, pos: keyStart+len(nKey)})
 						c.n = newnode
 					} else {
 						n.Val = child
@@ -1124,29 +1056,6 @@ func (t *Trie) Hash() common.Hash {
 	return common.BytesToHash(hash.(hashNode))
 }
 
-func (t *Trie) Unlink() {
-	t.unlink(t.root)
-}
-
-func (t *Trie) unlink(n node) {
-	if np, ok := n.(nodep); ok {
-		t.touch(nil, np, nil, 0)
-	}
-	switch n := n.(type) {
-	case *shortNode:
-		t.unlink(n.Val)
-	case *duoNode:
-		t.unlink(n.child1)
-		t.unlink(n.child2)
-	case *fullNode:
-		for _, child := range n.Children {
-			if child != nil {
-				t.unlink(child)
-			}
-		}
-	}
-}
-
 func (t *Trie) UnloadOlderThan(gen uint64) bool {
 	hn, unloaded := unloadOlderThan(t.root, gen)
 	if unloaded {
@@ -1226,74 +1135,6 @@ func countNodes(n node, m map[uint64]int) int {
 		return count
 	}
 	return 0
-}
-
-// Return number of live nodes (not pruned)
-// Returns true if the root became hash node
-func (t *Trie) TryPrune() (int, bool) {
-	hn, count, unloaded := t.tryPrune(t.root, 0)
-	if unloaded {
-		t.root = hn
-		return count, true
-	}
-	return count, false
-}
-
-func (t *Trie) tryPrune(n node, level int) (hn hashNode, livecount int, unloaded bool) {
-	if n == nil {
-		return nil, 0, false
-	}
-	if _, ok := n.(nodep); !ok {
-		return nil, 0, false
-	}
-	if n.unlisted() && (!t.accounts || level > 5) {
-		// Unload the node from cache. All of its subnodes will have a lower or equal
-		// cache generation number.
-		if n.dirty() {
-			if np, ok := n.(nodep); ok {
-				t.nodeList.PushToBack(np)
-			}
-		} else {
-			return hashNode(common.CopyBytes(n.hash())), 0, true
-		}
-	}
-	switch n := (n).(type) {
-	case *shortNode:
-		hn, livecount, unloaded = t.tryPrune(n.Val, level+compactLen(n.Key))
-		if unloaded {
-			n.Val = hn
-		}
-		return nil, livecount+1, false
-
-	case *duoNode:
-		sumcount := 0
-		hn, livecount, unloaded = t.tryPrune(n.child1, level+1)
-		if unloaded {
-			n.child1 = hn
-		}
-		sumcount += livecount
-		hn, livecount, unloaded = t.tryPrune(n.child2, level+1)
-		if unloaded {
-			n.child2 = hn
-		}
-		sumcount += livecount
-		return nil, sumcount+1, false
-
-	case *fullNode:
-		sumcount := 0
-		for i, child := range n.Children {
-			if child != nil {
-				hn, livecount, unloaded = t.tryPrune(n.Children[i], level+1)
-				if unloaded {
-					n.Children[i] = hn
-				}
-				sumcount += livecount
-			}
-		}
-		return nil, sumcount+1, false
-	}
-	// Don't count hashNodes and valueNodes
-	return nil, 0, false
 }
 
 func (t *Trie) CountOccupancies(db ethdb.Database, blockNr uint64, o map[int]map[int]int) {
