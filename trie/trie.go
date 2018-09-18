@@ -532,7 +532,7 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 		i1, i2 := n.childrenIdx()
 		switch key[pos] {
 		case i1:
-			adjust = n.tod(blockNr) == n.child1.tod(blockNr)
+			adjust = n.child1 != nil && n.tod(blockNr) == n.child1.tod(blockNr)
 			done = t.insert(n.child1, key, pos+1, value, c, blockNr)
 			if c.updated {
 				n.child1 = c.n
@@ -540,7 +540,7 @@ func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieCon
 			}
 			c.n = n
 		case i2:
-			adjust = n.tod(blockNr) == n.child2.tod(blockNr)
+			adjust = n.child2 != nil && n.tod(blockNr) == n.child2.tod(blockNr)
 			done = t.insert(n.child2, key, pos+1, value, c, blockNr)
 			if c.updated {
 				n.child2 = c.n

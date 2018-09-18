@@ -768,6 +768,7 @@ func (tds *TrieDbState) PruneTries() {
 		tds.oldestGeneration = gen
 		tds.nodeCount -= toRemove
 	}
+	/*
 	actual := 0
 	actualM := make(map[uint64]int)
 	for _, storageTrie := range tds.storageTries {
@@ -785,9 +786,10 @@ func (tds *TrieDbState) PruneTries() {
 			fmt.Printf("gen count[%d], actual: %d, accounted:%d\n", gen, actualM[gen], count)
 		}
 	}
+	*/
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	log.Info("Memory", "alloc", int(m.Alloc / 1024), "sys", int(m.Sys / 1024), "numGC", int(m.NumGC))
+	log.Info("Memory", "nodes", tds.nodeCount, "alloc", int(m.Alloc / 1024), "sys", int(m.Sys / 1024), "numGC", int(m.NumGC))
 }
 
 type TrieStateWriter struct {

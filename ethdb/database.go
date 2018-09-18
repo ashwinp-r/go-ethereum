@@ -829,8 +829,6 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFu
 	if m.db == nil {
 		return m.walkMem(bucket, startkey, fixedbits, walker)
 	} else {
-		m.mu.RLock()
-		defer m.mu.RUnlock()
 		return m.db.Walk(bucket, startkey, fixedbits, walker)
 	}
 }
@@ -839,8 +837,6 @@ func (m *mutation) MultiWalk(bucket []byte, startkeys [][]byte, fixedbits []uint
 	if m.db == nil {
 		panic("Not implemented")
 	} else {
-		m.mu.RLock()
-		defer m.mu.RUnlock()
 		return m.db.MultiWalk(bucket, startkeys, fixedbits, walker)
 	}
 }
@@ -849,8 +845,6 @@ func (m *mutation) WalkAsOf(bucket, hBucket, startkey []byte, fixedbits uint, ti
 	if m.db == nil {
 		panic("Not implemented")
 	} else {
-		m.mu.RLock()
-		defer m.mu.RUnlock()
 		return m.db.WalkAsOf(bucket, hBucket, startkey, fixedbits, timestamp, walker)
 	}
 }
