@@ -1135,6 +1135,10 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 					return 0, events, coalescedLogs, err
 				}
 				bc.trieDbState.UnwindTo(readBlockNr, true)
+				currentBlock := bc.CurrentBlock()
+				if err := bc.reorg(currentBlock, parent); err != nil {
+					return 0, events, coalescedLogs, err
+				}
 				root, err := bc.trieDbState.TrieRoot()
 				if err != nil {
 					return 0, events, coalescedLogs, err
