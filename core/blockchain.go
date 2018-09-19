@@ -998,7 +998,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		parentHash = parent.ParentHash()
 		parent = bc.GetBlock(parentHash, parentNumber)
 		if parent == nil {
-			log.Error("Chain segment could not be inserter, missing parent", "hash", parentHash)
+			log.Error("Chain segment could not be inserted, missing parent", "hash", parentHash)
 			return 0, events, coalescedLogs, fmt.Errorf("Chain segment could not be inserter, missing parent %x", parentHash)
 		}
 		canonicalHash = rawdb.ReadCanonicalHash(bc.db, parentNumber)
