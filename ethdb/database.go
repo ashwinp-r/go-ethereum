@@ -491,6 +491,7 @@ func (db *LDBDatabase) DeleteTimestamp(timestamp uint64) error {
 		if sb == nil {
 			return nil
 		}
+		var keys [][]byte
 		c := sb.Cursor()
 		for k, v := c.Seek(suffix); k != nil && bytes.HasPrefix(k, suffix); k, v = c.Next() {
 			hb := tx.Bucket(k[len(suffix):])
@@ -506,7 +507,12 @@ func (db *LDBDatabase) DeleteTimestamp(timestamp uint64) error {
 				}
 				i += l
 			}
-			sb.Delete(k)
+			keys = append(keys, k)
+		}
+		for _, k := range keys {
+			if err := sb.Delete(k); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
