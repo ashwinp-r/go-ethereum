@@ -687,20 +687,40 @@ func testRewind() {
 	fmt.Printf("Current block hash: %x\n", currentBlock.Hash())
 	fmt.Printf("Current block root hash: %x\n", currentBlock.Root())
 	fmt.Printf("All headers at the same height\n")
-	var hashes []common.Hash
-	numberEnc := make([]byte, 8)
-	binary.BigEndian.PutUint64(numberEnc, currentBlockNr)
-	if err := ethDb.Walk([]byte("h"), numberEnc, 8*8, func(k, v []byte) ([]byte, ethdb.WalkAction, error) {
-		if len(k) == 8 + 32 {
-			hashes = append(hashes, common.BytesToHash(k[8:]))
+	{
+		var hashes []common.Hash
+		numberEnc := make([]byte, 8)
+		binary.BigEndian.PutUint64(numberEnc, currentBlockNr)
+		if err := ethDb.Walk([]byte("h"), numberEnc, 8*8, func(k, v []byte) ([]byte, ethdb.WalkAction, error) {
+			if len(k) == 8 + 32 {
+				hashes = append(hashes, common.BytesToHash(k[8:]))
+			}
+			return nil, ethdb.WalkActionNext, nil
+		}); err != nil {
+			panic(err)
 		}
-		return nil, ethdb.WalkActionNext, nil
-	}); err != nil {
-		panic(err)
+		for _, hash := range hashes {
+			h := rawdb.ReadHeader(ethDb, hash, currentBlockNr)
+			fmt.Printf("block hash: %x, root hash: %x\n", h.Hash(), h.Root)
+		}
 	}
-	for _, hash := range hashes {
-		h := rawdb.ReadHeader(ethDb, hash, currentBlockNr)
-		fmt.Printf("block hash: %x, root hash: %x\n", h.Hash(), h.Root)
+	fmt.Printf("All headers at the previous height\n")
+	{
+		var hashes []common.Hash
+		numberEnc := make([]byte, 8)
+		binary.BigEndian.PutUint64(numberEnc, currentBlockNr-1)
+		if err := ethDb.Walk([]byte("h"), numberEnc, 8*8, func(k, v []byte) ([]byte, ethdb.WalkAction, error) {
+			if len(k) == 8 + 32 {
+				hashes = append(hashes, common.BytesToHash(k[8:]))
+			}
+			return nil, ethdb.WalkActionNext, nil
+		}); err != nil {
+			panic(err)
+		}
+		for _, hash := range hashes {
+			h := rawdb.ReadHeader(ethDb, hash, currentBlockNr)
+			fmt.Printf("block hash: %x, root hash: %x\n", h.Hash(), h.Root)
+		}
 	}
 	tds, err := state.NewTrieDbState(currentBlock.Root(), db, currentBlockNr)
 	tds.SetHistorical(false)
