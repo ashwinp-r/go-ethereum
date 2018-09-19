@@ -1378,6 +1378,7 @@ func (bc *BlockChain) reorg(oldBlock, newBlock *types.Block) error {
 	for _, oldBlock := range oldChain {
 		rawdb.DeleteCanonicalHash(bc.db, oldBlock.NumberU64())
 	}
+	bc.insert(commonBlock)
 	// Insert the new chain, taking care of the proper incremental order
 	var addedTxs types.Transactions
 	for i := len(newChain) - 1; i >= 0; i-- {
@@ -1391,12 +1392,8 @@ func (bc *BlockChain) reorg(oldBlock, newBlock *types.Block) error {
 	diff := types.TxDifference(deletedTxs, addedTxs)
 	// When transactions get deleted from the database that means the
 	// receipts that were created in the fork must also be deleted
-	batch := bc.db.NewBatch()
 	for _, tx := range diff {
-		rawdb.DeleteTxLookupEntry(batch, tx.Hash())
-	}
-	if err := batch.Commit(); err != nil {
-		return err
+		rawdb.DeleteTxLookupEntry(bc.db, tx.Hash())
 	}
 
 	if len(deletedLogs) > 0 {
