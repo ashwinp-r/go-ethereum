@@ -718,7 +718,7 @@ func testRewind() {
 			panic(err)
 		}
 		for _, hash := range hashes {
-			h := rawdb.ReadHeader(ethDb, hash, currentBlockNr)
+			h := rawdb.ReadHeader(ethDb, hash, currentBlockNr-1)
 			fmt.Printf("block hash: %x, root hash: %x\n", h.Hash(), h.Root)
 		}
 	}
