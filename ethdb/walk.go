@@ -113,7 +113,13 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 		var extErr error
 		t.AscendGreaterOrEqual1(min, func(i llrb.Item) bool {
 			item := i.(*PutItem)
-			preimage, _ := db.Get([]byte("secure-key-"), item.key)
+			var sk []byte
+			if len(item.key) == 52 {
+				sk = item.key[20:]
+			} else {
+				sk = item.key
+			}
+			preimage, _ := db.Get([]byte("secure-key-"), sk)
 			fmt.Printf("bucket: %s, key: %x, preimage: %x\n", bucketStr, item.key, preimage)
 			value, err := db.GetAsOf(bucket[1:], bucket, item.key, timestampDst+1)
 			if err != nil {
