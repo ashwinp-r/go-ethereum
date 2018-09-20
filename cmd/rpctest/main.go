@@ -152,6 +152,11 @@ type EthReceipt struct {
 	Result Receipt `json:"result"`
 }
 
+type EthLogs struct {
+	CommonResponse
+	Result []*Log `json:"result"`
+}
+
 func post(client *http.Client, url, request string, response interface{}) error {
 	start := time.Now()
 	r, err := client.Post(url, "application/json", strings.NewReader(request))
@@ -270,7 +275,7 @@ func compareBalances(balance, balanceg *EthBalance) bool {
 	return true
 }
 
-func compareModifiedAccounts(ma, mag *DebugModifiedAccounts) bool {
+func compareModifiedAccounts(ma, mag *DebugModifiedAccounts) (bool, map[common.Address]struct{}) {
 	r := ma.Result
 	rg := mag.Result
 	rset := make(map[common.Address]struct{})
@@ -291,10 +296,10 @@ func compareModifiedAccounts(ma, mag *DebugModifiedAccounts) bool {
 	for _, a := range rg {
 		if _, ok := rset[a]; !ok {
 			fmt.Printf("%x not present in r\n", a)
-			return false
+			return false, nil
 		}
 	}
-	return true
+	return true, rset
 }
 
 func compareStorageRanges(sm, smg map[common.Hash]storageEntry) bool {
@@ -583,7 +588,7 @@ func bench1(storage bool) {
 			fmt.Printf("Miner %x balance difference for block %d\n", b.Result.Miner, bn)
 			return
 		}
-		if prevBn < bn && bn % 1000 == 0 {
+		if prevBn < bn && bn % 100 == 0 {
 			// Checking modified accounts
 			req_id++
 			template = `{"jsonrpc":"2.0","method":"debug_getModifiedAccountsByNumber","params":[%d, %d],"id":%d}`
@@ -593,7 +598,7 @@ func bench1(storage bool) {
 				return
 			}
 			if ma.Error != nil {
-				fmt.Printf("Error getting modified accounts: %d %d\n", ma.Error.Code, ma.Error.Message)
+				fmt.Printf("Error getting modified accounts: %d %s\n", ma.Error.Code, ma.Error.Message)
 				return
 			}
 			var mag DebugModifiedAccounts
@@ -602,12 +607,26 @@ func bench1(storage bool) {
 				return
 			}
 			if mag.Error != nil {
-				fmt.Printf("Error getting modified accounts g: %d %d\n", mag.Error.Code, mag.Error.Message)
+				fmt.Printf("Error getting modified accounts g: %d %s\n", mag.Error.Code, mag.Error.Message)
 				return
 			}
-			if !compareModifiedAccounts(&ma, &mag) {
+			ok, accountSet := compareModifiedAccounts(&ma, &mag)
+			if !ok {
 				fmt.Printf("Modified accouts different for blocks %d-%d\n", prevBn, bn)
 				return
+			}
+			req_id++
+			template = `{"jsonrpc":"2.0","method":"eth_getLogs","params":[{"fromBlock": "0x%x", "toBlock": "0x%x", "address": "0x%x"}}],"id":%d}`
+			for account, _ := range accountSet {
+				var logs EthLogs
+				if err := post(client, turbogeth_url, fmt.Sprintf(template, prevBn, bn, account, req_id), &logs); err != nil {
+					fmt.Printf("Could not get logs for account %x: %v\n", account, err)
+					return
+				}
+				if logs.Error != nil {
+					fmt.Printf("Error getting logs for account %x: %d %s\n", account, logs.Error.Code, logs.Error.Message)
+					return
+				}
 			}
 			fmt.Printf("Done blocks %d-%d, modified accounts: %d (%d)\n", prevBn, bn, len(ma.Result), len(mag.Result))
 			prevBn = bn
@@ -965,5 +984,5 @@ func bench6() {
 }
 
 func main() {
-	bench6()
+	bench1()
 }
