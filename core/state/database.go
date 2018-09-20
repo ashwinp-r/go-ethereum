@@ -482,8 +482,7 @@ func (tds *TrieDbState) SetBlockNr(blockNr uint64) {
 	tds.blockNr = blockNr
 }
 
-func (tds *TrieDbState) UnwindTo(blockNr uint64, commit bool) error {
-	batch := tds.db.NewBatch()
+func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
 	fmt.Printf("Rewinding from block %d to block %d\n", tds.blockNr, blockNr)
 	if err := tds.db.RewindData(tds.blockNr, blockNr, func (bucket, key, value []byte) error {
 		//fmt.Printf("Rewind with key %x value %x\n", key, value)
@@ -496,7 +495,7 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64, commit bool) error {
 				if err != nil {
 					return err
 				}
-				err = batch.Put(AccountsBucket, key, value)
+				err = tds.db.Put(AccountsBucket, key, value)
 				if err != nil {
 					return err
 				}
@@ -504,7 +503,7 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64, commit bool) error {
 				//fmt.Printf("Deleted account\n")
 				tds.accountUpdates[addrHash] = nil
 				tds.deleted[addrHash] = struct{}{}
-				err = batch.Delete(AccountsBucket, key)
+				err = tds.db.Delete(AccountsBucket, key)
 				if err != nil {
 					return err
 				}
@@ -521,10 +520,10 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64, commit bool) error {
 			}
 			m[keyHash] = value
 			if len(value) > 0 {
-				batch.Put(StorageBucket, key, value)
+				tds.db.Put(StorageBucket, key, value)
 			} else {
 				//fmt.Printf("Deleted storage item\n")
-				batch.Delete(StorageBucket, key)
+				tds.db.Delete(StorageBucket, key)
 			}
 		}
 		return nil
@@ -534,13 +533,8 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64, commit bool) error {
 	if _, err := tds.trieRoot(false); err != nil {
 		return err
 	}
-	if commit {
-		for i := tds.blockNr; i > blockNr; i-- {
-			if err := batch.DeleteTimestamp(i); err != nil {
-				return err
-			}
-		}
-		if err := batch.Commit(); err != nil {
+	for i := tds.blockNr; i > blockNr; i-- {
+		if err := tds.db.DeleteTimestamp(i); err != nil {
 			return err
 		}
 	}

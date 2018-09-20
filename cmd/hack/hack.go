@@ -676,9 +676,7 @@ func testRewind(blocks int) {
 	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
 	check(err)
 	defer ethDb.Close()
-	db := ethDb.NewBatch()
-	defer db.Rollback()
-	bc, err := core.NewBlockChain(db, nil, params.MainnetChainConfig, ethash.NewFaker(), vm.Config{})
+	bc, err := core.NewBlockChain(ethDb, nil, params.MainnetChainConfig, ethash.NewFaker(), vm.Config{})
 	check(err)
 	currentBlock := bc.CurrentBlock()
 	currentBlockNr := currentBlock.NumberU64()
@@ -723,6 +721,8 @@ func testRewind(blocks int) {
 			fmt.Printf("block hash: %x, root hash: %x\n", h.Hash(), h.Root)
 		}
 	}
+	db := ethDb.NewBatch()
+	defer db.Rollback()
 	tds, err := state.NewTrieDbState(currentBlock.Root(), db, currentBlockNr)
 	tds.SetHistorical(false)
 	check(err)
@@ -735,7 +735,7 @@ func testRewind(blocks int) {
 	fmt.Printf("Rebuit root hash: %x\n", rebuiltRoot)
 	startTime = time.Now()
 	rewindLen := uint64(blocks)
-	err = tds.UnwindTo(currentBlockNr - rewindLen, false)
+	err = tds.UnwindTo(currentBlockNr - rewindLen)
 	fmt.Printf("Unwind done in %v\n", time.Since(startTime))
 	check(err)
 	rewoundBlock := bc.GetBlockByNumber(currentBlockNr - rewindLen)
