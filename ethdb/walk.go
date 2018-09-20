@@ -120,7 +120,7 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 		}
 		*/
 		var extErr error
-		t.AscendGreaterOrEqual1(min, func(i llrb.Item) bool {
+		t.AscendGreaterOrEqual(&PutItem{}, func(i llrb.Item) bool {
 			item := i.(*PutItem)
 			value, err := db.GetAsOf(bucket[1:], bucket, item.key, timestampDst+1)
 			if err != nil {
