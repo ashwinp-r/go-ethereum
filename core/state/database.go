@@ -882,13 +882,15 @@ func (dsw *DbStateWriter) DeleteAccount(address common.Address, original *Accoun
 	if err := dsw.tds.db.Delete(AccountsBucket, addrHash[:]); err != nil {
 		return err
 	}
+	var originalData []byte
 	if original.Balance == nil {
 		// Account has been created and deleted in the same block
-		return nil
-	}
-	originalData, err := accountToEncoding(original)
-	if err != nil {
-		return err
+		originalData = []byte{}
+	} else {
+		originalData, err = accountToEncoding(original)
+		if err != nil {
+			return err
+		}
 	}
 	return dsw.tds.db.PutS(AccountsHistoryBucket, addrHash[:], originalData, dsw.tds.blockNr)
 }
