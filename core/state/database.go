@@ -486,7 +486,7 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64, commit bool) error {
 	batch := tds.db.NewBatch()
 	fmt.Printf("Rewinding from block %d to block %d\n", tds.blockNr, blockNr)
 	if err := tds.db.RewindData(tds.blockNr, blockNr, func (bucket, key, value []byte) error {
-		//fmt.Printf("Rewind with bucket %x key %x value %x\n", bucket, key, value)
+		fmt.Printf("Rewind with key %x value %x\n", key, value)
 		var err error
 		if bytes.Equal(bucket, AccountsHistoryBucket) {
 			var addrHash common.Hash
