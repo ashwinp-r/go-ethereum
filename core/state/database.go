@@ -363,7 +363,6 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 	//fmt.Printf("=================\n")
 	oldContinuations := []*trie.TrieContinuation{}
 	newContinuations := []*trie.TrieContinuation{}
-	relist := []*trie.Trie{}
 	for address, m := range tds.storageUpdates {
 		addrHash, err := tds.HashAddress(address, false /*save*/)
 		if err != nil {
@@ -385,7 +384,6 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 			}
 			oldContinuations = append(oldContinuations, c)
 		}
-		relist = append(relist, storageTrie)
 	}
 	it := 0
 	for len(oldContinuations) > 0 {
@@ -488,7 +486,7 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64, commit bool) error {
 	batch := tds.db.NewBatch()
 	fmt.Printf("Rewinding from block %d to block %d\n", tds.blockNr, blockNr)
 	if err := tds.db.RewindData(tds.blockNr, blockNr, func (bucket, key, value []byte) error {
-		fmt.Printf("Rewind with bucket %x key %x value %x\n", bucket, key, value)
+		//fmt.Printf("Rewind with bucket %x key %x value %x\n", bucket, key, value)
 		var err error
 		if bytes.Equal(bucket, AccountsHistoryBucket) {
 			var addrHash common.Hash
@@ -503,7 +501,7 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64, commit bool) error {
 					return err
 				}
 			} else {
-				fmt.Printf("Deleted account\n")
+				//fmt.Printf("Deleted account\n")
 				tds.accountUpdates[addrHash] = nil
 				tds.deleted[addrHash] = struct{}{}
 				err = batch.Delete(AccountsBucket, key)
@@ -525,7 +523,7 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64, commit bool) error {
 			if len(value) > 0 {
 				batch.Put(StorageBucket, key, value)
 			} else {
-				fmt.Printf("Deleted storage item\n")
+				//fmt.Printf("Deleted storage item\n")
 				batch.Delete(StorageBucket, key)
 			}
 		}
