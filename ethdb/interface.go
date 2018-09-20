@@ -28,21 +28,11 @@ type Putter interface {
 	PutHash(index uint32, hash []byte)
 }
 
-type WalkAction int
-
-const (
-	WalkActionNext = iota
-	WalkActionSeek
-	WalkActionStop
-)
-
-type WalkerFunc = func(key, value []byte) ([]byte, WalkAction, error)
-
 type Getter interface {
 	Get(bucket, key []byte) ([]byte, error)
 	GetAsOf(bucket, hBucket, key []byte, timestamp uint64) ([]byte, error)
 	Has(bucket, key []byte) (bool, error)
-	Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFunc) error
+	Walk(bucket, startkey []byte, fixedbits uint, walker func([]byte, []byte) (bool, error)) error
 	MultiWalk(bucket []byte, startkeys [][]byte, fixedbits []uint, walker func(int, []byte, []byte) (bool, error)) error
 	WalkAsOf(bucket, hBucket, startkey []byte, fixedbits uint, timestamp uint64, walker func([]byte, []byte) (bool, error)) error
 	MultiWalkAsOf(hBucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error

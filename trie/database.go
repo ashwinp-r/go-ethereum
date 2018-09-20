@@ -59,7 +59,7 @@ type DatabaseReader interface {
 	// Has retrieves whether a key is present in the database.
 	Has(bucket, key []byte) (bool, error)
 
-	Walk(bucket, key []byte, keybits uint, walker ethdb.WalkerFunc) error
+	Walk(bucket, key []byte, keybits uint, walker func([]byte, []byte) (bool, error)) error
 
 	GetHash(index uint32) []byte
 }

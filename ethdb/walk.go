@@ -27,85 +27,16 @@ import (
 
 var EndSuffix []byte = []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 
-// keys is sorted, prefixes strightly containing each other removed
-func multiWalkAsOf(db Getter, bucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
-	if len(startkeys) == 0 {
-		return nil
-	}
-	suffix := encodeTimestamp(timestamp)
-	l := len(startkeys[0])
-	keyBuffer := make([]byte, l+len(EndSuffix))
-	sl := l + len(suffix)
-	keyIdx := 0 // What is the current key we are extracting
-	fixedbytes, mask := bytesmask(fixedbits[keyIdx])
-	if err := db.Walk(bucket, startkeys[0], 0, func (k, v []byte) ([]byte, WalkAction, error) {
-		if fixedbits[keyIdx] > 0 {
-			c := int(-1)
-			for c != 0 {
-				c = bytes.Compare(k[:fixedbytes-1], startkeys[keyIdx][:fixedbytes-1])
-				if c == 0 {
-					k1 := k[fixedbytes-1]&mask
-					k2 := startkeys[keyIdx][fixedbytes-1]&mask
-					if k1 < k2 {
-						c = -1
-					} else if k1 > k2 {
-						c = 1
-					}
-				}
-				if c < 0 {
-					copy(keyBuffer, startkeys[keyIdx])
-					copy(keyBuffer[l:], suffix)
-					return keyBuffer[:sl], WalkActionSeek, nil
-				} else if c > 0 {
-					keyIdx++
-					if _, err := walker(keyIdx, nil, nil); err != nil {
-						return nil, WalkActionStop, err
-					}					
-					if keyIdx == len(startkeys) {
-						return nil, WalkActionStop, nil
-					}
-					fixedbytes, mask = bytesmask(fixedbits[keyIdx])
-				}
-			}
-		}
-		if bytes.Compare(k[l:], suffix) >= 0 {
-			// Current key inserted at the given block suffix or earlier
-			goOn, err := walker(keyIdx, k[:l], v)
-			if err != nil || !goOn {
-				return nil, WalkActionStop, err
-			}
-			copy(keyBuffer, k[:l])
-			copy(keyBuffer[l:], EndSuffix)
-			return keyBuffer[:], WalkActionSeek, nil
-		} else {
-			// Current key inserted after the given block suffix, seek to it
-			copy(keyBuffer, k[:l])
-			copy(keyBuffer[l:], suffix)
-			return keyBuffer[:sl], WalkActionSeek, nil
-		}
-	}); err != nil {
-		return err
-	}
-	for keyIdx < len(startkeys) {
-		keyIdx++
-		if _, err := walker(keyIdx, nil, nil); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-
 // Generates rewind data for all buckets between the timestamp
 // timestapSrc is the current timestamp, and timestamp Dst is where we rewind
 func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, key, value []byte) error) error {
 	// Collect list of buckets and keys that need to be considered
 	m := make(map[string]*llrb.LLRB)
 	suffixDst := encodeTimestamp(timestampDst+1)
-	if err := db.Walk(SuffixBucket, suffixDst, 0, func (k, v []byte) ([]byte, WalkAction, error) {
+	if err := db.Walk(SuffixBucket, suffixDst, 0, func (k, v []byte) (bool, error) {
 		timestamp, bucket := decodeTimestamp(k)
 		if timestamp > timestampSrc {
-			return nil, WalkActionStop, nil
+			return false, nil
 		}
 		var t *llrb.LLRB
 		var ok bool
@@ -123,7 +54,7 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 			t.ReplaceOrInsert(&PutItem{key: common.CopyBytes(v[i:i+l]), value: nil})
 			i += l
 		}
-		return nil, WalkActionNext, nil
+		return true, nil
 	}); err != nil {
 		return err
 	}
@@ -201,13 +132,13 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 func GetModifiedAccounts(db Getter, starttimestamp, endtimestamp uint64) ([]common.Address, error) {
 	t := llrb.New()
 	startCode := encodeTimestamp(starttimestamp)
-	if err := db.Walk(SuffixBucket, startCode, 0, func (k, v []byte) ([]byte, WalkAction, error) {
+	if err := db.Walk(SuffixBucket, startCode, 0, func (k, v []byte) (bool, error) {
 		timestamp, bucket := decodeTimestamp(k)
 		if !bytes.Equal(bucket, []byte("hAT")) {
-			return nil, WalkActionNext, nil
+			return true, nil
 		}
 		if timestamp > endtimestamp {
-			return nil, WalkActionStop, nil
+			return false, nil
 		}
 		keycount := int(binary.BigEndian.Uint32(v))
 		for i, ki := 4, 0; ki < keycount; ki++ {
@@ -216,7 +147,7 @@ func GetModifiedAccounts(db Getter, starttimestamp, endtimestamp uint64) ([]comm
 			t.ReplaceOrInsert(&PutItem{key: common.CopyBytes(v[i:i+l]), value: nil})
 			i += l
 		}
-		return nil, WalkActionNext, nil
+		return true, nil
 	}); err != nil {
 		return nil, err
 	}

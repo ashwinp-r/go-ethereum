@@ -85,7 +85,7 @@ func (db *NodeSet) GetAsOf(bucket, hBucket, key []byte, timestamp uint64) ([]byt
 	return nil, nil
 }
 
-func (db *NodeSet) Walk(bucket, key []byte, keybits uint, walker ethdb.WalkerFunc) error {
+func (db *NodeSet) Walk(bucket, key []byte, keybits uint, walker func([]byte, []byte) (bool, error)) error {
 	return nil
 }
 

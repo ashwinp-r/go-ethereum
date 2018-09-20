@@ -288,7 +288,7 @@ func bytesmask(fixedbits uint) (fixedbytes int, mask byte) {
 	return fixedbytes, mask
 }
 
-func (db *LDBDatabase) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFunc) error {
+func (db *LDBDatabase) Walk(bucket, startkey []byte, fixedbits uint, walker func(k, v []byte) (bool, error)) error {
 	fixedbytes, mask := bytesmask(fixedbits)
 	err := db.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucket)
@@ -298,17 +298,14 @@ func (db *LDBDatabase) Walk(bucket, startkey []byte, fixedbits uint, walker Walk
 		c := b.Cursor()
 		k, v := c.Seek(startkey)
 		for k != nil && (fixedbits == 0 || bytes.Equal(k[:fixedbytes-1], startkey[:fixedbytes-1]) && (k[fixedbytes-1]&mask)==(startkey[fixedbytes-1]&mask)) {
-			nextkey, action, err := walker(k, v)
+			goOn, err := walker(k, v)
 			if err != nil {
 				return err
 			}
-			if action == WalkActionStop {
+			if !goOn {
 				break
-			} else if action == WalkActionNext {
-				k, v = c.Next()
-			} else if action == WalkActionSeek {
-				k, v = c.SeekTo(nextkey)
 			}
+			k, v = c.Next()
 		}
 		return nil
 	})
@@ -462,7 +459,7 @@ func (db *LDBDatabase) WalkAsOf(bucket, hBucket, startkey []byte, fixedbits uint
 }
 
 func (db *LDBDatabase) MultiWalkAsOf(hBucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
-	return multiWalkAsOf(db, hBucket, startkeys, fixedbits, timestamp, walker)
+	panic("Not implemented")
 }
 
 func (db *LDBDatabase) RewindData(timestampSrc, timestampDst uint64, df func(hBucket, key, value []byte) error) error {
@@ -786,7 +783,7 @@ func (m *mutation) GetAsOf(bucket, hBucket, key []byte, timestamp uint64) ([]byt
 	}
 }
 
-func (m *mutation) walkMem(bucket, startkey []byte, fixedbits uint, walker WalkerFunc) error {
+func (m *mutation) walkMem(bucket, startkey []byte, fixedbits uint, walker func([]byte, []byte) (bool, error)) error {
 	fixedbytes, mask := bytesmask(fixedbits)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -807,22 +804,12 @@ func (m *mutation) walkMem(bucket, startkey []byte, fixedbits uint, walker Walke
 			if fixedbits > 0 && (!bytes.Equal(item.key[:fixedbytes-1], startkey[:fixedbytes-1]) || (item.key[fixedbytes-1]&mask)!=(startkey[fixedbytes-1]&mask)) {
 				return true
 			}
-			wr, action, err := walker(item.key, item.value)
+			goOn, err := walker(item.key, item.value)
 			if err != nil {
 				extErr = err
 				return false
 			}
-			switch action {
-			case WalkActionStop:
-				return false
-			case WalkActionNext:
-				return true
-			case WalkActionSeek:
-				nextkey = wr
-				return false
-			default:
-				panic("Wrong action")
-			}
+			return goOn
 		})
 		if extErr != nil {
 			return extErr
@@ -831,7 +818,7 @@ func (m *mutation) walkMem(bucket, startkey []byte, fixedbits uint, walker Walke
 	return nil
 }
 
-func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFunc) error {
+func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker func([]byte, []byte) (bool, error)) error {
 	if m.db == nil {
 		return m.walkMem(bucket, startkey, fixedbits, walker)
 	} else {
@@ -856,7 +843,7 @@ func (m *mutation) WalkAsOf(bucket, hBucket, startkey []byte, fixedbits uint, ti
 }
 
 func (m *mutation) MultiWalkAsOf(hBucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
-	return multiWalkAsOf(m, hBucket, startkeys, fixedbits, timestamp, walker)
+	panic("Not implemented")
 }
 
 func (m *mutation) RewindData(timestampSrc, timestampDst uint64, df func(hBucket, key, value []byte) error) error {
@@ -891,7 +878,7 @@ func (m *mutation) DeleteTimestamp(timestamp uint64) error {
 		t = llrb.New()
 		m.puts[string(SuffixBucket)] = t
 	}
-	err := m.Walk(SuffixBucket, suffix, uint(8*len(suffix)), func(k, v []byte) ([]byte, WalkAction, error) {
+	err := m.Walk(SuffixBucket, suffix, uint(8*len(suffix)), func(k, v []byte) (bool, error) {
 		hBucket := k[len(suffix):]
 		keycount := int(binary.BigEndian.Uint32(v))
 		var ht *llrb.LLRB
@@ -913,7 +900,7 @@ func (m *mutation) DeleteTimestamp(timestamp uint64) error {
 			i += l
 		}
 		t.ReplaceOrInsert(&PutItem{key: common.CopyBytes(k), value: nil})
-		return nil, WalkActionNext, nil
+		return true, nil
 	})
 	return err
 }
@@ -1097,7 +1084,7 @@ func (dt *table) GetAsOf(bucket, hBucket, key []byte, timestamp uint64) ([]byte,
 	return dt.db.GetAsOf(bucket, hBucket, append([]byte(dt.prefix), key...), timestamp)
 }
 
-func (dt *table) Walk(bucket, startkey []byte, fixedbits uint, walker WalkerFunc) error {
+func (dt *table) Walk(bucket, startkey []byte, fixedbits uint, walker func([]byte, []byte) (bool, error)) error {
 	return dt.db.Walk(bucket, append([]byte(dt.prefix), startkey...), fixedbits+uint(8*len(dt.prefix)), walker)
 }
 

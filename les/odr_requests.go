@@ -583,7 +583,7 @@ func (db *readTraceDB) Has(bucket, key []byte) (bool, error) {
 	return err == nil, nil
 }
 
-func (db *readTraceDB) Walk(bucket, key []byte, keybits uint, walker ethdb.WalkerFunc) error {
+func (db *readTraceDB) Walk(bucket, key []byte, keybits uint, walker func([]byte, []byte) (bool, error)) error {
 	return db.db.Walk(bucket, key, keybits, walker)
 }
 

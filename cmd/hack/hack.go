@@ -672,8 +672,8 @@ func trieChart() {
 }
 
 func testRewind(blocks int) {
-	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
-	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
+	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
+	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
 	check(err)
 	defer ethDb.Close()
 	db := ethDb.NewBatch()
@@ -692,11 +692,11 @@ func testRewind(blocks int) {
 		var hashes []common.Hash
 		numberEnc := make([]byte, 8)
 		binary.BigEndian.PutUint64(numberEnc, currentBlockNr)
-		if err := ethDb.Walk([]byte("h"), numberEnc, 8*8, func(k, v []byte) ([]byte, ethdb.WalkAction, error) {
+		if err := ethDb.Walk([]byte("h"), numberEnc, 8*8, func(k, v []byte) (bool, error) {
 			if len(k) == 8 + 32 {
 				hashes = append(hashes, common.BytesToHash(k[8:]))
 			}
-			return nil, ethdb.WalkActionNext, nil
+			return true, nil
 		}); err != nil {
 			panic(err)
 		}
@@ -710,11 +710,11 @@ func testRewind(blocks int) {
 		var hashes []common.Hash
 		numberEnc := make([]byte, 8)
 		binary.BigEndian.PutUint64(numberEnc, currentBlockNr-1)
-		if err := ethDb.Walk([]byte("h"), numberEnc, 8*8, func(k, v []byte) ([]byte, ethdb.WalkAction, error) {
+		if err := ethDb.Walk([]byte("h"), numberEnc, 8*8, func(k, v []byte) (bool, error) {
 			if len(k) == 8 + 32 {
 				hashes = append(hashes, common.BytesToHash(k[8:]))
 			}
-			return nil, ethdb.WalkActionNext, nil
+			return true, nil
 		}); err != nil {
 			panic(err)
 		}
@@ -942,12 +942,12 @@ func upgradeBlocks() {
 	defer ethDb.Close()
 	start := []byte{}
 	var keys [][]byte
-	if err := ethDb.Walk([]byte("b"), start, 0, func (k, v []byte) ([]byte, ethdb.WalkAction, error) {
+	if err := ethDb.Walk([]byte("b"), start, 0, func (k, v []byte) (bool, error) {
 		if len(keys) % 1000 == 0 {
 			fmt.Printf("Collected keys: %d\n", len(keys))
 		}
 		keys = append(keys, common.CopyBytes(k))
-		return nil, ethdb.WalkActionNext, nil
+		return true, nil
 	}); err != nil {
 		panic(err)
 	}
