@@ -101,7 +101,7 @@ func multiWalkAsOf(db Getter, bucket []byte, startkeys [][]byte, fixedbits []uin
 func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, key, value []byte) error) error {
 	// Collect list of buckets and keys that need to be considered
 	m := make(map[string]*llrb.LLRB)
-	suffixDst := encodeTimestamp(timestampDst)
+	suffixDst := encodeTimestamp(timestampDst+1)
 	if err := db.Walk(SuffixBucket, suffixDst, 0, func (k, v []byte) ([]byte, WalkAction, error) {
 		timestamp, bucket := decodeTimestamp(k)
 		if timestamp > timestampSrc {
