@@ -410,6 +410,38 @@ func compareReceipts(receipt, receiptg *EthReceipt) bool {
 	return true
 }
 
+func compareLogs(logs, logsg *EthLogs) bool {
+	r := logs.Result
+	rg := logsg.Result
+	if len(r) != len(rg) {
+		fmt.Printf("Different log lenths: %d %d\n", len(r), len(rg))
+		return false
+	}
+	for i, l := range r {
+		lg := rg[i]
+		if l.Address != lg.Address {
+			fmt.Printf("Different log %d addresses: %x %x\n", i, l.Address, lg.Address)
+			return false
+		}
+		if len(l.Topics) != len(lg.Topics) {
+			fmt.Printf("Different log %d topic lengths: %d %d\n", i, len(l.Topics), len(lg.Topics))
+			return false
+		}
+		for j, t := range l.Topics {
+			tg := lg.Topics[j]
+			if t != tg {
+				fmt.Printf("Different log %d topics %d: %x %x\n", i, j, t, tg)
+				return false
+			}
+		}
+		if !bytes.Equal(l.Data, lg.Data) {
+			fmt.Printf("Different log %d data: %x %x\n", i, l.Data, lg.Data)
+			return false
+		}
+	}
+	return true
+}
+
 func bench1(storage bool) {
 	var client = &http.Client{
 		Timeout: time.Second * 600,
@@ -616,7 +648,7 @@ func bench1(storage bool) {
 				return
 			}
 			req_id++
-			template = `{"jsonrpc":"2.0","method":"eth_getLogs","params":[{"fromBlock": "0x%x", "toBlock": "0x%x", "address": "0x%x"}}],"id":%d}`
+			template = `{"jsonrpc":"2.0","method":"eth_getLogs","params":[{"fromBlock": "0x%x", "toBlock": "0x%x", "address": "0x%x"}],"id":%d}`
 			for account, _ := range accountSet {
 				var logs EthLogs
 				if err := post(client, turbogeth_url, fmt.Sprintf(template, prevBn, bn, account, req_id), &logs); err != nil {
@@ -625,6 +657,19 @@ func bench1(storage bool) {
 				}
 				if logs.Error != nil {
 					fmt.Printf("Error getting logs for account %x: %d %s\n", account, logs.Error.Code, logs.Error.Message)
+					return
+				}
+				var logsg EthLogs
+				if err := post(client, geth_url, fmt.Sprintf(template, prevBn, bn, account, req_id), &logsg); err != nil {
+					fmt.Printf("Could not get logs for account g %x: %v\n", account, err)
+					return
+				}
+				if logsg.Error != nil {
+					fmt.Printf("Error getting logs for account g %x: %d %s\n", account, logsg.Error.Code, logsg.Error.Message)
+					return
+				}
+				if !compareLogs(&logs, &logsg) {
+					fmt.Printf("Different logs for account %x and block %d-%d\n", account, prevBn, bn)
 					return
 				}
 			}
@@ -984,5 +1029,5 @@ func bench6() {
 }
 
 func main() {
-	bench1()
+	bench1(false)
 }
