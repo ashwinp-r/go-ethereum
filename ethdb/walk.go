@@ -51,6 +51,7 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 		for i, ki := 4, 0; ki < keycount; ki++ {
 			l := int(v[i])
 			i++
+			/*
 			k := v[i:i+l]
 			var sk []byte
 			if len(k) == 52 {
@@ -60,6 +61,7 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 			}
 			preimage, _ := db.Get([]byte("secure-key-"), sk)
 			fmt.Printf("timestamp: %d, key: %x, preimage: %x\n", timestamp, k, preimage)
+			*/
 			t.ReplaceOrInsert(&PutItem{key: common.CopyBytes(v[i:i+l]), value: nil})
 			i += l
 		}
