@@ -797,6 +797,7 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 						t.leftGeneration(n.flags.t)
 						c.n = nil
 						c.updated = true
+						done = true
 					} else {
 						done = t.convertToShortNode(key, keyStart, n.child2, uint(i2), c, blockNr, done)
 					}
@@ -823,6 +824,7 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 						t.leftGeneration(n.flags.t)
 						c.n = nil
 						c.updated = true
+						done = true
 					} else {
 						done = t.convertToShortNode(key, keyStart, n.child1, uint(i1), c, blockNr, done)
 					}
