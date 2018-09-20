@@ -506,7 +506,7 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64, commit bool) error {
 					return err
 				}
 			} else {
-				//fmt.Printf("Deleted account\n")
+				fmt.Printf("Deleted account\n")
 				tds.accountUpdates[addrHash] = nil
 				tds.deleted[addrHash] = struct{}{}
 				err = batch.Delete(AccountsBucket, key)
@@ -528,7 +528,7 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64, commit bool) error {
 			if len(value) > 0 {
 				batch.Put(StorageBucket, key, value)
 			} else {
-				//fmt.Printf("Deleted storage item\n")
+				fmt.Printf("Deleted storage item\n")
 				batch.Delete(StorageBucket, key)
 			}
 		}
