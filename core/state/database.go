@@ -423,10 +423,7 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 		}
 		deleteStorageTrie := false
 		if account != nil {
-			if _, ok := tds.deleted[addrHash]; ok {
-				deleteStorageTrie = true
-				account.Root = emptyRoot
-			} else if storageTrie != nil {
+			if storageTrie != nil && forward {
 				account.Root = storageTrie.Hash()
 			}
 			//fmt.Printf("Set root %x %x\n", address[:], account.Root[:])
