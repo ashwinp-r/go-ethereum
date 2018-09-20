@@ -888,6 +888,10 @@ func (dsw *DbStateWriter) DeleteAccount(address common.Address, original *Accoun
 	if err := dsw.tds.db.Delete(AccountsBucket, addrHash[:]); err != nil {
 		return err
 	}
+	if original.Balance == nil {
+		// Account has been created and deleted in the same block
+		return nil
+	}
 	originalData, err := accountToEncoding(original)
 	if err != nil {
 		return err
