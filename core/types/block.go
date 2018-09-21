@@ -183,7 +183,9 @@ func (b *Body) SendersToTxs() {
 		return
 	}
 	for i, tx := range b.Transactions {
-		tx.from.Store(b.Senders[i])
+		if b.Senders[i] != (common.Address{}) {
+			tx.from.Store(b.Senders[i])
+		}
 	}
 }
 

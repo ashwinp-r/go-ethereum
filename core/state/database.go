@@ -484,6 +484,12 @@ func (tds *TrieDbState) SetBlockNr(blockNr uint64) {
 
 func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
 	fmt.Printf("Rewinding from block %d to block %d\n", tds.blockNr, blockNr)
+	var accountPutKeys [][]byte
+	var accountPutVals [][]byte
+	var accountDelKeys [][]byte
+	var storagePutKeys [][]byte
+	var storagePutVals [][]byte
+	var storageDelKeys [][]byte
 	if err := tds.db.RewindData(tds.blockNr, blockNr, func (bucket, key, value []byte) error {
 		//fmt.Printf("Rewind with key %x value %x\n", key, value)
 		var err error
@@ -495,18 +501,13 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
 				if err != nil {
 					return err
 				}
-				err = tds.db.Put(AccountsBucket, key, value)
-				if err != nil {
-					return err
-				}
+				accountPutKeys = append(accountPutKeys, key)
+				accountPutVals = append(accountPutVals, value)
 			} else {
 				//fmt.Printf("Deleted account\n")
 				tds.accountUpdates[addrHash] = nil
 				tds.deleted[addrHash] = struct{}{}
-				err = tds.db.Delete(AccountsBucket, key)
-				if err != nil {
-					return err
-				}
+				accountDelKeys = append(accountDelKeys, key)
 			}
 		} else if bytes.Equal(bucket, StorageHistoryBucket) {
 			var address common.Address
@@ -520,10 +521,11 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
 			}
 			m[keyHash] = value
 			if len(value) > 0 {
-				tds.db.Put(StorageBucket, key, value)
+				storagePutKeys = append(storagePutKeys, key)
+				storagePutVals = append(storagePutVals, value)
 			} else {
 				//fmt.Printf("Deleted storage item\n")
-				tds.db.Delete(StorageBucket, key)
+				storageDelKeys = append(storageDelKeys, key)
 			}
 		}
 		return nil
@@ -532,6 +534,26 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
 	}
 	if _, err := tds.trieRoot(false); err != nil {
 		return err
+	}
+	for i, key := range accountPutKeys {
+		if err := tds.db.Put(AccountsBucket, key, accountPutVals[i]); err != nil {
+			return err
+		}
+	}
+	for _, key := range accountDelKeys {
+		if err := tds.db.Delete(AccountsBucket, key); err != nil {
+			return err
+		}
+	}
+	for i, key := range storagePutKeys {
+		if err := tds.db.Put(StorageBucket, key, storagePutVals[i]); err != nil {
+			return err
+		}
+	}
+	for _, key := range storageDelKeys {
+		if err := tds.db.Delete(StorageBucket, key); err != nil {
+			return err
+		}
 	}
 	for i := tds.blockNr; i > blockNr; i-- {
 		if err := tds.db.DeleteTimestamp(i); err != nil {
