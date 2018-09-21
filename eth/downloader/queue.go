@@ -780,10 +780,10 @@ func (q *queue) DeliverBodies(id string, txLists [][]*types.Transaction, uncleLi
 				}
 			}
 			if !found {
-				fmt.Printf("Could not find body for %d\n", header.Number.Uint64())
+				//fmt.Printf("Could not find body for %d\n", header.Number.Uint64())
 				return false, nil
 			} else {
-				fmt.Printf("Fixed up body %d\n", header.Number.Uint64())
+				//fmt.Printf("Fixed up body %d\n", header.Number.Uint64())
 			}
 		}
 		result.Transactions = txLists[i]
@@ -802,7 +802,7 @@ func (q *queue) DeliverReceipts(id string, receiptList [][]*types.Receipt) (int,
 
 	reconstruct := func(header *types.Header, index int, result *fetchResult) (bool, error) {
 		if types.DeriveSha(types.Receipts(receiptList[index])) != header.ReceiptHash {
-			fmt.Printf("INVALID repeipt\n")
+			fmt.Printf("INVALID receipt\n")
 			return false, errInvalidReceipt
 		}
 		result.Receipts = receiptList[index]
