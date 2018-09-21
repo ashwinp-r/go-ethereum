@@ -507,7 +507,8 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 		hashLen := tr.h.hash(root, tc.resolvePos == 0, gotHash[:])
 		if hashLen == 32 {
 			if !bytes.Equal(tc.resolveHash, gotHash[:]) {
-				return fmt.Errorf("Resolving wrong hash for key %x, pos %d, \nexpected %s, got %s\n",
+				return fmt.Errorf("Resolving wrong hash for prefix %x, key %x, pos %d, \nexpected %s, got %s\n",
+					tc.t.prefix,
 					tc.resolveKey,
 					tc.resolvePos,
 					tc.resolveHash,
