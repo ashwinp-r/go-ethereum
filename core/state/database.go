@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"fmt"
 	"hash"
+	"io"
 	"runtime"
 	"math/big"
 	//"runtime/debug"
@@ -353,6 +354,10 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 	return tds.trieRoot(true)
 }
 
+func (tds *TrieDbState) PrintTrie(w io.Writer) {
+	tds.t.Print(w)
+}
+
 func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 	if len(tds.storageUpdates) == 0 && len(tds.accountUpdates) == 0 {
 		return tds.t.Hash(), nil
@@ -421,7 +426,10 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 		}
 		deleteStorageTrie := false
 		if account != nil {
-			if storageTrie != nil && forward {
+			if _, ok := tds.deleted[addrHash]; ok {
+				deleteStorageTrie = true
+				account.Root = emptyRoot
+			} else if storageTrie != nil && forward {
 				account.Root = storageTrie.Hash()
 			}
 			//fmt.Printf("Set root %x %x\n", address[:], account.Root[:])
@@ -472,10 +480,9 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 }
 
 
-func (tds *TrieDbState) Rebuild() error {
+func (tds *TrieDbState) Rebuild() {
 	tr := tds.AccountTrie()
 	tr.Rebuild(tds.db, tds.blockNr)
-	return nil
 }
 
 func (tds *TrieDbState) SetBlockNr(blockNr uint64) {

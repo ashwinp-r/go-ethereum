@@ -28,6 +28,7 @@ import (
 var indices = []string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f", "[17]"}
 
 type node interface {
+	print(io.Writer)
 	fstring(string) string
 	dirty() bool
 	hash() []byte
@@ -272,6 +273,16 @@ func (n *fullNode) fstring(ind string) string {
 	}
 	return resp + fmt.Sprintf("\n%s] ", ind)
 }
+func (n *fullNode) print(w io.Writer) {
+	fmt.Fprintf(w, "full(")
+	for i, node := range &n.Children {
+		if node != nil {
+			fmt.Fprintf(w, "%d:", i)
+			node.print(w)
+		}
+	}
+	fmt.Fprintf(w, ")")
+}
 
 func (n *duoNode) fstring(ind string) string {
 	resp := fmt.Sprintf("duo[\n%s  ", ind)
@@ -280,15 +291,37 @@ func (n *duoNode) fstring(ind string) string {
 	resp += fmt.Sprintf("%s: %v", indices[i2], n.child2.fstring(ind+"  "))
 	return resp + fmt.Sprintf("\n%s] ", ind)
 }
+func (n *duoNode) print(w io.Writer) {
+	fmt.Fprintf(w, "duo(")
+	i1, i2 := n.childrenIdx()
+	fmt.Fprintf(w, "%d:",i1)
+	n.child1.print(w)
+	fmt.Fprintf(w, "%d:",i2)
+	n.child2.print(w)
+	fmt.Fprintf(w, ")")
+}
 
 func (n *shortNode) fstring(ind string) string {
 	return fmt.Sprintf("{%x: %v} ", compactToHex(n.Key), n.Val.fstring(ind+"  "))
 }
+func (n *shortNode) print(w io.Writer) {
+	fmt.Fprintf(w, "short(%x:", compactToHex(n.Key))
+	n.Val.print(w)
+	fmt.Fprintf(w, ")")
+}
+
 func (n hashNode) fstring(ind string) string {
 	return fmt.Sprintf("<%x> ", []byte(n))
 }
+func (n hashNode) print(w io.Writer) {
+	fmt.Fprintf(w, "hash(%x)", []byte(n))
+}
+
 func (n valueNode) fstring(ind string) string {
 	return fmt.Sprintf("%x ", []byte(n))
+}
+func (n valueNode) print(w io.Writer) {
+	fmt.Fprintf(w, "value(%x)", []byte(n))
 }
 
 // decodeNode parses the RLP encoding of a trie node.

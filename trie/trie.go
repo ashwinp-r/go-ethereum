@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"runtime/debug"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -399,6 +400,10 @@ func (t *Trie) SaveHashes(db ethdb.Database, blockNr uint64) {
 		defer returnHasherToPool(h)
 		t.saveHashes(db, t.root, 0, 0, h, blockNr)
 	}
+}
+
+func (t *Trie) Print(w io.Writer) {
+	t.root.print(w)
 }
 
 func (tc *TrieContinuation) RunWithDb(db ethdb.Database, blockNr uint64) bool {
@@ -788,7 +793,6 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 			done = t.delete(n.child1, key, keyStart+1, c, blockNr)
 			if !c.updated && !done {
 				c.n = n
-				done = false
 			} else {
 				nn := c.n
 				if nn == nil {
@@ -815,7 +819,6 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 			done = t.delete(n.child2, key, keyStart+1, c, blockNr)
 			if !c.updated && !done {
 				c.n = n
-				done = false
 			} else {
 				nn := c.n
 				if nn == nil {

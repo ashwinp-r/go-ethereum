@@ -1128,9 +1128,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 			if err != nil {
 				return k, events, coalescedLogs, err
 			}
-			if err := bc.trieDbState.Rebuild(); err != nil {
-				return k, events, coalescedLogs, err
-			}
+			bc.trieDbState.Rebuild()
 		}
 		if bc.trieDbState != nil {
 			root, err = bc.trieDbState.TrieRoot()
@@ -1172,9 +1170,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 				if err != nil {
 					return k, events, coalescedLogs, err
 				}
-				if err := bc.trieDbState.Rebuild(); err != nil {
-					return k, events, coalescedLogs, err
-				}
+				bc.trieDbState.Rebuild()
 			}
 		} else {
 			bc.trieDbState.SetBlockNr(readBlockNr)
