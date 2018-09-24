@@ -18,7 +18,6 @@
 package core
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -1130,56 +1129,55 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 			}
 			bc.trieDbState.Rebuild()
 		}
-		if bc.trieDbState != nil {
-			root, err = bc.trieDbState.TrieRoot()
-			if err != nil {
-				return k, events, coalescedLogs, err
-			}
+		root, err = bc.trieDbState.TrieRoot()
+		if err != nil {
+			return k, events, coalescedLogs, err
 		}
 		parentRoot := parent.Root()
-		if bc.trieDbState == nil || readBlockNr == 0 || !bytes.Equal(root[:], parentRoot[:]) {
-			if bc.trieDbState != nil && readBlockNr != 0 {
-				log.Info("Rewinding", "to block", readBlockNr)
-				if err = bc.db.Commit(); err != nil {
-					log.Error("Could not commit chainDb before rewinding", err)
-					bc.db.Rollback()
-					return 0, events, coalescedLogs, err
-				}
-				bc.trieDbState.UnwindTo(readBlockNr)
-				currentBlock := bc.CurrentBlock()
-				if err := bc.reorg(currentBlock, parent); err != nil {
-					return 0, events, coalescedLogs, err
-				}
-				root, err := bc.trieDbState.TrieRoot()
-				if err != nil {
-					return 0, events, coalescedLogs, err
-				}
-				if root != parentRoot {
-					fmt.Printf("Wrong root %x, expected %x\n", root, parentRoot)
-					bc.db.Rollback()
-					return 0, events, coalescedLogs, fmt.Errorf("Wrong root %x, expected %x\n", root, parentRoot)
-				}
-				if err = bc.db.Commit(); err != nil {
-					log.Error("Could not commit chainDb after rewinding", err)
-					bc.db.Rollback()
-					return 0, events, coalescedLogs, err
-				}
-			} else {
-				log.Info("New StateDB created", "block", readBlockNr)
-				bc.trieDbState, err = state.NewTrieDbState(parent.Root(), bc.db, readBlockNr)
-				if err != nil {
-					return k, events, coalescedLogs, err
-				}
-				bc.trieDbState.Rebuild()
+		if root != parentRoot {
+			log.Info("Rewinding", "to block", readBlockNr)
+			if err = bc.db.Commit(); err != nil {
+				log.Error("Could not commit chainDb before rewinding", err)
+				bc.db.Rollback()
+				bc.trieDbState = nil
+				return 0, events, coalescedLogs, err
 			}
-		} else {
-			bc.trieDbState.SetBlockNr(readBlockNr)
+			if err := bc.trieDbState.UnwindTo(readBlockNr); err != nil {
+				bc.db.Rollback()
+				bc.trieDbState = nil
+				return 0, events, coalescedLogs, err
+			}
+			root, err := bc.trieDbState.TrieRoot()
+			if err != nil {
+				bc.db.Rollback()
+				bc.trieDbState = nil
+				return 0, events, coalescedLogs, err
+			}
+			if root != parentRoot {
+				log.Error("Incorrect rewinding", "root", fmt.Sprintf("%x",root), "expected", fmt.Sprintf("%x", parentRoot))
+				bc.db.Rollback()
+				bc.trieDbState = nil
+				return 0, events, coalescedLogs, fmt.Errorf("Wrong root %x, expected %x", root, parentRoot)
+			}
+			currentBlock := bc.CurrentBlock()
+			if err := bc.reorg(currentBlock, parent); err != nil {
+				bc.db.Rollback()
+				bc.trieDbState = nil
+				return 0, events, coalescedLogs, err
+			}
+			if err = bc.db.Commit(); err != nil {
+				log.Error("Could not commit chainDb after rewinding", err)
+				bc.db.Rollback()
+				bc.trieDbState = nil
+				return 0, events, coalescedLogs, err
+			}
 		}
 		stateDB := state.New(bc.trieDbState)
 		// Process block using the parent state as reference point.
 		receipts, logs, usedGas, err := bc.processor.Process(block, stateDB, bc.trieDbState, bc.vmConfig)
 		if err != nil {
 			bc.db.Rollback()
+			bc.trieDbState = nil
 			bc.reportBlock(block, receipts, err)
 			return k, events, coalescedLogs, err
 		}
@@ -1187,6 +1185,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		err = bc.Validator().ValidateState(block, parent, stateDB, bc.trieDbState, receipts, usedGas)
 		if err != nil {
 			bc.db.Rollback()
+			bc.trieDbState = nil
 			bc.reportBlock(block, receipts, err)
 			return k, events, coalescedLogs, err
 		}
@@ -1195,6 +1194,8 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		// Write the block to the chain and get the status.
 		status, err := bc.WriteBlockWithState(block, receipts, stateDB, bc.trieDbState)
 		if err != nil {
+			bc.db.Rollback()
+			bc.trieDbState = nil
 			return k, events, coalescedLogs, err
 		}
 		switch status {
@@ -1224,6 +1225,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 			if err = bc.db.Commit(); err != nil {
 				log.Error("Could not commit chainDb", err)
 				bc.db.Rollback()
+				bc.trieDbState = nil
 				return 0, events, coalescedLogs, err
 			}
 			bc.trieDbState.PruneTries()
