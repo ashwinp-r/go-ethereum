@@ -14,7 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/internal/debug"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/p2p"
-	"github.com/ethereum/go-ethereum/p2p/discover"
+	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/log"
 	"gopkg.in/urfave/cli.v1"
 )
@@ -42,7 +42,7 @@ func init() {
 
 	app.Before = func(ctx *cli.Context) error {
 		runtime.GOMAXPROCS(runtime.NumCPU())
-		if err := debug.Setup(ctx); err != nil {
+		if err := debug.Setup(ctx, "" /*logdir*/); err != nil {
 			return err
 		}
 		return nil
@@ -63,7 +63,11 @@ func main() {
 }
 
 func tester(ctx *cli.Context) error {
-	var err error
+	nodeToConnect, err := enode.ParseV4(ctx.Args()[0])
+	if err != nil {
+		panic(fmt.Sprintf("Could not parse the node info: %v", err))
+	}
+	fmt.Printf("Parsed node: %s, IP: %s\n", nodeToConnect, nodeToConnect.IP())
 	_, err = NewBlockGenerator("emptyblocks", 100)
 	if err != nil {
 		return err
@@ -104,11 +108,6 @@ func tester(ctx *cli.Context) error {
 	if err := server.Start(); err != nil {
 		panic(fmt.Sprintf("Could not start server: %v", err))
 	}
-	nodeToConnect, err := discover.ParseNode(ctx.Args()[1])
-	if err != nil {
-		panic(fmt.Sprintf("Could not parse the node info: %v", err))
-	}
-	fmt.Printf("Parsed node: %s, IP: %s\n", nodeToConnect, nodeToConnect.IP)
 	server.AddPeer(nodeToConnect)
 	time.Sleep(1*time.Minute)
 	return nil

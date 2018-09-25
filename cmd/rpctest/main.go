@@ -763,7 +763,7 @@ func bench2() {
 				return
 			}
 			if ma.Error != nil {
-				fmt.Printf("Error getting modified accounts: %d %d\n", ma.Error.Code, ma.Error.Message)
+				fmt.Printf("Error getting modified accounts: %d %s\n", ma.Error.Code, ma.Error.Message)
 				return
 			}
 			fmt.Printf("Done blocks %d-%d, modified accounts: %d\n", prevBn, bn, len(ma.Result))

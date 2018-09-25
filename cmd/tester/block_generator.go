@@ -110,7 +110,7 @@ func NewBlockGenerator(outputFile string, initialHeight int) (*BlockGenerator, e
 		header := &types.Header{
 			ParentHash: parent.Hash(),
 			Number:     num.Add(num, common.Big1),
-			GasLimit:   core.CalcGasLimit(parent),
+			GasLimit:   core.CalcGasLimit(parent, 0, 8000000),
 			Extra:      extra,
 			Time:       big.NewInt(tstamp),
 			Coinbase: coinbase,
@@ -198,7 +198,7 @@ func NewForkGenerator(base *BlockGenerator, outputFile string, forkBase int, for
 		header := &types.Header{
 			ParentHash: parent.Hash(),
 			Number:     num.Add(num, common.Big1),
-			GasLimit:   core.CalcGasLimit(parent),
+			GasLimit:   core.CalcGasLimit(parent, 0, 8000000),
 			Extra:      extra,
 			Time:       big.NewInt(tstamp),
 			Coinbase: coinbase,

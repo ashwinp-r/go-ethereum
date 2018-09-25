@@ -58,7 +58,7 @@ func makeTestState() (ethdb.Database, common.Hash, []*testAccount) {
 			obj.SetCode(crypto.Keccak256Hash([]byte{i, i, i, i, i}), []byte{i, i, i, i, i})
 			acc.code = []byte{i, i, i, i, i}
 		}
-		tds.TrieStateWriter().UpdateAccountData(&obj.address, &obj.data)
+		tds.TrieStateWriter().UpdateAccountData(obj.address, &obj.data, new(Account))
 		accounts = append(accounts, acc)
 	}
 	root, _ := tds.IntermediateRoot(state, false)
@@ -97,7 +97,7 @@ func checkStateAccounts(t *testing.T, db ethdb.Database, root common.Hash, accou
 
 // checkTrieConsistency checks that all nodes in a (sub-)trie are indeed present.
 func checkTrieConsistency(db ethdb.Database, root common.Hash) error {
-	trie := trie.New(root, AccountsBucket, false)
+	trie := trie.New(root, AccountsBucket, nil, false)
 	it := trie.NodeIterator(db, nil, 0)
 	for it.Next(true) {
 	}

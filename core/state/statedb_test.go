@@ -146,7 +146,7 @@ func TestCopy(t *testing.T) {
 	for i := byte(0); i < 255; i++ {
 		obj := orig.GetOrNewStateObject(common.BytesToAddress([]byte{i}))
 		obj.AddBalance(big.NewInt(int64(i)))
-		origTds.TrieStateWriter().UpdateAccountData(&obj.address, &obj.data)
+		origTds.TrieStateWriter().UpdateAccountData(obj.address, &obj.data, new(Account))
 	}
 	orig.Finalise(false, origTds.TrieStateWriter())
 	origTds.SetBlockNr(1)
@@ -162,8 +162,8 @@ func TestCopy(t *testing.T) {
 		origObj.AddBalance(big.NewInt(2 * int64(i)))
 		copyObj.AddBalance(big.NewInt(3 * int64(i)))
 
-		origTds.TrieStateWriter().UpdateAccountData(&origObj.address, &origObj.data)
-		copyTds.TrieStateWriter().UpdateAccountData(&copyObj.address, &copyObj.data)
+		origTds.TrieStateWriter().UpdateAccountData(origObj.address, &origObj.data, new(Account))
+		copyTds.TrieStateWriter().UpdateAccountData(copyObj.address, &copyObj.data, new(Account))
 	}
 	// Finalise the changes on both concurrently
 	done := make(chan struct{})
@@ -358,7 +358,7 @@ func (test *snapshotTest) run() bool {
 	var (
 		db           = ethdb.NewMemDatabase()
 		ds           = NewDbState(db, 0)
-		state        = New(tds)
+		state        = New(ds)
 		snapshotRevs = make([]int, len(test.snapshots))
 		sindex       = 0
 	)
@@ -372,7 +372,7 @@ func (test *snapshotTest) run() bool {
 	// Revert all snapshots in reverse order. Each revert must yield a state
 	// that is equivalent to fresh state with all actions up the snapshot applied.
 	for sindex--; sindex >= 0; sindex-- {
-		checkds := NewDbState(ds.Database(), 0)
+		checkds := NewDbState(db, 0)
 		checkstate := New(checkds)
 		for _, action := range test.actions[:test.snapshots[sindex]] {
 			action.fn(action, checkstate)
@@ -407,12 +407,12 @@ func (test *snapshotTest) checkEqual(state, checkstate *StateDB, ds, checkds *Db
 		checkeq("GetCodeSize", state.GetCodeSize(addr), checkstate.GetCodeSize(addr))
 		// Check storage.
 		if obj := state.getStateObject(addr); obj != nil {
-			ds.ForEachStorage(addr, func(key, value common.Hash) bool {
+			ds.ForEachStorage(addr, []byte{} /*startKey*/, func(key, seckey, value common.Hash) bool {
 				return checkeq("GetState("+key.Hex()+")", checkstate.GetState(addr, key), value)
-			})
-			checkds.ForEachStorage(addr, func(key, value common.Hash) bool {
+			}, 1000)
+			checkds.ForEachStorage(addr, []byte{} /*startKey*/, func(key, seckey, value common.Hash) bool {
 				return checkeq("GetState("+key.Hex()+")", checkstate.GetState(addr, key), value)
-			})
+			}, 1000)
 		}
 		if err != nil {
 			return err

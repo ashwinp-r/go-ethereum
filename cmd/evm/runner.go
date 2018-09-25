@@ -88,7 +88,6 @@ func runCmd(ctx *cli.Context) error {
 		sender      = common.BytesToAddress([]byte("sender"))
 		receiver    = common.BytesToAddress([]byte("receiver"))
 		genesisConfig *core.Genesis
-		blockNumber uint64
 	)
 	if ctx.GlobalBool(MachineFlag.Name) {
 		tracer = NewJSONLogger(logconfig, os.Stdout)

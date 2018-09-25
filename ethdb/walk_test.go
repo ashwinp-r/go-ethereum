@@ -11,7 +11,7 @@ var testbucket = []byte("B")
 func TestEmptyWalk(t *testing.T) {
 	db := NewMemDatabase()
 	count := 0
-	err := multiWalkAsOf(db, testbucket, [][]byte{}, []uint{}, 0, func(i int, k []byte, v []byte) (bool, error) {
+	err := db.MultiWalkAsOf(testbucket, [][]byte{}, []uint{}, 0, func(i int, k []byte, v []byte) (bool, error) {
 		count++
 		return true, nil
 	})
@@ -28,8 +28,7 @@ func TestWalk2(t *testing.T) {
 	db.PutS(testbucket, []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), 0)
 	db.PutS(testbucket, []byte("aaaaaccccccccccccccccccccccccccc"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), 0)
 	count := 0
-	err := multiWalkAsOf(
-		db,
+	err := db.MultiWalkAsOf(
 		testbucket,
 		[][]byte{[]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")},
 		[]uint{10},
@@ -62,8 +61,7 @@ func TestWalkN(t *testing.T) {
 	db.PutS(testbucket, []byte("bccccccccccccccccccccccccccccccc"), []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), 0)
 
 	count := make(map[int]int)
-	err := multiWalkAsOf(
-		db,
+	err := db.MultiWalkAsOf(
 		testbucket,
 		[][]byte{[]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), []byte("bbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")},
 		[]uint{40, 16},

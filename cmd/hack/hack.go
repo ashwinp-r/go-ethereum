@@ -880,13 +880,6 @@ func testDifficulty() {
 	fmt.Printf("Block 1 difficulty: %d\n", d1)
 }
 
-func testRewindTests() {
-	fmt.Printf("1 bucket\n")
-	ethdb.TestRewindData1Bucket()
-	fmt.Printf("2 buckets\n")
-	ethdb.TestRewindData2Bucket()
-}
-
 func testBlockHashes() {
 	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
 	check(err)

@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package ethdb_test
+package ethdb
 
 import (
 	"bytes"
@@ -25,16 +25,14 @@ import (
 	"sync"
 	"path"
 	"testing"
-
-	"github.com/ethereum/go-ethereum/ethdb"
 )
 
-func newTestLDB() (*ethdb.LDBDatabase, func()) {
+func newTestLDB() (*LDBDatabase, func()) {
 	dirname, err := ioutil.TempDir(os.TempDir(), "ethdb_test_")
 	if err != nil {
 		panic("failed to create test file: " + err.Error())
 	}
-	db, err := ethdb.NewLDBDatabase(path.Join(dirname, "db"), 0)
+	db, err := NewLDBDatabase(path.Join(dirname, "db"))
 	if err != nil {
 		panic("failed to create test database: " + err.Error())
 	}
@@ -55,21 +53,21 @@ func TestLDB_PutGet(t *testing.T) {
 }
 
 func TestMemoryDB_PutGet(t *testing.T) {
-	testPutGet(ethdb.NewMemDatabase(), t)
+	testPutGet(NewMemDatabase(), t)
 }
 
-func testPutGet(db ethdb.Database, t *testing.T) {
+func testPutGet(db Database, t *testing.T) {
 	t.Parallel()
 
 	for _, k := range test_values {
-		err := db.Put([]byte(k), nil)
+		err := db.Put(bucket, []byte(k), nil)
 		if err != nil {
 			t.Fatalf("put failed: %v", err)
 		}
 	}
 
 	for _, k := range test_values {
-		data, err := db.Get([]byte(k))
+		data, err := db.Get(bucket, []byte(k))
 		if err != nil {
 			t.Fatalf("get failed: %v", err)
 		}
@@ -78,7 +76,7 @@ func testPutGet(db ethdb.Database, t *testing.T) {
 		}
 	}
 
-	_, err := db.Get([]byte("non-exist-key"))
+	_, err := db.Get(bucket, []byte("non-exist-key"))
 	if err == nil {
 		t.Fatalf("expect to return a not found error")
 	}
@@ -154,10 +152,10 @@ func TestLDB_ParallelPutGet(t *testing.T) {
 }
 
 func TestMemoryDB_ParallelPutGet(t *testing.T) {
-	testParallelPutGet(ethdb.NewMemDatabase(), t)
+	testParallelPutGet(NewMemDatabase(), t)
 }
 
-func testParallelPutGet(db ethdb.Database, t *testing.T) {
+func testParallelPutGet(db Database, t *testing.T) {
 	const n = 8
 	var pending sync.WaitGroup
 
