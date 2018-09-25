@@ -977,8 +977,26 @@ func upgradeBlocks() {
 	check(ethDb.DeleteBucket([]byte("r")))
 }
 
-func removeReceipts() {
+func compareTries() {
+	fmt.Printf("Reading trie 1...\n")
+	t1 := readTrie("root1.txt")
+	fmt.Printf("Root hash: %x\n", t1.Hash())
+	fmt.Printf("Reading trie 2...\n")
+	t2 := readTrie("root2.txt")
+	fmt.Printf("Root hash: %x\n", t2.Hash())
+	c, err := os.Create("diff.txt")
+	check(err)
+	defer c.Close()
+	t1.PrintDiff(t2, c)
+}
 
+func readTrie(filename string) *trie.Trie {
+	f, err := os.Open(filename)
+	check(err)
+	defer f.Close()
+	t, err := trie.Load(f)
+	check(err)
+	return t
 }
 
 func main() {
@@ -1000,7 +1018,7 @@ func main() {
  	//bucketStats(db)
  	//mychart()
  	//testRebuild()
- 	testRewind(*rewind)
+ 	//testRewind(*rewind)
  	//hashFile()
  	//buildHashFromFile()
  	//testResolve()
@@ -1018,5 +1036,6 @@ func main() {
  	//relayoutKeys()
  	//testRedis()
  	//upgradeBlocks()
+ 	compareTries()
 }
 

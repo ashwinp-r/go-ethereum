@@ -17,6 +17,7 @@
 package trie
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -46,8 +47,6 @@ type (
 		child1  node
 		child2  node
 		flags   nodeFlag
-		hashTrue1 bool
-		hashTrue2 bool
 	}
 	shortNode struct {
 		Key   []byte
@@ -322,6 +321,91 @@ func (n valueNode) fstring(ind string) string {
 }
 func (n valueNode) print(w io.Writer) {
 	fmt.Fprintf(w, "value(%x)", []byte(n))
+}
+
+func printDiff(n1, n2 node, w io.Writer, ind string) {
+	if nv1, ok := n1.(valueNode); ok {
+		fmt.Fprintf(w, "%svalue(", ind)
+		if n, ok := n2.(valueNode); ok {
+			fmt.Fprintf(w, "%s/%s", nv1, n)
+		} else {
+			fmt.Fprintf(w, "/%T", n2)
+		}
+		fmt.Fprintf(w, ")")
+		return
+	}
+	if bytes.Equal(n1.hash(), n2.hash()) {
+		fmt.Fprintf(w, "hash(%x)", []byte(n1.hash()))
+		return
+	}
+	switch n1 := n1.(type) {
+		case *fullNode:
+			fmt.Fprintf(w, "%sfull(\n", ind)
+			if n, ok := n2.(*fullNode); ok {
+				for i, child := range &n1.Children {
+					child2 := n.Children[i]
+					if child == nil {
+						if child2 != nil {
+							fmt.Fprintf(w, "%s%d:(nil/)\n", ind, i)
+						}
+					} else if child2 == nil {
+						fmt.Fprintf(w, "%s%d:(/nil)\n", ind, i)
+					} else {
+						fmt.Fprintf(w, "%s%d:", ind, i)
+						printDiff(child, child2, w, "  " + ind)
+						fmt.Fprintf(w, "%s\n", ind)
+					}
+				}
+			} else {
+				fmt.Fprintf(w, "%s/%T", ind, n2)
+			}
+			fmt.Fprintf(w, "%s)\n", ind)
+		case *duoNode:
+			fmt.Fprintf(w, "%sduo(\n", ind)
+			if n, ok := n2.(*duoNode); ok {
+				i1, i2 := n1.childrenIdx()
+				j1, j2 := n.childrenIdx()
+				if i1 == j1 {
+					fmt.Fprintf(w, "%s%d:", ind, i1)
+					printDiff(n1.child1, n.child1, w, "  " + ind)
+					fmt.Fprintf(w, "%s\n", ind)
+				} else {
+					fmt.Fprintf(w, "%s%d:(/%d)", ind, i1, j1)
+				}
+				if i2 == j2 {
+					fmt.Fprintf(w, "%s%d:", ind, i2)
+					printDiff(n1.child2, n.child2, w, "  " + ind)
+					fmt.Fprintf(w, "%s\n", ind)
+				} else {
+					fmt.Fprintf(w, "%s%d:(/%d)", ind, i2, j2)
+				}
+			} else {
+				fmt.Fprintf(w, "%s/%T", ind, n2)
+			}
+			fmt.Fprintf(w, "%s)\n", ind)
+		case *shortNode:
+			fmt.Fprintf(w, "%sshort(", ind)
+			if n, ok := n2.(*shortNode); ok {
+				if bytes.Equal(n1.Key, n.Key) {
+					fmt.Fprintf(w, "%x:", compactToHex(n1.Key))
+					printDiff(n1.Val, n.Val, w, "  " + ind)
+					fmt.Fprintf(w, "%s\n", ind)
+				} else {
+					fmt.Fprintf(w, "%x:(/%x)", compactToHex(n1.Key), compactToHex(n.Key))
+				}
+			} else {
+				fmt.Fprintf(w, "/%T", n2)
+			}
+			fmt.Fprintf(w, "%s)\n", ind)
+		case hashNode:
+			fmt.Fprintf(w, "%shash(", ind)
+			if n, ok := n2.(hashNode); ok {
+				fmt.Fprintf(w, "%x/%x", n1, n)
+			} else {
+				fmt.Fprintf(w, "/%T", n2)
+			}
+			fmt.Fprintf(w, ")")
+		}
 }
 
 // decodeNode parses the RLP encoding of a trie node.

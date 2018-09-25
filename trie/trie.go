@@ -19,10 +19,12 @@ package trie
 
 import (
 	"bytes"
+	"bufio"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"runtime/debug"
+	"strconv"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -404,6 +406,154 @@ func (t *Trie) SaveHashes(db ethdb.Database, blockNr uint64) {
 
 func (t *Trie) Print(w io.Writer) {
 	t.root.print(w)
+}
+
+func loadNode(br *bufio.Reader) (node, error) {
+	nodeType, err := br.ReadString('(')
+	if err != nil {
+		return nil, err
+	}
+	switch nodeType {
+	case "full(":
+		return loadFull(br)
+	case "duo(":
+		return loadDuo(br)
+	case "short(":
+		return loadShort(br)
+	case "hash(":
+		return loadHash(br)
+	case "value(":
+		return loadValue(br)
+	}
+	return nil, fmt.Errorf("unknown node type: %s", nodeType)
+}
+
+func loadFull(br *bufio.Reader) (*fullNode, error) {
+	n := fullNode{}
+	n.flags.dirty = true
+	for {
+		next, err := br.Peek(1)
+		if err != nil {
+			return nil, err
+		}
+		if next[0] == ')' {
+			break
+		}
+		idxStr, err := br.ReadBytes(':')
+		if err != nil {
+			return nil, err
+		}
+		idxStr = idxStr[:len(idxStr)-1] // chop off ":"
+		idx, err := strconv.ParseInt(string(idxStr), 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		n.Children[idx], err = loadNode(br)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if _, err := br.Discard(1); err != nil { // Discard ")"
+		return nil, err
+	}
+	return &n, nil
+}
+
+func loadDuo(br *bufio.Reader) (*duoNode, error) {
+	n := duoNode{}
+	n.flags.dirty = true
+	idxStr1, err := br.ReadBytes(':')
+	if err != nil {
+		return nil, err
+	}
+	idxStr1 = idxStr1[:len(idxStr1)-1] // chop off ":"
+	idx1, err := strconv.ParseInt(string(idxStr1), 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	n.child1, err = loadNode(br)
+	if err != nil {
+		return nil, err
+	}
+	idxStr2, err := br.ReadBytes(':')
+	if err != nil {
+		return nil, err
+	}
+	idxStr2 = idxStr2[:len(idxStr2)-1] // chop off ":"
+	idx2, err := strconv.ParseInt(string(idxStr2), 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	n.child2, err = loadNode(br)
+	if err != nil {
+		return nil, err
+	}
+	n.mask = (uint32(1)<<uint(idx1)) | (uint32(1)<<uint(idx2))
+	if _, err := br.Discard(1); err != nil { // Discard ")"
+		return nil, err
+	}
+	return &n, nil
+}
+
+func loadShort(br *bufio.Reader) (*shortNode, error) {
+	n := shortNode{}
+	n.flags.dirty = true
+	keyHexHex, err := br.ReadBytes(':')
+	if err != nil {
+		return nil, err
+	}
+	keyHexHex = keyHexHex[:len(keyHexHex)-1]
+	keyHex, err := hex.DecodeString(string(keyHexHex))
+	if err != nil {
+		return nil, err
+	}
+	n.Key = hexToCompact(keyHex)
+	n.Val, err = loadNode(br)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := br.Discard(1); err != nil { // Discard ")"
+		return nil, err
+	}
+	return &n, nil
+}
+
+func loadHash(br *bufio.Reader) (hashNode, error) {
+	hashHex, err := br.ReadBytes(')')
+	if err != nil {
+		return nil, err
+	}
+	hashHex = hashHex[:len(hashHex)-1]
+	hash, err := hex.DecodeString(string(hashHex))
+	if err != nil {
+		return nil, err
+	}
+	return hashNode(hash), nil
+}
+
+func loadValue(br *bufio.Reader) (valueNode, error) {
+	valHex, err := br.ReadBytes(')')
+	if err != nil {
+		return nil, err
+	}
+	valHex = valHex[:len(valHex)-1]
+	val, err := hex.DecodeString(string(valHex))
+	if err != nil {
+		return nil, err
+	}
+	return valueNode(val), nil
+}
+
+func Load(r io.Reader) (*Trie, error) {
+	br := bufio.NewReader(r)
+	t := new(Trie)
+	var err error
+	t.root, err = loadNode(br)
+	return t, err
+}
+
+func (t *Trie) PrintDiff(t2 *Trie, w io.Writer) {
+	printDiff(t.root, t2.root, w, "")
 }
 
 func (tc *TrieContinuation) RunWithDb(db ethdb.Database, blockNr uint64) bool {

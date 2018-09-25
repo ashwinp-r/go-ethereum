@@ -18,6 +18,7 @@ package core
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -95,6 +96,11 @@ func (v *BlockValidator) ValidateState(block, parent *types.Block, statedb *stat
 	if root, err := tds.IntermediateRoot(statedb, v.config.IsEIP158(header.Number)); header.Root != root {
 		if err != nil {
 			return err
+		}
+		f, err := os.Create(fmt.Sprintf("root_%d.txt", block.NumberU64()))
+		if err == nil {
+			defer f.Close()
+			tds.PrintTrie(f)
 		}
 		return fmt.Errorf("invalid merkle root (remote: %x local: %x)", header.Root, root)
 	}
