@@ -328,7 +328,7 @@ func testGetProofs(t *testing.T, protocol int) {
 	for i := uint64(0); i <= bc.CurrentBlock().NumberU64(); i++ {
 		header := bc.GetHeaderByNumber(i)
 		root := header.Root
-		trie := trie.New(root, state.AccountsBucket, false)
+		trie := trie.New(root, state.AccountsBucket, nil, false)
 
 		for _, acc := range accounts {
 			req := ProofReq{
@@ -340,10 +340,10 @@ func testGetProofs(t *testing.T, protocol int) {
 			switch protocol {
 			case 1:
 				var proof light.NodeList
-				trie.Prove(db, crypto.Keccak256(acc[:]), 0, &proof, header.Number.Uint64())
+				trie.Prove(server.db, crypto.Keccak256(acc[:]), 0, &proof, header.Number.Uint64())
 				proofsV1 = append(proofsV1, proof)
 			case 2:
-				trie.Prove(db, crypto.Keccak256(acc[:]), 0, proofsV2, header.Number.Uint64())
+				trie.Prove(server.db, crypto.Keccak256(acc[:]), 0, proofsV2, header.Number.Uint64())
 			}
 		}
 	}
@@ -406,16 +406,15 @@ func testGetCHTProofs(t *testing.T, protocol int) {
 	switch protocol {
 	case 1:
 		root := light.GetChtRoot(server.db, 0, bc.GetHeaderByNumber(frequency-1).Hash())
-		trie := trie.New(root, light.ChtTablePrefix, false)
+		trie := trie.New(root, light.ChtTablePrefix, nil, false)
 
 		var proof light.NodeList
-		trie.Prove(db, key, 0, &proof, frequency-1)
+		trie.Prove(server.db, key, 0, &proof, frequency-1)
 		proofsV1[0].Proof = proof
 
 	case 2:
-		root := light.GetChtRoot(server.db, (frequency/config.ChtSize)-1, bc.GetHeaderByNumber(frequency-1).Hash())
 		root := light.GetChtV2Root(db, 0, bc.GetHeaderByNumber(frequency-1).Hash())
-		trie := trie.New(root, light.ChtTablePrefix, false)
+		trie := trie.New(root, light.ChtTablePrefix, nil, false)
 		trie.Prove(server.db, key, 0, &proofsV2.Proofs, frequency-1)
 	}
 	// Assemble the requests for the different protocols
@@ -482,7 +481,7 @@ func TestGetBloombitsProofs(t *testing.T) {
 		var proofs HelperTrieResps
 
 		root := light.GetBloomTrieRoot(server.db, 0, bc.GetHeaderByNumber(config.BloomTrieSize-1).Hash())
-		trie := trie.New(root, light.BloomTrieTablePrefix, false)
+		trie := trie.New(root, light.BloomTrieTablePrefix, nil, false)
 		trie.Prove(server.db, key, 0, &proofs.Proofs, light.BloomTrieFrequency-1)
 
 		// Send the proof request and verify the response

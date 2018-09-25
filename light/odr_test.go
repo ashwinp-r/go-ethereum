@@ -82,7 +82,7 @@ func (odr *testOdr) Retrieve(ctx context.Context, req OdrRequest) error {
 			req.Receipts = rawdb.ReadReceipts(odr.sdb, req.Hash, *number)
 		}
 	case *TrieRequest:
-		t := trie.New(req.Id.Root, state.AccountsBucket, false /*trie.NewDatabase(odr.sdb)*/)
+		t := trie.New(req.Id.Root, state.AccountsBucket, nil, false /*trie.NewDatabase(odr.sdb)*/)
 		nodes := NewNodeSet()
 		t.Prove(odr.sdb, req.Key, 0, nodes, 0)
 		req.Proof = nodes
