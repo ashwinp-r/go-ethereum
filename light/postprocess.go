@@ -134,6 +134,12 @@ func GetChtRoot(db ethdb.Database, sectionIdx uint64, sectionHead common.Hash) c
 	return common.BytesToHash(data)
 }
 
+// GetChtV2Root reads the CHT root assoctiated to the given section from the database
+// Note that sectionIdx is specified according to LES/2 CHT section size
+func GetChtV2Root(db ethdb.Database, sectionIdx uint64, sectionHead common.Hash) common.Hash {
+	return GetChtRoot(db, (sectionIdx+1)*(params.CHTFrequencyClient/params.CHTFrequencyServer)-1, sectionHead)
+}
+
 // StoreChtRoot writes the CHT root associated to the given section into the database
 // Note that sectionIdx is specified according to LES/1 CHT section size.
 func StoreChtRoot(db ethdb.Database, sectionIdx uint64, sectionHead, root common.Hash) {

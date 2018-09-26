@@ -413,7 +413,7 @@ func testGetCHTProofs(t *testing.T, protocol int) {
 		proofsV1[0].Proof = proof
 
 	case 2:
-		root := light.GetChtV2Root(db, 0, bc.GetHeaderByNumber(frequency-1).Hash())
+		root := light.GetChtV2Root(server.db, 0, bc.GetHeaderByNumber(frequency-1).Hash())
 		trie := trie.New(root, light.ChtTablePrefix, nil, false)
 		trie.Prove(server.db, key, 0, &proofsV2.Proofs, frequency-1)
 	}
@@ -482,7 +482,7 @@ func TestGetBloombitsProofs(t *testing.T) {
 
 		root := light.GetBloomTrieRoot(server.db, 0, bc.GetHeaderByNumber(config.BloomTrieSize-1).Hash())
 		trie := trie.New(root, light.BloomTrieTablePrefix, nil, false)
-		trie.Prove(server.db, key, 0, &proofs.Proofs, light.BloomTrieFrequency-1)
+		trie.Prove(server.db, key, 0, &proofs.Proofs, params.BloomTrieFrequency-1)
 
 		// Send the proof request and verify the response
 		cost := server.tPeer.GetRequestCost(GetHelperTrieProofsMsg, len(requests))

@@ -274,7 +274,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 	diskdb := ethdb.NewMemDatabase()
 
 	bucket := []byte("B")
-	tr := New(common.Hash{}, bucket, false)
+	tr := New(common.Hash{}, bucket, nil, false)
 	for _, val := range testdata1 {
 		tr.Update(diskdb, []byte(val.k), []byte(val.v), 0)
 	}
@@ -287,7 +287,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 	diskKeys = diskdb.Keys()
 	for i := 0; i < 20; i++ {
 		// Create trie that will load all nodes from DB.
-		tr := New(tr.Hash(), bucket, false)
+		tr := New(tr.Hash(), bucket, nil, false)
 
 		// Remove a random node from the database. It can't be the root node
 		// because that one is already loaded.
@@ -346,7 +346,7 @@ func testIteratorContinueAfterSeekError(t *testing.T, memonly bool) {
 	// Commit test trie to db, then remove the node containing "bars".
 	diskdb := ethdb.NewMemDatabase()
 	bucket := []byte("B")
-	ctr := New(common.Hash{}, bucket, false)
+	ctr := New(common.Hash{}, bucket, nil, false)
 	for _, val := range testdata1 {
 		ctr.Update(diskdb, []byte(val.k), []byte(val.v), 0)
 	}
@@ -361,7 +361,7 @@ func testIteratorContinueAfterSeekError(t *testing.T, memonly bool) {
 	root := ctr.Hash()
 	// Create a new iterator that seeks to "bars". Seeking can't proceed because
 	// the node is missing.
-	tr := New(root, bucket, false)
+	tr := New(root, bucket, nil, false)
 	it := tr.NodeIterator(diskdb, []byte("bars"), 0)
 	missing, ok := it.Error().(*MissingNodeError)
 	if !ok {
