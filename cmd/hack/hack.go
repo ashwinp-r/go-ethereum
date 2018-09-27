@@ -39,6 +39,8 @@ var emptyRoot = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cad
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile `file`")
 var reset = flag.Int("reset", -1, "reset to given block number")
 var rewind = flag.Int("rewind", 1, "rewind to given number of blocks")
+var block = flag.Int("block", 1, "specifies a block number for operation")
+var account = flag.String("account", "0x", "specifies account to investigate")
 
 func bucketList(db *bolt.DB) [][]byte {
 	bucketList := [][]byte{}
@@ -999,6 +1001,113 @@ func readTrie(filename string) *trie.Trie {
 	return t
 }
 
+func invTree(block int) {
+	fmt.Printf("Reading trie...\n")
+	t1 := readTrie(fmt.Sprintf("root_%d.txt", block))
+	fmt.Printf("Root hash: %x\n", t1.Hash())
+	fmt.Printf("Reading trie 2...\n")
+	t2 := readTrie(fmt.Sprintf("right_%d.txt", block))
+	fmt.Printf("Root hash: %x\n", t2.Hash())
+	c, err := os.Create("diff.txt")
+	check(err)
+	defer c.Close()
+	t1.PrintDiff(t2, c)
+}
+
+func preimage() {
+	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
+	ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/geth/chaindata")
+	check(err)
+	defer ethDb.Close()
+	p, err := ethDb.Get(trie.SecureKeyPrefix, common.FromHex("0x1a4fa162e70315921486693f1d5943b7704232081b39206774caa567d63f633f"))
+	check(err)
+	fmt.Printf("%x\n", p)
+}
+
+func encodeTimestamp(timestamp uint64) []byte {
+	var suffix []byte
+	var limit uint64
+	limit = 32
+	for bytecount := 1; bytecount <=8; bytecount++ {
+		if timestamp < limit {
+			suffix = make([]byte, bytecount)
+			b := timestamp
+			for i := bytecount - 1; i > 0; i-- {
+				suffix[i] = byte(b&0xff)
+				b >>= 8
+			}
+			suffix[0] = byte(b) | (byte(bytecount)<<5) // 3 most significant bits of the first byte are bytecount
+			break
+		}
+		limit <<= 8
+	}
+	return suffix
+}
+
+func decodeTimestamp(suffix []byte) (uint64, []byte) {
+	bytecount := int(suffix[0]>>5)
+	timestamp := uint64(suffix[0]&0x1f)
+	for i := 1; i < bytecount; i++ {
+		timestamp = (timestamp<<8) | uint64(suffix[i])
+	}
+	return timestamp, suffix[bytecount:]
+}
+
+func loadAccount() {
+	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
+	ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/geth/chaindata")
+	check(err)
+	defer ethDb.Close()
+	blockNr := uint64(*block)
+	blockSuffix := encodeTimestamp(blockNr)
+	accountBytes := common.FromHex(*account)
+	secKey := crypto.Keccak256(accountBytes)
+	accountData, err := ethDb.Get(state.AccountsHistoryBucket, append(secKey, blockSuffix...))
+	check(err)
+	fmt.Printf("Account data: %x\n", accountData)
+	startkey := make([]byte, len(accountBytes) + 32)
+	copy(startkey, accountBytes)
+	t := trie.New(common.Hash{}, state.StorageBucket, accountBytes[:], true)
+	count := 0
+	if err := ethDb.WalkAsOf(state.StorageBucket, state.StorageHistoryBucket, startkey, uint(len(accountBytes)*8), blockNr-1, func (k, v []byte) (bool, error) {
+		key := k[len(accountBytes):]
+		//fmt.Printf("%x: %x\n", key, v)
+		err := t.TryUpdate(ethDb, key, v, blockNr)
+		if err != nil {
+			return false, err
+		}
+		count++
+		return true, nil
+	}); err != nil {
+		panic(err)
+	}
+	fmt.Printf("After %d updates, reconstructed storage root: %x\n", count, t.Hash())
+	count = 0
+	if err := ethDb.Walk(state.StorageHistoryBucket, accountBytes, uint(len(accountBytes)*8), func (k, v []byte) (bool, error) {
+		if !bytes.HasSuffix(k, blockSuffix) {
+			return true, nil
+		}
+		count++
+		key := k[len(accountBytes):len(k)-len(blockSuffix)]
+		fmt.Printf("%x: %x\n", key, v)
+		if len(v) > 0 {
+			err := t.TryUpdate(ethDb, key, v, blockNr)
+			if err != nil {
+				return false, err
+			}
+		} else {
+			err := t.TryDelete(ethDb, key, blockNr)
+			if err != nil {
+				return false, err
+			}
+		}
+		return true, nil
+	}); err != nil {
+		panic(err)
+	}
+	fmt.Printf("After %d updates, reconstructed storage root: %x\n", count, t.Hash())
+}
+
 func main() {
 	flag.Parse()
     if *cpuprofile != "" {
@@ -1036,6 +1145,8 @@ func main() {
  	//relayoutKeys()
  	//testRedis()
  	//upgradeBlocks()
- 	compareTries()
+ 	//compareTries()
+ 	//invTree(*block)
+ 	loadAccount()
 }
 
