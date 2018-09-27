@@ -1060,17 +1060,17 @@ func loadAccount() {
 	check(err)
 	defer ethDb.Close()
 	blockNr := uint64(*block)
-	blockSuffix := encodeTimestamp(blockNr)
+	blockSuffix := encodeTimestamp(blockNr+1)
 	accountBytes := common.FromHex(*account)
 	secKey := crypto.Keccak256(accountBytes)
-	accountData, err := ethDb.Get(state.AccountsHistoryBucket, append(secKey, blockSuffix...))
+	accountData, err := ethDb.GetAsOf(state.AccountsBucket, state.AccountsHistoryBucket, secKey, blockNr)
 	check(err)
 	fmt.Printf("Account data: %x\n", accountData)
 	startkey := make([]byte, len(accountBytes) + 32)
 	copy(startkey, accountBytes)
 	t := trie.New(common.Hash{}, state.StorageBucket, accountBytes[:], true)
 	count := 0
-	if err := ethDb.WalkAsOf(state.StorageBucket, state.StorageHistoryBucket, startkey, uint(len(accountBytes)*8), blockNr-1, func (k, v []byte) (bool, error) {
+	if err := ethDb.WalkAsOf(state.StorageBucket, state.StorageHistoryBucket, startkey, uint(len(accountBytes)*8), blockNr, func (k, v []byte) (bool, error) {
 		key := k[len(accountBytes):]
 		//fmt.Printf("%x: %x\n", key, v)
 		err := t.TryUpdate(ethDb, key, v, blockNr)
