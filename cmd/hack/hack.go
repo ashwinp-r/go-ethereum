@@ -1054,8 +1054,9 @@ func decodeTimestamp(suffix []byte) (uint64, []byte) {
 }
 
 func loadAccount() {
+	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
 	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
-	ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/geth/chaindata")
+	//ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/geth/chaindata")
 	check(err)
 	defer ethDb.Close()
 	blockNr := uint64(*block)
@@ -1082,13 +1083,33 @@ func loadAccount() {
 		panic(err)
 	}
 	fmt.Printf("After %d updates, reconstructed storage root: %x\n", count, t.Hash())
-	count = 0
+	var keys [][]byte
 	if err := ethDb.Walk(state.StorageHistoryBucket, accountBytes, uint(len(accountBytes)*8), func (k, v []byte) (bool, error) {
 		if !bytes.HasSuffix(k, blockSuffix) {
 			return true, nil
 		}
-		count++
 		key := k[len(accountBytes):len(k)-len(blockSuffix)]
+		keys = append(keys, common.CopyBytes(key))
+		return true, nil
+	}); err != nil {
+		panic(err)
+	}
+	fmt.Printf("%d keys updated\n", len(keys))
+	count = 0
+	for _, key := range keys {
+		v, err := ethDb.GetAsOf(state.StorageBucket, state.StorageHistoryBucket, key, blockNr)
+		if err != nil {
+			fmt.Printf("for key %x err %v\n", key, err)
+		}
+		if len(v) > 0 {
+			err := t.TryUpdate(ethDb, key, v, blockNr)
+			check(err)
+		} else {
+			err := t.TryDelete(ethDb, key, blockNr)
+			check(err)
+		}		
+	}
+/*
 		fmt.Printf("%x: %x\n", key, v)
 		if len(v) > 0 {
 			err := t.TryUpdate(ethDb, key, v, blockNr)
@@ -1101,11 +1122,8 @@ func loadAccount() {
 				return false, err
 			}
 		}
-		return true, nil
-	}); err != nil {
-		panic(err)
-	}
-	fmt.Printf("After %d updates, reconstructed storage root: %x\n", count, t.Hash())
+*/
+	fmt.Printf("Updated storage root: %x\n", t.Hash())
 }
 
 func main() {
