@@ -1212,7 +1212,9 @@ func (t *Trie) Hash() common.Hash {
 }
 
 func (t *Trie) UnloadOlderThan(gen uint64) bool {
-	hn, unloaded := unloadOlderThan(t.root, gen)
+	h := newHasher(t.encodeToBytes)
+	defer returnHasherToPool(h)
+	hn, unloaded := unloadOlderThan(t.root, gen, h, true)
 	if unloaded {
 		t.root = hn
 		return true
@@ -1220,39 +1222,54 @@ func (t *Trie) UnloadOlderThan(gen uint64) bool {
 	return false
 }
 
-func unloadOlderThan(n node, gen uint64) (hashNode, bool) {
+func unloadOlderThan(n node, gen uint64, h *hasher, isRoot bool) (hashNode, bool) {
 	if n == nil {
 		return nil, false
 	}
 	switch n := (n).(type) {
 	case *shortNode:
 		if n.flags.t < gen {
+			if n.flags.dirty {
+				var hn common.Hash
+				h.hash(n, isRoot, hn[:])
+				return hashNode(hn[:]), true
+			}
 			return hashNode(common.CopyBytes(n.hash())), true
 		}
 		if n.flags.tod < gen {
-			if hn, unloaded := unloadOlderThan(n.Val, gen); unloaded {
+			if hn, unloaded := unloadOlderThan(n.Val, gen, h, false); unloaded {
 				n.Val = hn
 			}
 		}
 	case *duoNode:
 		if n.flags.t < gen {
+			if n.flags.dirty {
+				var hn common.Hash
+				h.hash(n, isRoot, hn[:])
+				return hashNode(hn[:]), true
+			}
 			return hashNode(common.CopyBytes(n.hash())), true
 		}
 		if n.flags.tod < gen {
-			if hn, unloaded := unloadOlderThan(n.child1, gen); unloaded {
+			if hn, unloaded := unloadOlderThan(n.child1, gen, h, false); unloaded {
 				n.child1 = hn
 			}
-			if hn, unloaded := unloadOlderThan(n.child2, gen); unloaded {
+			if hn, unloaded := unloadOlderThan(n.child2, gen, h, false); unloaded {
 				n.child2 = hn
 			}
 		}
 	case *fullNode:
 		if n.flags.t < gen {
+			if n.flags.dirty {
+				var hn common.Hash
+				h.hash(n, isRoot, hn[:])
+				return hashNode(hn[:]), true
+			}
 			return hashNode(common.CopyBytes(n.hash())), true
 		}
 		for i, child := range n.Children {
 			if child != nil {
-				if hn, unloaded := unloadOlderThan(child, gen); unloaded {
+				if hn, unloaded := unloadOlderThan(child, gen, h, false); unloaded {
 					n.Children[i] = hn
 				}
 			}
