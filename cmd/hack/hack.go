@@ -1102,9 +1102,11 @@ func loadAccount() {
 			fmt.Printf("for key %x err %v\n", key, err)
 		}
 		if len(v) > 0 {
+			fmt.Printf("Updated %x: %x\n", key, v)
 			err := t.TryUpdate(ethDb, key, v, blockNr)
 			check(err)
 		} else {
+			fmt.Printf("Deleted %x\n", key)
 			err := t.TryDelete(ethDb, key, blockNr)
 			check(err)
 		}		
