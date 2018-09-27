@@ -1088,7 +1088,7 @@ func loadAccount() {
 		if !bytes.HasSuffix(k, blockSuffix) {
 			return true, nil
 		}
-		key := k[len(accountBytes):len(k)-len(blockSuffix)]
+		key := k[:len(k)-len(blockSuffix)]
 		keys = append(keys, common.CopyBytes(key))
 		return true, nil
 	}); err != nil {
