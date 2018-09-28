@@ -1186,7 +1186,7 @@ func loadAccount() {
         // L2: Find last j such that self[j] <= self[j+1]. Terminate if no such j
         // exists.
         j := count - 2
-        while j >= 0 && p[j] > p[j+1] {
+        for j >= 0 && p[j] > p[j+1] {
             j--
         }
         if j == -1 {
