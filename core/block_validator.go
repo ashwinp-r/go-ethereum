@@ -103,7 +103,7 @@ func (v *BlockValidator) ValidateState(block, parent *types.Block, statedb *stat
 			tds.PrintTrie(f)
 		}
 		return fmt.Errorf("invalid merkle root (remote: %x local: %x)", header.Root, root)
-	} else if block.NumberU64() == 5106922 {
+	} else if block.NumberU64() == 5305813 {
 		f, err := os.Create(fmt.Sprintf("right_%d.txt", block.NumberU64()))
 		if err == nil {
 			defer f.Close()
