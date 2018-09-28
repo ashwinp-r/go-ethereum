@@ -1129,6 +1129,7 @@ func loadAccount() {
 			check(err)
 		}
 	}
+	fmt.Printf("Storage root after undo: %x\n", t.Hash())
 }
 
 func main() {
