@@ -1083,20 +1083,21 @@ func loadAccount() {
 		panic(err)
 	}
 	fmt.Printf("After %d updates, reconstructed storage root: %x\n", count, t.Hash())
-	keys := make(map[string]struct{})
+	var keys [][]byte
 	if err := ethDb.Walk(state.StorageHistoryBucket, accountBytes, uint(len(accountBytes)*8), func (k, v []byte) (bool, error) {
 		if !bytes.HasSuffix(k, blockSuffix) {
 			return true, nil
 		}
 		key := k[:len(k)-len(blockSuffix)]
-		keys[string(common.CopyBytes(key))] = struct{}{}
+		keys = append(keys, common.CopyBytes(key))
 		return true, nil
 	}); err != nil {
 		panic(err)
 	}
 	fmt.Printf("%d keys updated\n", len(keys))
+	undo := make(map[string][]byte)
 	count = 0
-	for k, _ := range keys {
+	for _, k := range keys {
 		v, err := ethDb.GetAsOf(state.StorageBucket, state.StorageHistoryBucket, []byte(k), blockNr+1)
 		if err != nil {
 			fmt.Printf("for key %x err %v\n", k, err)
@@ -1106,6 +1107,7 @@ func loadAccount() {
 			fmt.Printf("for key %x err %v\n", k, err)
 		}
 		key := ([]byte(k))[len(accountBytes):]
+		undo[string(key)] = common.CopyBytes(v_orig)
 		if len(v) > 0 {
 			fmt.Printf("Updated %x: %x from %x\n", key, v, v_orig)
 			err := t.TryUpdate(ethDb, key, v, blockNr)
@@ -1116,21 +1118,17 @@ func loadAccount() {
 			check(err)
 		}		
 	}
-/*
-		fmt.Printf("%x: %x\n", key, v)
-		if len(v) > 0 {
-			err := t.TryUpdate(ethDb, key, v, blockNr)
-			if err != nil {
-				return false, err
-			}
-		} else {
-			err := t.TryDelete(ethDb, key, blockNr)
-			if err != nil {
-				return false, err
-			}
-		}
-*/
 	fmt.Printf("Updated storage root: %x\n", t.Hash())
+	// Undo the changes
+	for key, v := range undo {
+		if len(v) > 0 {
+			err := t.TryUpdate(ethDb, []byte(key), v, blockNr)
+			check(err)			
+		} else {
+			err := t.TryDelete(ethDb, []byte(key), blockNr)
+			check(err)
+		}
+	}
 }
 
 func main() {
