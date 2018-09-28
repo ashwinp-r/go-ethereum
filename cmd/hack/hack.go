@@ -1095,41 +1095,47 @@ func loadAccount() {
 		panic(err)
 	}
 	fmt.Printf("%d keys updated\n", len(keys))
-	undo := make(map[string][]byte)
-	count = 0
-	for _, k := range keys {
-		v, err := ethDb.GetAsOf(state.StorageBucket, state.StorageHistoryBucket, []byte(k), blockNr+1)
-		if err != nil {
-			fmt.Printf("for key %x err %v\n", k, err)
+	maxBits := uint64(1) << uint(len(keys))
+	for bits := uint64(0); bits < maxBits; bits++ {
+		undo := make(map[string][]byte)
+		count = 0
+		for i, k := range keys {
+			if (bits & (uint64(1) << uint(i))) == 0 {
+				continue
+			}
+			v, err := ethDb.GetAsOf(state.StorageBucket, state.StorageHistoryBucket, []byte(k), blockNr+1)
+			if err != nil {
+				fmt.Printf("for key %x err %v\n", k, err)
+			}
+			v_orig, err := ethDb.GetAsOf(state.StorageBucket, state.StorageHistoryBucket, []byte(k), blockNr)
+			if err != nil {
+				fmt.Printf("for key %x err %v\n", k, err)
+			}
+			key := ([]byte(k))[len(accountBytes):]
+			undo[string(key)] = common.CopyBytes(v_orig)
+			if len(v) > 0 {
+				fmt.Printf("Updated %x: %x from %x\n", key, v, v_orig)
+				err := t.TryUpdate(ethDb, key, v, blockNr)
+				check(err)
+			} else {
+				fmt.Printf("Deleted %x from %x\n", key, v_orig)
+				err := t.TryDelete(ethDb, key, blockNr)
+				check(err)
+			}		
 		}
-		v_orig, err := ethDb.GetAsOf(state.StorageBucket, state.StorageHistoryBucket, []byte(k), blockNr)
-		if err != nil {
-			fmt.Printf("for key %x err %v\n", k, err)
+		fmt.Printf("Updated storage root: %x\n", t.Hash())
+		// Undo the changes
+		for key, v := range undo {
+			if len(v) > 0 {
+				err := t.TryUpdate(ethDb, []byte(key), v, blockNr)
+				check(err)			
+			} else {
+				err := t.TryDelete(ethDb, []byte(key), blockNr)
+				check(err)
+			}
 		}
-		key := ([]byte(k))[len(accountBytes):]
-		undo[string(key)] = common.CopyBytes(v_orig)
-		if len(v) > 0 {
-			fmt.Printf("Updated %x: %x from %x\n", key, v, v_orig)
-			err := t.TryUpdate(ethDb, key, v, blockNr)
-			check(err)
-		} else {
-			fmt.Printf("Deleted %x from %x\n", key, v_orig)
-			err := t.TryDelete(ethDb, key, blockNr)
-			check(err)
-		}		
+		fmt.Printf("Storage root after undo: %x\n--------------------------\n", t.Hash())
 	}
-	fmt.Printf("Updated storage root: %x\n", t.Hash())
-	// Undo the changes
-	for key, v := range undo {
-		if len(v) > 0 {
-			err := t.TryUpdate(ethDb, []byte(key), v, blockNr)
-			check(err)			
-		} else {
-			err := t.TryDelete(ethDb, []byte(key), blockNr)
-			check(err)
-		}
-	}
-	fmt.Printf("Storage root after undo: %x\n", t.Hash())
 }
 
 func main() {
