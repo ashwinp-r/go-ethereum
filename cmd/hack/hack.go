@@ -1136,6 +1136,79 @@ func loadAccount() {
 		}
 		fmt.Printf("Storage root after undo: %x\n--------------------------\n", t.Hash())
 	}
+	// Now try all permutations
+	p := make([]int, len(keys))
+	for i := 0; i < len(p); i++ {
+		p[i] = i
+	}
+	for {
+		undo := make(map[string][]byte)
+		count = 0
+		for _, pi := range p {
+			k := keys[pi]
+			v, err := ethDb.GetAsOf(state.StorageBucket, state.StorageHistoryBucket, []byte(k), blockNr+1)
+			if err != nil {
+				fmt.Printf("for key %x err %v\n", k, err)
+			}
+			v_orig, err := ethDb.GetAsOf(state.StorageBucket, state.StorageHistoryBucket, []byte(k), blockNr)
+			if err != nil {
+				fmt.Printf("for key %x err %v\n", k, err)
+			}
+			key := ([]byte(k))[len(accountBytes):]
+			undo[string(key)] = common.CopyBytes(v_orig)
+			if len(v) > 0 {
+				fmt.Printf("Updated %x: %x from %x\n", key, v, v_orig)
+				err := t.TryUpdate(ethDb, key, v, blockNr)
+				check(err)
+			} else {
+				fmt.Printf("Deleted %x from %x\n", key, v_orig)
+				err := t.TryDelete(ethDb, key, blockNr)
+				check(err)
+			}		
+		}
+		fmt.Printf("Updated storage root: %x\n", t.Hash())
+		// Undo the changes
+		for key, v := range undo {
+			if len(v) > 0 {
+				err := t.TryUpdate(ethDb, []byte(key), v, blockNr)
+				check(err)			
+			} else {
+				err := t.TryDelete(ethDb, []byte(key), blockNr)
+				check(err)
+			}
+		}
+		fmt.Printf("Storage root after undo: %x\n--------------------------\n", t.Hash())
+		count := len(p)
+        if count <= 1 {
+            break
+        }
+
+        // L2: Find last j such that self[j] <= self[j+1]. Terminate if no such j
+        // exists.
+        j := count - 2
+        while j >= 0 && p[j] > p[j+1] {
+            j--
+        }
+        if j == -1 {
+            break
+        }
+
+        // L3: Find last l such that self[j] <= self[l], then exchange elements j and l:
+        l := count - 1
+        for p[j] > p[l] {
+            l--
+        }
+        p[j], p[l] = p[l], p[j]
+
+        // L4: Reverse elements j+1 ... count-1:
+        lo := j + 1
+        hi := count - 1
+        for lo < hi {
+        	p[lo], p[hi] = p[hi], p[lo]
+            lo++
+            hi--
+        }
+	}
 }
 
 func main() {
