@@ -76,6 +76,31 @@ type keccakState interface {
 	Read([]byte) (int, error)
 }
 
+type hasher struct {
+	sha     keccakState
+	buf     common.Hash
+}
+
+var hasherPool = make(chan *hasher, 128)
+
+func newHasher() *hasher {
+	var h *hasher
+	select {
+		case h = <- hasherPool:
+		default:
+			h = &hasher{sha: sha3.NewKeccak256().(keccakState)}
+	}
+	return h
+}
+
+func returnHasherToPool(h *hasher) {
+	select {
+		case hasherPool <- h:
+		default:
+			fmt.Printf("Allowing hasher to be garbage collected, pool is full\n")
+	}
+}
+
 type storageItem struct {
 	key, seckey, value common.Hash
 }
@@ -90,8 +115,6 @@ type DbState struct {
 	db ethdb.Getter
 	blockNr uint64
 	storage map[common.Address]*llrb.LLRB
-	h keccakState
-	buf common.Hash
 }
 
 func NewDbState(db ethdb.Getter, blockNr uint64) *DbState {
@@ -99,7 +122,6 @@ func NewDbState(db ethdb.Getter, blockNr uint64) *DbState {
 		db: db,
 		blockNr: blockNr,
 		storage: make(map[common.Address]*llrb.LLRB),
-		h: sha3.NewKeccak256().(keccakState),
 	}
 }
 
@@ -173,10 +195,12 @@ func (dbs *DbState) ForEachStorage(addr common.Address, start []byte, cb func(ke
 }
 
 func (dbs *DbState) ReadAccountData(address common.Address) (*Account, error) {
-	dbs.h.Reset()
-	dbs.h.Write(address[:])
-	dbs.h.Read(dbs.buf[:])
-	enc, err := dbs.db.GetAsOf(AccountsBucket, AccountsHistoryBucket, dbs.buf[:], dbs.blockNr+1)
+	h := newHasher()
+	defer returnHasherToPool(h)
+	h.sha.Reset()
+	h.sha.Write(address[:])
+	h.sha.Read(h.buf[:])
+	enc, err := dbs.db.GetAsOf(AccountsBucket, AccountsHistoryBucket, h.buf[:], dbs.blockNr+1)
 	if err != nil || enc == nil || len(enc) == 0 {
 		return nil, nil
 	}
@@ -204,10 +228,12 @@ func (dbs *DbState) ReadAccountData(address common.Address) (*Account, error) {
 }
 
 func (dbs *DbState) ReadAccountStorage(address common.Address, key *common.Hash) ([]byte, error) {
-	dbs.h.Reset()
-	dbs.h.Write(key[:])
-	dbs.h.Read(dbs.buf[:])
-	enc, err := dbs.db.GetAsOf(StorageBucket, StorageHistoryBucket, append(address[:], dbs.buf[:]...), dbs.blockNr+1)
+	h := newHasher()
+	defer returnHasherToPool(h)
+	h.sha.Reset()
+	h.sha.Write(key[:])
+	h.sha.Read(h.buf[:])
+	enc, err := dbs.db.GetAsOf(StorageBucket, StorageHistoryBucket, append(address[:], h.buf[:]...), dbs.blockNr+1)
 	if err != nil || enc == nil {
 		return nil, nil
 	}
@@ -247,18 +273,18 @@ func (dbs *DbState) WriteAccountStorage(address common.Address, key, original, v
 		t = llrb.New()
 		dbs.storage[address] = t
 	}
-	dbs.h.Reset()
-	dbs.h.Write(key[:])
-	dbs.h.Read(dbs.buf[:])
-	t.ReplaceOrInsert(&storageItem{key: *key, seckey: dbs.buf, value: *value})
+	h := newHasher()
+	defer returnHasherToPool(h)
+	h.sha.Reset()
+	h.sha.Write(key[:])
+	h.sha.Read(h.buf[:])
+	t.ReplaceOrInsert(&storageItem{key: *key, seckey: h.buf, value: *value})
 	return nil
 }
 
 // Implements StateReader by wrapping a trie and a database, where trie acts as a cache for the database
 type TrieDbState struct {
 	t                *trie.Trie
-	addrHashCache    *lru.Cache
-	keyHashCache     *lru.Cache
 	db               ethdb.Database
 	blockNr          uint64
 	storageTries     map[common.Hash]*trie.Trie
@@ -268,22 +294,12 @@ type TrieDbState struct {
 	codeCache        *lru.Cache
 	codeSizeCache    *lru.Cache
 	historical       bool
-	h                keccakState
-	buf              common.Hash
 	generationCounts map[uint64]int
 	nodeCount        int
 	oldestGeneration uint64
 }
 
 func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieDbState, error) {
-	addrHashCache, err := lru.New(128*1024)
-	if err != nil {
-		return nil, err
-	}
-	keyHashCache, err := lru.New(128*1024)
-	if err != nil {
-		return nil, err
-	}
 	csc, err := lru.New(100000)
 	if err != nil {
 		return nil, err
@@ -295,8 +311,6 @@ func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieD
 	t := trie.New(root, AccountsBucket, nil, false)
 	tds := TrieDbState{
 		t: t,
-		addrHashCache: addrHashCache,
-		keyHashCache: keyHashCache,
 		db: db,
 		blockNr: blockNr,
 		storageTries: make(map[common.Hash]*trie.Trie),
@@ -305,7 +319,6 @@ func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieD
 		deleted: make(map[common.Hash]struct{}),
 		codeCache: cc,
 		codeSizeCache: csc,
-		h: sha3.NewKeccak256().(keccakState),
 	}
 	t.MakeListed(tds.joinGeneration, tds.leftGeneration)
 	tds.generationCounts = make(map[uint64]int, 4096)
@@ -319,19 +332,9 @@ func (tds *TrieDbState) SetHistorical(h bool) {
 }
 
 func (tds *TrieDbState) Copy() *TrieDbState {
-	addrHashCache, err := lru.New(128*1024)
-	if err != nil {
-		panic(err)
-	}
-	keyHashCache, err := lru.New(128*1024)
-	if err != nil {
-		panic(err)
-	}
 	tcopy := *tds.t
 	cpy := TrieDbState{
 		t: &tcopy,
-		addrHashCache: addrHashCache,
-		keyHashCache: keyHashCache,
 		db: tds.db,
 		blockNr: tds.blockNr,
 		storageTries: make(map[common.Hash]*trie.Trie),
@@ -647,10 +650,12 @@ func (tds *TrieDbState) leftGeneration(gen uint64) {
 }
 
 func (tds *TrieDbState) ReadAccountData(address common.Address) (*Account, error) {
-	tds.h.Reset()
-	tds.h.Write(address[:])
-	tds.h.Read(tds.buf[:])
-	enc, err := tds.t.TryGet(tds.db, tds.buf[:], tds.blockNr)
+	h := newHasher()
+	defer returnHasherToPool(h)
+	h.sha.Reset()
+	h.sha.Write(address[:])
+	h.sha.Read(h.buf[:])
+	enc, err := tds.t.TryGet(tds.db, h.buf[:], tds.blockNr)
 	if err != nil {
 		return nil, err
 	}
@@ -665,31 +670,21 @@ func (tds *TrieDbState) savePreimage(save bool, hash, preimage []byte) error {
 }
 
 func (tds *TrieDbState) HashAddress(address common.Address, save bool) (common.Hash, error) {
-	if cached, ok := tds.addrHashCache.Get(address); ok {
-		var hash common.Hash
-		copy(hash[:], cached.([]byte))
-		return hash, tds.savePreimage(save, hash[:], address[:])
-	}
-	tds.h.Reset()
-	tds.h.Write(address[:])
-	tds.h.Read(tds.buf[:])
-	hash := tds.buf
-	tds.addrHashCache.Add(address, hash[:])
-	return hash, tds.savePreimage(save, hash[:], address[:])
+	h := newHasher()
+	defer returnHasherToPool(h)
+	h.sha.Reset()
+	h.sha.Write(address[:])
+	h.sha.Read(h.buf[:])
+	return h.buf, tds.savePreimage(save, h.buf[:], address[:])
 }
 
 func (tds *TrieDbState) HashKey(key common.Hash, save bool) (common.Hash, error) {
-	if cached, ok := tds.keyHashCache.Get(key); ok {
-		var hash common.Hash
-		copy(hash[:], cached.([]byte))
-		return hash, tds.savePreimage(save, hash[:], key[:])
-	}
-	tds.h.Reset()
-	tds.h.Write(key[:])
-	tds.h.Read(tds.buf[:])
-	hash := tds.buf
-	tds.keyHashCache.Add(key, hash[:])
-	return hash, tds.savePreimage(save, hash[:], key[:])
+	h := newHasher()
+	defer returnHasherToPool(h)
+	h.sha.Reset()
+	h.sha.Write(key[:])
+	h.sha.Read(h.buf[:])
+	return h.buf, tds.savePreimage(save, h.buf[:], key[:])
 }
 
 func (tds *TrieDbState) GetKey(shaKey []byte) []byte {
