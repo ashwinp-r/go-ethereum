@@ -1249,7 +1249,7 @@ func main() {
  	//testRedis()
  	//upgradeBlocks()
  	//compareTries()
- 	//invTree(*block)
- 	loadAccount()
+ 	invTree(*block)
+ 	//loadAccount()
 }
 
