@@ -1250,7 +1250,8 @@ func main() {
  	//testRedis()
  	//upgradeBlocks()
  	//compareTries()
- 	invTree(*block)
+ 	//invTree(*block)
  	//loadAccount()
+ 	preimage()
 }
 
