@@ -388,12 +388,12 @@ func printDiff(n1, n2 node, w io.Writer, ind string, key string) {
 			if n, ok := n2.(*shortNode); ok {
 				if bytes.Equal(n1.Key, n.Key) {
 					keyHex := compactToHex(n1.Key)
-					hexV := make([]byte, len(keyHex)/2)
+					hexV := make([]byte, len(keyHex))
 					for i := 0; i < len(hexV); i++ {
-						hexV[i] = []byte(indices[keyHex[i*2+1]])[0]
+						hexV[i] = []byte(indices[keyHex[i]])[0]
 					}
 					fmt.Fprintf(w, "%s:", string(hexV))
-					printDiff(n1.Val, n.Val, w, "  " + ind, string(hexV) + key)
+					printDiff(n1.Val, n.Val, w, "  " + ind, key+string(hexV))
 					fmt.Fprintf(w, "%s\n", ind)
 				} else {
 					fmt.Fprintf(w, "%x:(/%x)", compactToHex(n1.Key), compactToHex(n.Key))
