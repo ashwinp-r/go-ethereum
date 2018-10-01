@@ -1020,7 +1020,7 @@ func preimage() {
 	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
 	check(err)
 	defer ethDb.Close()
-	p, err := ethDb.Get(trie.SecureKeyPrefix, common.FromHex("0x1a4fa162e70315921486693f1d5943b7704232081b39206774caa567d63f633f"))
+	p, err := ethDb.Get(trie.SecureKeyPrefix, common.FromHex("0x9f13f88230a70de90ed5fa41ba35a5fb78bc55d11cc9406f17d314fb67047ac7"))
 	check(err)
 	fmt.Printf("%x\n", p)
 }
