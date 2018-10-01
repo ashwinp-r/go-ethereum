@@ -1016,7 +1016,8 @@ func invTree(block int) {
 
 func preimage() {
 	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
-	ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/geth/chaindata")
+	//ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/geth/chaindata")
+	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
 	check(err)
 	defer ethDb.Close()
 	p, err := ethDb.Get(trie.SecureKeyPrefix, common.FromHex("0x1a4fa162e70315921486693f1d5943b7704232081b39206774caa567d63f633f"))

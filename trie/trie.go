@@ -553,7 +553,7 @@ func Load(r io.Reader) (*Trie, error) {
 }
 
 func (t *Trie) PrintDiff(t2 *Trie, w io.Writer) {
-	printDiff(t.root, t2.root, w, "")
+	printDiff(t.root, t2.root, w, "", "0x")
 }
 
 func (tc *TrieContinuation) RunWithDb(db ethdb.Database, blockNr uint64) bool {

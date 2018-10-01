@@ -323,11 +323,11 @@ func (n valueNode) print(w io.Writer) {
 	fmt.Fprintf(w, "value(%x)", []byte(n))
 }
 
-func printDiff(n1, n2 node, w io.Writer, ind string) {
+func printDiff(n1, n2 node, w io.Writer, ind string, key string) {
 	if nv1, ok := n1.(valueNode); ok {
 		fmt.Fprintf(w, "%svalue(", ind)
 		if n, ok := n2.(valueNode); ok {
-			fmt.Fprintf(w, "%x/%x", []byte(nv1), []byte(n))
+			fmt.Fprintf(w, "%s %x/%x", key, []byte(nv1), []byte(n))
 		} else {
 			fmt.Fprintf(w, "/%T", n2)
 		}
@@ -352,7 +352,7 @@ func printDiff(n1, n2 node, w io.Writer, ind string) {
 						fmt.Fprintf(w, "%s%d:(/nil)\n", ind, i)
 					} else {
 						fmt.Fprintf(w, "%s%d:", ind, i)
-						printDiff(child, child2, w, "  " + ind)
+						printDiff(child, child2, w, "  " + ind, key+indices[i])
 						fmt.Fprintf(w, "%s\n", ind)
 					}
 				}
@@ -367,14 +367,14 @@ func printDiff(n1, n2 node, w io.Writer, ind string) {
 				j1, j2 := n.childrenIdx()
 				if i1 == j1 {
 					fmt.Fprintf(w, "%s%d:", ind, i1)
-					printDiff(n1.child1, n.child1, w, "  " + ind)
+					printDiff(n1.child1, n.child1, w, "  " + ind, key+indices[i1])
 					fmt.Fprintf(w, "%s\n", ind)
 				} else {
 					fmt.Fprintf(w, "%s%d:(/%d)", ind, i1, j1)
 				}
 				if i2 == j2 {
 					fmt.Fprintf(w, "%s%d:", ind, i2)
-					printDiff(n1.child2, n.child2, w, "  " + ind)
+					printDiff(n1.child2, n.child2, w, "  " + ind, key+indices[i2])
 					fmt.Fprintf(w, "%s\n", ind)
 				} else {
 					fmt.Fprintf(w, "%s%d:(/%d)", ind, i2, j2)
@@ -387,8 +387,13 @@ func printDiff(n1, n2 node, w io.Writer, ind string) {
 			fmt.Fprintf(w, "%sshort(", ind)
 			if n, ok := n2.(*shortNode); ok {
 				if bytes.Equal(n1.Key, n.Key) {
-					fmt.Fprintf(w, "%x:", compactToHex(n1.Key))
-					printDiff(n1.Val, n.Val, w, "  " + ind)
+					keyHex := compactToHex(n1.Key)
+					hexV := make([]byte, len(keyHex)/2)
+					for i := 0; i < len(hexV); i++ {
+						hexV[i] = []byte(indices[keyHex[i*2+1]])[0]
+					}
+					fmt.Fprintf(w, "%s:", string(hexV))
+					printDiff(n1.Val, n.Val, w, "  " + ind, string(hexV) + key)
 					fmt.Fprintf(w, "%s\n", ind)
 				} else {
 					fmt.Fprintf(w, "%x:(/%x)", compactToHex(n1.Key), compactToHex(n.Key))
