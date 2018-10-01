@@ -442,7 +442,7 @@ func compareLogs(logs, logsg *EthLogs) bool {
 	return true
 }
 
-func bench1(storage bool) {
+func bench1() {
 	var client = &http.Client{
 		Timeout: time.Second * 600,
 	}
@@ -464,8 +464,9 @@ func bench1(storage bool) {
 	lastBlock := blockNumber.Number.ToInt().Int64()
 	fmt.Printf("Last block: %d\n", lastBlock)
 	accounts := make(map[common.Address]struct{})
-	firstBn := 1000000
+	firstBn := 5250000
 	prevBn := firstBn
+	storageCounter := 0
 	for bn := firstBn; bn <= int(lastBlock); bn++ {
 		req_id++
 		template := `{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x%x",true],"id":%d}`
@@ -496,50 +497,54 @@ func bench1(storage bool) {
 			if tx.To != nil {
 				accounts[*tx.To] = struct{}{}
 			}
-			if tx.To != nil && tx.Gas.ToInt().Uint64() > 21000 && storage {
-				req_id++
-				template = `{"jsonrpc":"2.0","method":"debug_storageRangeAt","params":["0x%x", %d,"0x%x","0x%x",%d],"id":%d}`
-				sm := make(map[common.Hash]storageEntry)
-				nextKey := &common.Hash{}
-				for nextKey != nil {
-					var sr DebugStorageRange
-					if err := post(client, turbogeth_url, fmt.Sprintf(template, b.Result.Hash, i, tx.To, *nextKey, 1024, req_id), &sr); err != nil {
-						fmt.Printf("Could not get storageRange: %s: %v\n", tx.Hash, err)
-						return
-					}
-					if sr.Error != nil {
-						fmt.Printf("Error getting storageRange: %d %s\n", sr.Error.Code, sr.Error.Message)
-						break
-					} else {
-						nextKey = sr.Result.NextKey
-						for k, v := range sr.Result.Storage {
-							sm[k] = v
+			if tx.To != nil && tx.Gas.ToInt().Uint64() > 21000 {
+				storageCounter++
+				if storageCounter == 1000 {
+					storageCounter = 0
+					req_id++
+					template = `{"jsonrpc":"2.0","method":"debug_storageRangeAt","params":["0x%x", %d,"0x%x","0x%x",%d],"id":%d}`
+					sm := make(map[common.Hash]storageEntry)
+					nextKey := &common.Hash{}
+					for nextKey != nil {
+						var sr DebugStorageRange
+						if err := post(client, turbogeth_url, fmt.Sprintf(template, b.Result.Hash, i, tx.To, *nextKey, 1024, req_id), &sr); err != nil {
+							fmt.Printf("Could not get storageRange: %s: %v\n", tx.Hash, err)
+							return
+						}
+						if sr.Error != nil {
+							fmt.Printf("Error getting storageRange: %d %s\n", sr.Error.Code, sr.Error.Message)
+							break
+						} else {
+							nextKey = sr.Result.NextKey
+							for k, v := range sr.Result.Storage {
+								sm[k] = v
+							}
 						}
 					}
-				}
-				fmt.Printf("storageRange: %d\n", len(sm))
-				smg := make(map[common.Hash]storageEntry)
-				nextKey = &common.Hash{}
-				for nextKey != nil {
-					var srg DebugStorageRange
-					if err := post(client, geth_url, fmt.Sprintf(template, b.Result.Hash, i, tx.To, *nextKey, 1024, req_id), &srg); err != nil {
-						fmt.Printf("Could not get storageRange g: %s: %v\n", tx.Hash, err)
-						return
-					}
-					if srg.Error != nil {
-						fmt.Printf("Error getting storageRange g: %d %s\n", srg.Error.Code, srg.Error.Message)
-						break
-					} else {
-						nextKey = srg.Result.NextKey
-						for k, v := range srg.Result.Storage {
-							smg[k] = v
+					fmt.Printf("storageRange: %d\n", len(sm))
+					smg := make(map[common.Hash]storageEntry)
+					nextKey = &common.Hash{}
+					for nextKey != nil {
+						var srg DebugStorageRange
+						if err := post(client, geth_url, fmt.Sprintf(template, b.Result.Hash, i, tx.To, *nextKey, 1024, req_id), &srg); err != nil {
+							fmt.Printf("Could not get storageRange g: %s: %v\n", tx.Hash, err)
+							return
+						}
+						if srg.Error != nil {
+							fmt.Printf("Error getting storageRange g: %d %s\n", srg.Error.Code, srg.Error.Message)
+							break
+						} else {
+							nextKey = srg.Result.NextKey
+							for k, v := range srg.Result.Storage {
+								smg[k] = v
+							}
 						}
 					}
-				}
-				fmt.Printf("storageRange g: %d\n", len(smg))
-				if !compareStorageRanges(sm, smg) {
-					fmt.Printf("Different in storage ranges tx %s\n", tx.Hash)
-					return
+					fmt.Printf("storageRange g: %d\n", len(smg))
+					if !compareStorageRanges(sm, smg) {
+						fmt.Printf("Different in storage ranges tx %s\n", tx.Hash)
+						return
+					}
 				}
 			}
 			req_id++
@@ -1029,5 +1034,5 @@ func bench6() {
 }
 
 func main() {
-	bench1(false)
+	bench1()
 }
