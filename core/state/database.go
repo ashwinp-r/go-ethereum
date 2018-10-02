@@ -361,6 +361,9 @@ func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
 
 func (tds *TrieDbState) PrintTrie(w io.Writer) {
 	tds.t.Print(w)
+	for _, storageTrie := range tds.storageTries {
+		storageTrie.Print(w)
+	}
 }
 
 func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
@@ -374,7 +377,7 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 	oldContinuations := []*trie.TrieContinuation{}
 	newContinuations := []*trie.TrieContinuation{}
 	for address, m := range tds.storageUpdates {
-		addrHash, err := tds.HashAddress(address, false /*save*/)
+		addrHash, err := tds.HashAddress(&address, false /*save*/)
 		if err != nil {
 			return common.Hash{}, nil
 		}
@@ -672,7 +675,7 @@ func (tds *TrieDbState) savePreimage(save bool, hash, preimage []byte) error {
 	return tds.db.Put(trie.SecureKeyPrefix, hash, preimage)
 }
 
-func (tds *TrieDbState) HashAddress(address common.Address, save bool) (common.Hash, error) {
+func (tds *TrieDbState) HashAddress(address *common.Address, save bool) (common.Hash, error) {
 	h := newHasher()
 	defer returnHasherToPool(h)
 	h.sha.Reset()
@@ -682,7 +685,7 @@ func (tds *TrieDbState) HashAddress(address common.Address, save bool) (common.H
 	return buf, tds.savePreimage(save, buf[:], address[:])
 }
 
-func (tds *TrieDbState) HashKey(key common.Hash, save bool) (common.Hash, error) {
+func (tds *TrieDbState) HashKey(key *common.Hash, save bool) (common.Hash, error) {
 	h := newHasher()
 	defer returnHasherToPool(h)
 	h.sha.Reset()
@@ -717,7 +720,7 @@ func (tds *TrieDbState) getStorageTrie(address common.Address, addrHash common.H
 }
 
 func (tds *TrieDbState) ReadAccountStorage(address common.Address, key *common.Hash) ([]byte, error) {
-	addrHash, err := tds.HashAddress(address, false /*save*/)
+	addrHash, err := tds.HashAddress(&address, false /*save*/)
 	if err != nil {
 		return nil, err
 	}
@@ -725,7 +728,7 @@ func (tds *TrieDbState) ReadAccountStorage(address common.Address, key *common.H
 	if err != nil {
 		return nil, err
 	}
-	seckey, err := tds.HashKey(*key, false /*save*/)
+	seckey, err := tds.HashKey(key, false /*save*/)
 	if err != nil {
 		return nil, err
 	}
@@ -857,7 +860,7 @@ func accountsEqual(a1, a2 *Account) bool {
 }
 
 func (tsw *TrieStateWriter) UpdateAccountData(address common.Address, original, account *Account) error {
-	addrHash, err := tsw.tds.HashAddress(address, false /*save*/)
+	addrHash, err := tsw.tds.HashAddress(&address, false /*save*/)
 	if err != nil {
 		return err
 	}
@@ -870,7 +873,7 @@ func (dsw *DbStateWriter) UpdateAccountData(address common.Address, original, ac
 	if err != nil {
 		return err
 	}
-	addrHash, err := dsw.tds.HashAddress(address, true /*save*/)
+	addrHash, err := dsw.tds.HashAddress(&address, true /*save*/)
 	if err != nil {
 		return err
 	}
@@ -894,7 +897,7 @@ func (dsw *DbStateWriter) UpdateAccountData(address common.Address, original, ac
 }
 
 func (tsw *TrieStateWriter) DeleteAccount(address common.Address, original *Account) error {
-	addrHash, err := tsw.tds.HashAddress(address, false /*save*/)
+	addrHash, err := tsw.tds.HashAddress(&address, false /*save*/)
 	if err != err {
 		return err
 	}
@@ -904,7 +907,7 @@ func (tsw *TrieStateWriter) DeleteAccount(address common.Address, original *Acco
 }
 
 func (dsw *DbStateWriter) DeleteAccount(address common.Address, original *Account) error {
-	addrHash, err := dsw.tds.HashAddress(address, true /*save*/)
+	addrHash, err := dsw.tds.HashAddress(&address, true /*save*/)
 	if err != nil {
 		return err
 	}
@@ -939,7 +942,7 @@ func (tsw *TrieStateWriter) WriteAccountStorage(address common.Address, key, ori
 		m = make(map[common.Hash][]byte)
 		tsw.tds.storageUpdates[address] = m
 	}
-	seckey, err := tsw.tds.HashKey(*key, false /*save*/)
+	seckey, err := tsw.tds.HashKey(key, false /*save*/)
 	if err != nil {
 		return err
 	}
@@ -952,7 +955,7 @@ func (tsw *TrieStateWriter) WriteAccountStorage(address common.Address, key, ori
 }
 
 func (dsw *DbStateWriter) WriteAccountStorage(address common.Address, key, original, value *common.Hash) error {
-	seckey, err := dsw.tds.HashKey(*key, true /*save*/)
+	seckey, err := dsw.tds.HashKey(key, true /*save*/)
 	if err != nil {
 		return err
 	}

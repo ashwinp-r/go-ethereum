@@ -405,7 +405,11 @@ func (t *Trie) SaveHashes(db ethdb.Database, blockNr uint64) {
 }
 
 func (t *Trie) Print(w io.Writer) {
+	if t.prefix != nil {
+		fmt.Fprintf(w, "%x:", t.prefix)
+	}
 	t.root.print(w)
+	fmt.Fprintf(w, "\n")
 }
 
 func loadNode(br *bufio.Reader) (node, error) {
@@ -414,15 +418,15 @@ func loadNode(br *bufio.Reader) (node, error) {
 		return nil, err
 	}
 	switch nodeType {
-	case "full(":
+	case "f(":
 		return loadFull(br)
-	case "duo(":
+	case "d(":
 		return loadDuo(br)
-	case "short(":
+	case "s(":
 		return loadShort(br)
-	case "hash(":
+	case "h(":
 		return loadHash(br)
-	case "value(":
+	case "v(":
 		return loadValue(br)
 	}
 	return nil, fmt.Errorf("unknown node type: %s", nodeType)

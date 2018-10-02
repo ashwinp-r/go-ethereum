@@ -273,7 +273,7 @@ func (n *fullNode) fstring(ind string) string {
 	return resp + fmt.Sprintf("\n%s] ", ind)
 }
 func (n *fullNode) print(w io.Writer) {
-	fmt.Fprintf(w, "full(")
+	fmt.Fprintf(w, "f(")
 	for i, node := range &n.Children {
 		if node != nil {
 			fmt.Fprintf(w, "%d:", i)
@@ -291,7 +291,7 @@ func (n *duoNode) fstring(ind string) string {
 	return resp + fmt.Sprintf("\n%s] ", ind)
 }
 func (n *duoNode) print(w io.Writer) {
-	fmt.Fprintf(w, "duo(")
+	fmt.Fprintf(w, "d(")
 	i1, i2 := n.childrenIdx()
 	fmt.Fprintf(w, "%d:",i1)
 	n.child1.print(w)
@@ -304,7 +304,7 @@ func (n *shortNode) fstring(ind string) string {
 	return fmt.Sprintf("{%x: %v} ", compactToHex(n.Key), n.Val.fstring(ind+"  "))
 }
 func (n *shortNode) print(w io.Writer) {
-	fmt.Fprintf(w, "short(%x:", compactToHex(n.Key))
+	fmt.Fprintf(w, "s(%x:", compactToHex(n.Key))
 	n.Val.print(w)
 	fmt.Fprintf(w, ")")
 }
@@ -313,14 +313,14 @@ func (n hashNode) fstring(ind string) string {
 	return fmt.Sprintf("<%x> ", []byte(n))
 }
 func (n hashNode) print(w io.Writer) {
-	fmt.Fprintf(w, "hash(%x)", []byte(n))
+	fmt.Fprintf(w, "h(%x)", []byte(n))
 }
 
 func (n valueNode) fstring(ind string) string {
 	return fmt.Sprintf("%x ", []byte(n))
 }
 func (n valueNode) print(w io.Writer) {
-	fmt.Fprintf(w, "value(%x)", []byte(n))
+	fmt.Fprintf(w, "v(%x)", []byte(n))
 }
 
 func printDiff(n1, n2 node, w io.Writer, ind string, key string) {

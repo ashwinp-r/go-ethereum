@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"fmt"
 	"hash"
-	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/crypto/sha3"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -42,15 +41,12 @@ type keccakState interface {
 
 // hashers live in a global db.
 var hasherPool = make(chan *hasher, 128)
-var newCount uint32
 
 func newHasher(encodeToBytes bool) *hasher {
 	var h *hasher
 	select {
 		case h = <- hasherPool:
 		default:
-			counter := atomic.AddUint32(&newCount, 1)
-			fmt.Printf("Creating a new hasher number %d\n", counter)
 			h = &hasher{sha: sha3.NewKeccak256().(keccakState)}
 	}
 	h.encodeToBytes = encodeToBytes
