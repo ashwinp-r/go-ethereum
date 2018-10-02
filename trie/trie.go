@@ -408,7 +408,9 @@ func (t *Trie) Print(w io.Writer) {
 	if t.prefix != nil {
 		fmt.Fprintf(w, "%x:", t.prefix)
 	}
-	t.root.print(w)
+	if t.root != nil {
+		t.root.print(w)
+	}
 	fmt.Fprintf(w, "\n")
 }
 
