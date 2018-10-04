@@ -1083,6 +1083,7 @@ func loadAccount() {
 		panic(err)
 	}
 	fmt.Printf("%d keys updated\n", len(keys))
+	/*
 	maxBits := uint64(1) << uint(len(keys))
 	for bits := uint64(0); bits < maxBits; bits++ {
 		undo := make(map[string][]byte)
@@ -1197,6 +1198,7 @@ func loadAccount() {
             hi--
         }
 	}
+	*/
 }
 
 func main() {
