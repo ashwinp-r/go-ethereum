@@ -1238,8 +1238,12 @@ func unloadOlderThan(n node, gen uint64, h *hasher, isRoot bool) (hashNode, bool
 		if n.flags.t < gen {
 			if n.flags.dirty {
 				var hn common.Hash
-				h.hash(n, isRoot, hn[:])
-				return hashNode(hn[:]), true
+				if h.hash(n, isRoot, hn[:]) == 32 {
+					return hashNode(hn[:]), true
+				} else {
+					// Embedded node does not have a hash and cannot be unloaded
+					return nil, false
+				}
 			}
 			return hashNode(common.CopyBytes(n.hash())), true
 		}
@@ -1252,8 +1256,12 @@ func unloadOlderThan(n node, gen uint64, h *hasher, isRoot bool) (hashNode, bool
 		if n.flags.t < gen {
 			if n.flags.dirty {
 				var hn common.Hash
-				h.hash(n, isRoot, hn[:])
-				return hashNode(hn[:]), true
+				if h.hash(n, isRoot, hn[:]) == 32 {
+					return hashNode(hn[:]), true
+				} else {
+					// Embedded node does not have a hash and cannot be unloaded
+					return nil, false
+				}
 			}
 			return hashNode(common.CopyBytes(n.hash())), true
 		}
@@ -1269,8 +1277,11 @@ func unloadOlderThan(n node, gen uint64, h *hasher, isRoot bool) (hashNode, bool
 		if n.flags.t < gen {
 			if n.flags.dirty {
 				var hn common.Hash
-				h.hash(n, isRoot, hn[:])
-				return hashNode(hn[:]), true
+				if h.hash(n, isRoot, hn[:]) == 32 {
+					return hashNode(hn[:]), true
+					// Embedded node does not have a hash and cannot be unloaded
+					return nil, false
+				}
 			}
 			return hashNode(common.CopyBytes(n.hash())), true
 		}
