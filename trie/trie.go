@@ -419,7 +419,7 @@ func loadNode(br *bufio.Reader) (node, error) {
 	if err != nil {
 		return nil, err
 	}
-	switch nodeType {
+	switch nodeType[len(nodeType)-2:] {
 	case "f(":
 		return loadFull(br)
 	case "d(":
@@ -550,9 +550,10 @@ func loadValue(br *bufio.Reader) (valueNode, error) {
 	return valueNode(val), nil
 }
 
-func Load(r io.Reader) (*Trie, error) {
+func Load(r io.Reader, encodeToBytes bool) (*Trie, error) {
 	br := bufio.NewReader(r)
 	t := new(Trie)
+	t.encodeToBytes = encodeToBytes
 	var err error
 	t.root, err = loadNode(br)
 	return t, err

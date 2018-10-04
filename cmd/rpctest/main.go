@@ -464,7 +464,7 @@ func bench1() {
 	lastBlock := blockNumber.Number.ToInt().Int64()
 	fmt.Printf("Last block: %d\n", lastBlock)
 	accounts := make(map[common.Address]struct{})
-	firstBn := 5250000
+	firstBn := 5250001
 	prevBn := firstBn
 	storageCounter := 0
 	for bn := firstBn; bn <= int(lastBlock); bn++ {
@@ -499,7 +499,7 @@ func bench1() {
 			}
 			if tx.To != nil && tx.Gas.ToInt().Uint64() > 21000 {
 				storageCounter++
-				if storageCounter == 1000 {
+				if storageCounter == 100 {
 					storageCounter = 0
 					req_id++
 					template = `{"jsonrpc":"2.0","method":"debug_storageRangeAt","params":["0x%x", %d,"0x%x","0x%x",%d],"id":%d}`

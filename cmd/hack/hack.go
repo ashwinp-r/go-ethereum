@@ -979,36 +979,23 @@ func upgradeBlocks() {
 	check(ethDb.DeleteBucket([]byte("r")))
 }
 
-func compareTries() {
-	fmt.Printf("Reading trie 1...\n")
-	t1 := readTrie("root1.txt")
-	fmt.Printf("Root hash: %x\n", t1.Hash())
-	fmt.Printf("Reading trie 2...\n")
-	t2 := readTrie("root2.txt")
-	fmt.Printf("Root hash: %x\n", t2.Hash())
-	c, err := os.Create("diff.txt")
-	check(err)
-	defer c.Close()
-	t1.PrintDiff(t2, c)
-}
-
-func readTrie(filename string) *trie.Trie {
+func readTrie(filename string, encodeToBytes bool) *trie.Trie {
 	f, err := os.Open(filename)
 	check(err)
 	defer f.Close()
-	t, err := trie.Load(f)
+	t, err := trie.Load(f, encodeToBytes)
 	check(err)
 	return t
 }
 
-func invTree(block int) {
+func invTree(wrong, right, diff string, block int, encodeToBytes bool) {
 	fmt.Printf("Reading trie...\n")
-	t1 := readTrie(fmt.Sprintf("root_%d.txt", block))
+	t1 := readTrie(fmt.Sprintf("%s_%d.txt", wrong, block), encodeToBytes)
 	fmt.Printf("Root hash: %x\n", t1.Hash())
 	fmt.Printf("Reading trie 2...\n")
-	t2 := readTrie(fmt.Sprintf("right_%d.txt", block))
+	t2 := readTrie(fmt.Sprintf("%s_%d.txt", right, block), encodeToBytes)
 	fmt.Printf("Root hash: %x\n", t2.Hash())
-	c, err := os.Create("diff.txt")
+	c, err := os.Create(fmt.Sprintf("%s_%d.txt", diff, block))
 	check(err)
 	defer c.Close()
 	t1.PrintDiff(t2, c)
@@ -1016,8 +1003,8 @@ func invTree(block int) {
 
 func preimage() {
 	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
-	//ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/geth/chaindata")
-	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
+	ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/geth/chaindata")
+	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
 	check(err)
 	defer ethDb.Close()
 	p, err := ethDb.Get(trie.SecureKeyPrefix, common.FromHex("0x9f13f88230a70de90ed5fa41ba35a5fb78bc55d11cc9406f17d314fb67047ac7"))
@@ -1250,8 +1237,9 @@ func main() {
  	//testRedis()
  	//upgradeBlocks()
  	//compareTries()
- 	//invTree(*block)
+ 	invTree("root", "right", "diff", *block, false)
+ 	invTree("iw", "ir", "id", *block, true)
  	//loadAccount()
- 	preimage()
+ 	//preimage()
 }
 
