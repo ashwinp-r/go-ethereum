@@ -323,9 +323,49 @@ func (n valueNode) print(w io.Writer) {
 	fmt.Fprintf(w, "v(%x)", []byte(n))
 }
 
+func printDiffSide(n node, w io.Writer, ind string, key string) {
+	switch n := n.(type) {
+		case *fullNode:
+			fmt.Fprintf(w, "full(\n")
+			for i, child := range &n.Children {
+				if child != nil {
+					fmt.Fprintf(w, "%s%s:", ind, indices[i])
+					printDiffSide(child, w, "  " + ind, key+indices[i])
+					fmt.Fprintf(w, "\n")
+				}
+			}
+			fmt.Fprintf(w, "%s)\n", ind)
+		case *duoNode:
+			fmt.Fprintf(w, "duo(\n")
+			i1, i2 := n.childrenIdx()
+			fmt.Fprintf(w, "%s%s:", ind, indices[i1])
+			printDiffSide(n.child1, w, "  " + ind, key+indices[i1])
+			fmt.Fprintf(w, "\n")
+			fmt.Fprintf(w, "%s%s:", ind, indices[i2])
+			printDiffSide(n.child2, w, "  " + ind, key+indices[i2])
+			fmt.Fprintf(w, "\n")
+			fmt.Fprintf(w, "%s)\n", ind)
+		case *shortNode:
+			fmt.Fprintf(w, "short(")
+			keyHex := compactToHex(n.Key)
+			hexV := make([]byte, len(keyHex))
+			for i := 0; i < len(hexV); i++ {
+				hexV[i] = []byte(indices[keyHex[i]])[0]
+			}
+			fmt.Fprintf(w, "%s:", string(hexV))
+			printDiffSide(n.Val, w, "  " + ind, key+string(hexV))
+			fmt.Fprintf(w, "\n")
+			fmt.Fprintf(w, "%s)\n", ind)
+		case hashNode:
+			fmt.Fprintf(w, "hash(%x)",[]byte(n))
+		case valueNode:
+			fmt.Fprintf(w, "value(%s %x)", key, []byte(n))
+		}	
+}
+
 func printDiff(n1, n2 node, w io.Writer, ind string, key string) {
 	if nv1, ok := n1.(valueNode); ok {
-		fmt.Fprintf(w, "%svalue(", ind)
+		fmt.Fprintf(w, "value(")
 		if n, ok := n2.(valueNode); ok {
 			fmt.Fprintf(w, "%s %x/%x", key, []byte(nv1), []byte(n))
 		} else {
@@ -334,57 +374,59 @@ func printDiff(n1, n2 node, w io.Writer, ind string, key string) {
 		fmt.Fprintf(w, ")")
 		return
 	}
-	if bytes.Equal(n1.hash(), n2.hash()) {
+	if n2 != nil && bytes.Equal(n1.hash(), n2.hash()) {
 		fmt.Fprintf(w, "hash(%x)", []byte(n1.hash()))
 		return
 	}
 	switch n1 := n1.(type) {
 		case *fullNode:
-			fmt.Fprintf(w, "%sfull(\n", ind)
+			fmt.Fprintf(w, "full(\n")
 			if n, ok := n2.(*fullNode); ok {
 				for i, child := range &n1.Children {
 					child2 := n.Children[i]
 					if child == nil {
 						if child2 != nil {
-							fmt.Fprintf(w, "%s%d:(nil/)\n", ind, i)
+							fmt.Fprintf(w, "%s%s:(nil/)\n", ind, indices[i])
 						}
 					} else if child2 == nil {
-						fmt.Fprintf(w, "%s%d:(/nil)\n", ind, i)
+						fmt.Fprintf(w, "%s%s:(/nil)\n", ind, indices[i])
 					} else {
-						fmt.Fprintf(w, "%s%d:", ind, i)
+						fmt.Fprintf(w, "%s%s:", ind, indices[i])
 						printDiff(child, child2, w, "  " + ind, key+indices[i])
-						fmt.Fprintf(w, "%s\n", ind)
+						fmt.Fprintf(w, "\n")
 					}
 				}
 			} else {
-				fmt.Fprintf(w, "%s/%T", ind, n2)
+				fmt.Fprintf(w, "%s/%T\n", ind, n2)
+				printDiffSide(n1, w, ind, key)
 			}
 			fmt.Fprintf(w, "%s)\n", ind)
 		case *duoNode:
-			fmt.Fprintf(w, "%sduo(\n", ind)
+			fmt.Fprintf(w, "duo(\n")
 			if n, ok := n2.(*duoNode); ok {
 				i1, i2 := n1.childrenIdx()
 				j1, j2 := n.childrenIdx()
 				if i1 == j1 {
-					fmt.Fprintf(w, "%s%d:", ind, i1)
+					fmt.Fprintf(w, "%s%s:", ind, indices[i1])
 					printDiff(n1.child1, n.child1, w, "  " + ind, key+indices[i1])
-					fmt.Fprintf(w, "%s\n", ind)
+					fmt.Fprintf(w, "\n")
 				} else {
-					fmt.Fprintf(w, "%s%d:(/%d)", ind, i1, j1)
+					fmt.Fprintf(w, "%s%s:(/%s)", ind, indices[i1], indices[j1])
 				}
 				if i2 == j2 {
-					fmt.Fprintf(w, "%s%d:", ind, i2)
+					fmt.Fprintf(w, "%s%s:", ind, indices[i2])
 					printDiff(n1.child2, n.child2, w, "  " + ind, key+indices[i2])
-					fmt.Fprintf(w, "%s\n", ind)
+					fmt.Fprintf(w, "\n")
 				} else {
-					fmt.Fprintf(w, "%s%d:(/%d)", ind, i2, j2)
+					fmt.Fprintf(w, "%s%s:(/%s)", ind, indices[i2], indices[j2])
 				}
 			} else {
-				fmt.Fprintf(w, "%s/%T", ind, n2)
+				fmt.Fprintf(w, "%s/%T\n", ind, n2)
+				printDiffSide(n1, w, ind, key)
 			}
 			fmt.Fprintf(w, "%s)\n", ind)
 		case *shortNode:
-			fmt.Fprintf(w, "%sshort(", ind)
+			fmt.Fprintf(w, "short(")
 			if n, ok := n2.(*shortNode); ok {
 				if bytes.Equal(n1.Key, n.Key) {
 					keyHex := compactToHex(n1.Key)
@@ -394,20 +436,22 @@ func printDiff(n1, n2 node, w io.Writer, ind string, key string) {
 					}
 					fmt.Fprintf(w, "%s:", string(hexV))
 					printDiff(n1.Val, n.Val, w, "  " + ind, key+string(hexV))
-					fmt.Fprintf(w, "%s\n", ind)
+					fmt.Fprintf(w, "\n")
 				} else {
 					fmt.Fprintf(w, "%x:(/%x)", compactToHex(n1.Key), compactToHex(n.Key))
 				}
 			} else {
-				fmt.Fprintf(w, "/%T", n2)
+				fmt.Fprintf(w, "/%T\n", n2)
+				printDiffSide(n1, w, ind, key)
 			}
 			fmt.Fprintf(w, "%s)\n", ind)
 		case hashNode:
-			fmt.Fprintf(w, "%shash(", ind)
+			fmt.Fprintf(w, "hash(")
 			if n, ok := n2.(hashNode); ok {
 				fmt.Fprintf(w, "%x/%x", []byte(n1), []byte(n))
 			} else {
-				fmt.Fprintf(w, "/%T", n2)
+				fmt.Fprintf(w, "/%T\n", n2)
+				printDiffSide(n2, w, ind, key)
 			}
 			fmt.Fprintf(w, ")")
 		}

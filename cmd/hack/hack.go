@@ -1237,9 +1237,9 @@ func main() {
  	//testRedis()
  	//upgradeBlocks()
  	//compareTries()
- 	invTree("root", "right", "diff", *block, false)
- 	invTree("iw", "ir", "id", *block, true)
- 	//loadAccount()
+ 	//invTree("root", "right", "diff", *block, false)
+ 	//invTree("iw", "ir", "id", *block, true)
+ 	loadAccount()
  	//preimage()
 }
 
