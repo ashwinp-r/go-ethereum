@@ -1083,6 +1083,27 @@ func loadAccount() {
 		panic(err)
 	}
 	fmt.Printf("%d keys updated\n", len(keys))
+	for _, k := range keys {
+		v, err := ethDb.GetAsOf(state.StorageBucket, state.StorageHistoryBucket, []byte(k), blockNr+1)
+		if err != nil {
+			fmt.Printf("for key %x err %v\n", k, err)
+		}
+		v_orig, err := ethDb.GetAsOf(state.StorageBucket, state.StorageHistoryBucket, []byte(k), blockNr)
+		if err != nil {
+			fmt.Printf("for key %x err %v\n", k, err)
+		}
+		key := ([]byte(k))[len(accountBytes):]
+		if len(v) > 0 {
+			fmt.Printf("Updated %x: %x from %x\n", key, v, v_orig)
+			err := t.TryUpdate(ethDb, key, v, blockNr)
+			check(err)
+		} else {
+			fmt.Printf("Deleted %x from %x\n", key, v_orig)
+			err := t.TryDelete(ethDb, key, blockNr)
+			check(err)
+		}		
+	}
+	fmt.Printf("Updated storage root: %x\n", t.Hash())
 	/*
 	maxBits := uint64(1) << uint(len(keys))
 	for bits := uint64(0); bits < maxBits; bits++ {
