@@ -415,6 +415,7 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 			if err := resolver.ResolveWithDb(tds.db, tds.blockNr); err != nil {
 				return common.Hash{}, err
 			}
+			resolver = nil
 		}
 		oldContinuations, newContinuations = newContinuations, []*trie.TrieContinuation{}
 		it++
@@ -475,6 +476,7 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 			if err := resolver.ResolveWithDb(tds.db, tds.blockNr); err != nil {
 				return common.Hash{}, err
 			}
+			resolver = nil
 		}
 		oldContinuations, newContinuations = newContinuations, []*trie.TrieContinuation{}
 		it++
