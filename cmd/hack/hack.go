@@ -110,6 +110,7 @@ func notables() []chart.GridLine {
 		{Value: 3.0},
 		{Value: 4.0},
 		{Value: 5.0},
+		{Value: 6.0},
 	}
 }
 
@@ -131,8 +132,8 @@ func days() []chart.GridLine {
 }
 
 func mychart() {
-	blocks, hours, dbsize, trienodes, heap := readData("geth1.csv")
-	blocks0, hours0, _, _, _ := readData("geth.csv")
+	blocks, hours, dbsize, trienodes, heap := readData("geth.csv")
+	//blocks0, hours0, _, _, _ := readData("geth.csv")
 	mainSeries := &chart.ContinuousSeries{
 		Name: "Cumulative sync time (SSD)",
 		Style: chart.Style{
@@ -143,6 +144,7 @@ func mychart() {
 		XValues: blocks,
 		YValues: hours,
 	}
+	/*
 	hddSeries := &chart.ContinuousSeries{
 		Name: "Cumulative sync time (HDD)",
 		Style: chart.Style{
@@ -153,6 +155,7 @@ func mychart() {
 		XValues: blocks0,
 		YValues: hours0,
 	}
+	*/
 	dbsizeSeries := &chart.ContinuousSeries{
 		Name: "Database size",
 		Style: chart.Style{
@@ -216,7 +219,7 @@ func mychart() {
 		},
 		Series: []chart.Series{
 			mainSeries,
-			hddSeries,
+			//hddSeries,
 			dbsizeSeries,
 		},
 	}
@@ -1222,6 +1225,31 @@ func loadAccount() {
 	*/
 }
 
+func printBranches(block uint64) {
+	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/testnet/geth/chaindata")
+	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
+	check(err)
+	defer ethDb.Close()
+	fmt.Printf("All headers at the same height %d\n", block)
+	{
+		var hashes []common.Hash
+		numberEnc := make([]byte, 8)
+		binary.BigEndian.PutUint64(numberEnc, block)
+		if err := ethDb.Walk([]byte("h"), numberEnc, 8*8, func(k, v []byte) (bool, error) {
+			if len(k) == 8 + 32 {
+				hashes = append(hashes, common.BytesToHash(k[8:]))
+			}
+			return true, nil
+		}); err != nil {
+			panic(err)
+		}
+		for _, hash := range hashes {
+			h := rawdb.ReadHeader(ethDb, hash, block)
+			fmt.Printf("block hash: %x, root hash: %x\n", h.Hash(), h.Root)
+		}
+	}
+}
+
 func main() {
 	flag.Parse()
     if *cpuprofile != "" {
@@ -1239,7 +1267,7 @@ func main() {
  	//check(err)
  	//defer db.Close()
  	//bucketStats(db)
- 	//mychart()
+ 	mychart()
  	//testRebuild()
  	//testRewind(*rewind)
  	//hashFile()
@@ -1262,7 +1290,8 @@ func main() {
  	//compareTries()
  	//invTree("root", "right", "diff", *block, false)
  	//invTree("iw", "ir", "id", *block, true)
- 	loadAccount()
+ 	//loadAccount()
  	//preimage()
+ 	//printBranches(uint64(*block))
 }
 

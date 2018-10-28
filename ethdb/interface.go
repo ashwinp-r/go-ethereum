@@ -54,7 +54,7 @@ type Database interface {
 	Getter
 	Putter
 	Deleter
-	MultiPut(tuples ...[]byte) error
+	MultiPut(tuples ...[]byte) (uint64, error)
 	RewindData(timestampSrc, timestampDst uint64, df func(bucket, key, value []byte) error) error
 	Close()
 	NewBatch() Mutation
@@ -64,7 +64,7 @@ type Database interface {
 // Extended version of the Batch, with read capabilites
 type Mutation interface {
 	Database
-	Commit() error
+	Commit() (uint64, error)
 	Rollback()
 	Keys() [][]byte
 	BatchSize() int

@@ -781,7 +781,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 
 		stats.processed++
 	}
-	if err := batch.Commit(); err != nil {
+	if _, err := batch.Commit(); err != nil {
 		return 0, err
 	}
 
@@ -1136,7 +1136,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		parentRoot := parent.Root()
 		if root != parentRoot {
 			log.Info("Rewinding", "to block", readBlockNr)
-			if err = bc.db.Commit(); err != nil {
+			if _, err = bc.db.Commit(); err != nil {
 				log.Error("Could not commit chainDb before rewinding", err)
 				bc.db.Rollback()
 				bc.trieDbState = nil
@@ -1165,7 +1165,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 				bc.trieDbState = nil
 				return 0, events, coalescedLogs, err
 			}
-			if err = bc.db.Commit(); err != nil {
+			if _, err = bc.db.Commit(); err != nil {
 				log.Error("Could not commit chainDb after rewinding", err)
 				bc.db.Rollback()
 				bc.trieDbState = nil
@@ -1222,14 +1222,15 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		stats.usedGas += usedGas
 		stats.report(chain, i, bc.db)
 		if commitStats.needToCommit(chain, bc.db, i) {
-			if err = bc.db.Commit(); err != nil {
+			var written uint64
+			if written, err = bc.db.Commit(); err != nil {
 				log.Error("Could not commit chainDb", err)
 				bc.db.Rollback()
 				bc.trieDbState = nil
 				return 0, events, coalescedLogs, err
 			}
 			bc.trieDbState.PruneTries()
-			log.Info("Database", "size", bc.db.Size())	
+			log.Info("Database", "size", bc.db.Size(), "written", written)
 		}
 	}
 	// Append a single chain head event if we've progressed the chain

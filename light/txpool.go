@@ -209,7 +209,7 @@ func (pool *TxPool) rollbackTxs(hash common.Hash, txc txStateChanges) {
 		}
 		delete(pool.mined, hash)
 	}
-	if err := batch.Commit(); err != nil {
+	if _, err := batch.Commit(); err != nil {
 		panic(err)
 	}
 }
@@ -517,7 +517,7 @@ func (self *TxPool) RemoveTransactions(txs types.Transactions) {
 		self.chainDb.Delete([]byte("LightTx"), hash.Bytes())
 		hashes = append(hashes, hash)
 	}
-	if err := batch.Commit(); err != nil {
+	if _, err := batch.Commit(); err != nil {
 		panic(err)
 	}
 	self.relay.Discard(hashes)

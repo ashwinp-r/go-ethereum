@@ -166,7 +166,7 @@ func (hc *HeaderChain) WriteHeader(header *types.Header) (status WriteStatus, er
 			}
 			rawdb.DeleteCanonicalHash(batch, i)
 		}
-		if err := batch.Commit(); err != nil {
+		if _, err := batch.Commit(); err != nil {
 			return NonStatTy, err
 		}
 
@@ -481,7 +481,7 @@ func (hc *HeaderChain) SetHead(head uint64, delFn DeleteCallback) {
 	for i := height; i > head; i-- {
 		rawdb.DeleteCanonicalHash(batch, i)
 	}
-	if err := batch.Commit(); err != nil {
+	if _, err := batch.Commit(); err != nil {
 		panic(err)
 	}
 

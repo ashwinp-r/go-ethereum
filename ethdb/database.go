@@ -176,7 +176,8 @@ func (db *LDBDatabase) PutS(hBucket, key, value []byte, timestamp uint64) error 
 	return err
 }
 
-func (db *LDBDatabase) MultiPut(tuples ...[]byte) error {
+func (db *LDBDatabase) MultiPut(tuples ...[]byte) (uint64, error) {
+	var savedTx *bolt.Tx
 	err := db.db.Update(func(tx *bolt.Tx) error {
 		for bucketStart := 0; bucketStart < len(tuples); {
 			bucketEnd := bucketStart
@@ -192,14 +193,18 @@ func (db *LDBDatabase) MultiPut(tuples ...[]byte) error {
 				pairs[2*i] = tuples[bucketStart+3*i+1]
 				pairs[2*i+1] = tuples[bucketStart+3*i+2]
 			}
-			if b.MultiPut(pairs...); err != nil {
+			if err := b.MultiPut(pairs...); err != nil {
 				return err
 			}
 			bucketStart = bucketEnd
 		}
+		savedTx = tx
 		return nil
 	})
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return uint64(savedTx.Stats().Write), nil
 }
 
 func (db *LDBDatabase) Has(bucket, key []byte) (bool, error) {
@@ -721,7 +726,7 @@ func (m *mutation) PutS(hBucket, key, value []byte, timestamp uint64) error {
 	return nil
 }
 
-func (m *mutation) MultiPut(tuples ...[]byte) error {
+func (m *mutation) MultiPut(tuples ...[]byte) (uint64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	l := len(tuples)
@@ -734,7 +739,7 @@ func (m *mutation) MultiPut(tuples ...[]byte) error {
 		}
 		t.ReplaceOrInsert(&PutItem{key: tuples[i+1], value: tuples[i+2]})
 	}
-	return nil
+	return 0, nil
 }
 
 func (m *mutation) BatchSize() int {
@@ -905,9 +910,9 @@ func (m *mutation) DeleteTimestamp(timestamp uint64) error {
 	return err
 }
 
-func (m *mutation) Commit() error {
+func (m *mutation) Commit() (uint64, error) {
 	if m.db == nil {
-		return nil
+		return 0, nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -928,7 +933,7 @@ func (m *mutation) Commit() error {
 			copy(suffixkey[len(suffix):], hBucket)
 			dat, err := m.getNoLock(SuffixBucket, suffixkey)
 			if err != nil && err != ErrKeyNotFound {
-				return err
+				return 0, err
 			}
 			var l int
 			if dat == nil {
@@ -972,15 +977,17 @@ func (m *mutation) Commit() error {
 			return true
 		})
 	}
-	if putErr := m.db.MultiPut(tuples...); putErr != nil {
-		return putErr
+	var written uint64
+	var putErr error
+	if written, putErr = m.db.MultiPut(tuples...); putErr != nil {
+		return 0, putErr
 	}
 	m.puts = make(map[string]*llrb.LLRB)
 	for index, h := range m.hashes {
 		m.db.PutHash(index, h.hash[:])
 	}
 	m.hashes = make(map[uint32]Hash)
-	return nil
+	return written, nil
 }
 
 func (m *mutation) Rollback() {
@@ -1068,7 +1075,7 @@ func (dt *table) PutS(hBucket, key, value []byte, timestamp uint64) error {
 	return dt.db.PutS(hBucket, append([]byte(dt.prefix), key...), value, timestamp)
 }
 
-func (dt *table) MultiPut(tuples ...[]byte) error {
+func (dt *table) MultiPut(tuples ...[]byte) (uint64, error) {
 	panic("Not supported")
 }
 
