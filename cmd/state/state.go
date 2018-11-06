@@ -308,11 +308,11 @@ func parseFloat64(str string) float64 {
 	return v
 }
 
-func readData(filename string) (blocks []float64, accounts []float64, err error) {
+func readData(filename string) (blocks []float64, items []float64, err error) {
 	err = util.File.ReadByLines(filename, func(line string) error {
 		parts := strings.Split(line, ",")
 		blocks = append(blocks, parseFloat64(strings.Trim(parts[0], " "))/1000000.0)
-		accounts = append(accounts, parseFloat64(strings.Trim(parts[1], " "))/1000000.0)
+		items = append(items, parseFloat64(strings.Trim(parts[1], " "))/1000000.0)
 		return nil
 	})
 	return
@@ -411,6 +411,86 @@ func stateGrowthChart1() {
     check(err)
 }
 
+func storageMillions() []chart.GridLine {
+	return []chart.GridLine{
+		{Value: 20.0},
+		{Value: 40.0},
+		{Value: 60.0},
+		{Value: 80.0},
+		{Value: 100.0},
+		{Value: 120.0},
+		{Value: 130.0},
+	}
+}
+
+func stateGrowthChart2() {
+	blocks, accounts, err := readData("storage_growth.csv")
+	check(err)
+	mainSeries := &chart.ContinuousSeries{
+		Name: "Number of contract storage items",
+		Style: chart.Style{
+			Show:        true,
+			StrokeColor: chart.ColorGreen,
+			FillColor:   chart.ColorGreen.WithAlpha(100),
+		},
+		XValues: blocks,
+		YValues: accounts,
+	}
+
+	graph1 := chart.Chart{
+		Width:  1280,
+		Height: 720,
+		Background: chart.Style{
+			Padding: chart.Box{
+				Top: 50,
+			},
+		},
+		YAxis: chart.YAxis{
+			Name:      "Storage items",
+			NameStyle: chart.StyleShow(),
+			Style:     chart.StyleShow(),
+			TickStyle: chart.Style{
+				TextRotationDegrees: 45.0,
+			},
+			ValueFormatter: func(v interface{}) string {
+				return fmt.Sprintf("%.3fm", v.(float64))
+			},
+			GridMajorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: chart.ColorBlue,
+				StrokeWidth: 1.0,
+			},
+			GridLines: accountMillions(),
+		},
+		XAxis: chart.XAxis{
+			Name: "Blocks, million",
+			Style: chart.Style{
+				Show: true,
+			},
+			ValueFormatter: func(v interface{}) string {
+				return fmt.Sprintf("%.3fm", v.(float64))
+			},
+			GridMajorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: chart.ColorAlternateGray,
+				StrokeWidth: 1.0,
+			},
+			GridLines: blockMillions(),
+		},
+		Series: []chart.Series{
+			mainSeries,
+		},
+	}
+
+	graph1.Elements = []chart.Renderable{chart.LegendThin(&graph1)}
+
+	buffer := bytes.NewBuffer([]byte{})
+	err = graph1.Render(chart.PNG, buffer)
+	check(err)
+	err = ioutil.WriteFile("storage_growth.png", buffer.Bytes(), 0644)
+    check(err)
+}
+
 
 func main() {
 	flag.Parse()
@@ -426,5 +506,6 @@ func main() {
 	}
 	//stateGrowth1()
 	//stateGrowthChart1()
-	stateGrowth2()
+	//stateGrowth2()
+	stateGrowthChart2()
 }
