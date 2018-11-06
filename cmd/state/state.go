@@ -559,7 +559,7 @@ func stateGrowthChart3() {
 		chart.ColorOrange,
 		chart.ColorYellow,
 		chart.ColorGreen,
-		chart.ColorCyan,
+		//chart.ColorCyan,
 		chart.ColorBlue,
 		drawing.Color{R: 255, G: 0, B: 255, A: 255},
 		chart.ColorBlack,
@@ -574,7 +574,7 @@ func stateGrowthChart3() {
 			seriesList = append(seriesList, &chart.ContinuousSeries{
 				Name: f.Name()[len("growth_"):len(f.Name())-len(".csv")],
 				Style: chart.Style{
-					StrokeWidth: float64(1+colorIdx/len(colors)),
+					StrokeWidth: float64(1+2*(colorIdx/len(colors))),
 					StrokeColor: colors[colorIdx%len(colors)],
 					Show:        true,
 				},
@@ -651,7 +651,7 @@ func main() {
 	}
 	//stateGrowth1()
 	//stateGrowthChart1()
-	stateGrowth2()
+	//stateGrowth2()
 	//stateGrowthChart2()
 	stateGrowthChart3()
 }
