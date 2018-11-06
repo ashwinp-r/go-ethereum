@@ -460,7 +460,7 @@ func stateGrowthChart2() {
 				StrokeColor: chart.ColorBlue,
 				StrokeWidth: 1.0,
 			},
-			GridLines: accountMillions(),
+			GridLines: storageMillions(),
 		},
 		XAxis: chart.XAxis{
 			Name: "Blocks, million",
