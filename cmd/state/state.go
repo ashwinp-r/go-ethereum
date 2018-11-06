@@ -206,12 +206,15 @@ func blockMillions() []chart.GridLine {
 
 func accountMillions() []chart.GridLine {
 	return []chart.GridLine{
-		{Value: 1.0},
-		{Value: 2.0},
-		{Value: 3.0},
-		{Value: 4.0},
 		{Value: 5.0},
-		{Value: 6.0},
+		{Value: 10.0},
+		{Value: 15.0},
+		{Value: 20.0},
+		{Value: 25.0},
+		{Value: 30.0},
+		{Value: 35.0},
+		{Value: 40.0},
+		{Value: 45.0},
 	}
 }
 
