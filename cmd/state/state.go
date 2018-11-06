@@ -419,7 +419,7 @@ func storageMillions() []chart.GridLine {
 		{Value: 80.0},
 		{Value: 100.0},
 		{Value: 120.0},
-		{Value: 130.0},
+		{Value: 140.0},
 	}
 }
 
