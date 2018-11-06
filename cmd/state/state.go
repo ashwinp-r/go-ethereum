@@ -1,24 +1,24 @@
 package main
 
 import (
-	//"bytes"
+	"bytes"
 	//"encoding/binary"
 	//"math/big"
 	"fmt"
-	//"strings"
-	//"strconv"
+	"strings"
+	"strconv"
 	"flag"
 	"log"
 	"os"
 	"runtime/pprof"
-	//"io/ioutil"
+	"io/ioutil"
 	"bufio"
 	"sort"
 	"time"
 
 	"github.com/boltdb/bolt"
-	//"github.com/wcharczuk/go-chart"
-	//util "github.com/wcharczuk/go-chart/util"
+	"github.com/wcharczuk/go-chart"
+	util "github.com/wcharczuk/go-chart/util"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -178,6 +178,112 @@ func stateGrowth1() {
 	}
 }
 
+func parseFloat64(str string) float64 {
+	v, _ := strconv.ParseFloat(str, 64)
+	return v
+}
+
+func readData(filename string) (blocks []float64, accounts []float64, err error) {
+	err = util.File.ReadByLines(filename, func(line string) error {
+		parts := strings.Split(line, ",")
+		blocks = append(blocks, parseFloat64(strings.Trim(parts[0], " "))/1000000.0)
+		accounts = append(accounts, parseFloat64(strings.Trim(parts[1], " "))/1000000.0)
+		return nil
+	})
+	return
+}
+
+func blockMillions() []chart.GridLine {
+	return []chart.GridLine{
+		{Value: 1.0},
+		{Value: 2.0},
+		{Value: 3.0},
+		{Value: 4.0},
+		{Value: 5.0},
+		{Value: 6.0},
+	}
+}
+
+func accountMillions() []chart.GridLine {
+	return []chart.GridLine{
+		{Value: 1.0},
+		{Value: 2.0},
+		{Value: 3.0},
+		{Value: 4.0},
+		{Value: 5.0},
+		{Value: 6.0},
+	}
+}
+
+func stateGrowthChart1() {
+	blocks, accounts, err := readData("accounts_growth.csv")
+	check(err)
+	mainSeries := &chart.ContinuousSeries{
+		Name: "Number of accounts (EOA and contracts)",
+		Style: chart.Style{
+			Show:        true,
+			StrokeColor: chart.ColorBlue,
+			FillColor:   chart.ColorBlue.WithAlpha(100),
+		},
+		XValues: blocks,
+		YValues: accounts,
+	}
+
+	graph1 := chart.Chart{
+		Width:  1280,
+		Height: 720,
+		Background: chart.Style{
+			Padding: chart.Box{
+				Top: 50,
+			},
+		},
+		YAxis: chart.YAxis{
+			Name:      "Accounts",
+			NameStyle: chart.StyleShow(),
+			Style:     chart.StyleShow(),
+			TickStyle: chart.Style{
+				TextRotationDegrees: 45.0,
+			},
+			ValueFormatter: func(v interface{}) string {
+				return fmt.Sprintf("%.3fm", v.(float64))
+			},
+			GridMajorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: chart.ColorBlue,
+				StrokeWidth: 1.0,
+			},
+			GridLines: accountMillions(),
+		},
+		XAxis: chart.XAxis{
+			Name: "Blocks, million",
+			Style: chart.Style{
+				Show: true,
+			},
+			ValueFormatter: func(v interface{}) string {
+				return fmt.Sprintf("%.3fm", v.(float64))
+			},
+			GridMajorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: chart.ColorAlternateGray,
+				StrokeWidth: 1.0,
+			},
+			GridLines: blockMillions(),
+		},
+		Series: []chart.Series{
+			mainSeries,
+		},
+	}
+
+	graph1.Elements = []chart.Renderable{chart.LegendThin(&graph1)}
+
+	buffer := bytes.NewBuffer([]byte{})
+	err = graph1.Render(chart.PNG, buffer)
+	check(err)
+	err = ioutil.WriteFile("accounts_growth.png", buffer.Bytes(), 0644)
+    check(err)
+}
+
+
 func main() {
 	flag.Parse()
 	if *cpuprofile != "" {
@@ -190,5 +296,6 @@ func main() {
 		}
 		defer pprof.StopCPUProfile()
 	}
-	stateGrowth1()
+	//stateGrowth1()
+	stateGrowthChart1()
 }
