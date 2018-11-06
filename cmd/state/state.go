@@ -123,7 +123,7 @@ func stateGrowth1() {
 			lastTimestamps[addrHash] = timestamp
 			count++
 			if count%100000 == 0 {
-				fmt.Printf("Processed %d records\n", count)
+				fmt.Printf("Processed %d account records\n", count)
 			}
 		}
 		return nil
@@ -141,8 +141,8 @@ func stateGrowth1() {
 			copy(addrHash[:], k[:32])
 			lastTimestamps[addrHash] = maxTimestamp
 			count++
-			if count%1000 == 0 {
-				fmt.Printf("Processed %d records\n", count)
+			if count%100000 == 0 {
+				fmt.Printf("Processed %d account records\n", count)
 			}
 		}
 		return nil
@@ -153,6 +153,7 @@ func stateGrowth1() {
 			creationsByBlock[lt]--
 		}
 	}
+
 	fmt.Printf("Processing took %s\n", time.Since(startTime))
 	fmt.Printf("Account history records: %d\n", count)
 	fmt.Printf("Creating dataset...\n")
@@ -177,6 +178,130 @@ func stateGrowth1() {
 		fmt.Fprintf(w, "%d, %d\n", tsi.timestamps[i], cumulative)
 	}
 }
+
+func stateGrowth2() {
+	startTime := time.Now()
+	//db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	//db, err := bolt.Open("/Volumes/tb4/turbo-geth/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	check(err)
+	defer db.Close()
+	var count int
+	var maxTimestamp uint64
+	// For each address hash, when was it last accounted
+	lastTimestamps := make(map[common.Address]map[common.Hash]uint64)
+	// For each timestamp, how many accounts were created in the state
+	creationsByBlock := make(map[common.Address]map[uint64]int)
+	var address common.Address
+	var hash common.Hash
+	// Go through the history of account first
+	err = db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(state.StorageHistoryBucket)
+		if b == nil {
+			return nil
+		}
+		c := b.Cursor()
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			// First 20 bytes is the address
+			copy(address[:], k[:20])
+			copy(hash[:], k[20:52])
+			timestamp, _ := decodeTimestamp(k[52:])
+			if timestamp+1 > maxTimestamp {
+				maxTimestamp = timestamp + 1
+			}
+			if len(v) == 0 {
+				c, ok := creationsByBlock[address]
+				if !ok {
+					c = make(map[uint64]int)
+					creationsByBlock[address] = c
+				}
+				c[timestamp]++
+				l, ok := lastTimestamps[address]
+				if !ok {
+					l = make(map[common.Hash]uint64)
+					lastTimestamps[address] = l
+				}
+				if lt, ok := l[hash]; ok {
+					c[lt]--
+				}
+			}
+			l, ok := lastTimestamps[address]
+			if !ok {
+				l = make(map[common.Hash]uint64)
+				lastTimestamps[address] = l
+			}
+			l[hash] = timestamp
+			count++
+			if count%100000 == 0 {
+				fmt.Printf("Processed %d storage records\n", count)
+			}
+		}
+		return nil
+	})
+	check(err)
+	// Go through the current state
+	err = db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(state.StorageBucket)
+		if b == nil {
+			return nil
+		}
+		c := b.Cursor()
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
+			copy(address[:], k[:20])
+			copy(hash[:], k[20:52])
+			l, ok := lastTimestamps[address]
+			if !ok {
+				l = make(map[common.Hash]uint64)
+				lastTimestamps[address] = l
+			}
+			l[hash] = maxTimestamp
+			count++
+			if count%100000 == 0 {
+				fmt.Printf("Processed %d storage records\n", count)
+			}
+		}
+		return nil
+	})
+	check(err)
+	for address, l := range lastTimestamps {
+		for _, lt := range l {
+			if lt < maxTimestamp {
+				creationsByBlock[address][lt]--
+			}
+		}
+	}
+
+	fmt.Printf("Processing took %s\n", time.Since(startTime))
+	fmt.Printf("Storage history records: %d\n", count)
+	fmt.Printf("Creating dataset...\n")
+	totalCreationsByBlock := make(map[uint64]int)
+	for _, c := range creationsByBlock {
+		for timestamp, count := range c {
+			totalCreationsByBlock[timestamp] += count
+		}
+	}
+	// Sort accounts by timestamp
+	tsi := NewTimeSorterInt(len(totalCreationsByBlock))
+	idx := 0
+	for timestamp, count := range totalCreationsByBlock {
+		tsi.timestamps[idx] = timestamp
+		tsi.values[idx] = count
+		idx++
+	}
+	sort.Sort(tsi)
+	fmt.Printf("Writing dataset...")
+	f, err := os.Create("storage_growth.csv")
+	check(err)
+	defer f.Close()
+	w := bufio.NewWriter(f)
+	defer w.Flush()
+	cumulative := 0
+	for i := 0; i < tsi.length; i++ {
+		cumulative += tsi.values[i]
+		fmt.Fprintf(w, "%d, %d\n", tsi.timestamps[i], cumulative)
+	}
+}
+
 
 func parseFloat64(str string) float64 {
 	v, _ := strconv.ParseFloat(str, 64)
@@ -300,5 +425,6 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 	//stateGrowth1()
-	stateGrowthChart1()
+	//stateGrowthChart1()
+	stateGrowth2()
 }
