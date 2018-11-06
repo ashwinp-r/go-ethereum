@@ -86,6 +86,33 @@ func (tsi TimeSorterInt) Swap(i, j int) {
 	tsi.values[i], tsi.values[j] = tsi.values[j], tsi.values[i]
 }
 
+type IntSorterAddr struct {
+	length int
+	ints   []int
+	values []common.Address
+}
+
+func NewIntSorterAddr(length int) IntSorterAddr {
+	return IntSorterAddr{
+		length: length,
+		ints: make([]int, length),
+		values: make([]common.Address, length),
+	}
+}
+
+func (isa IntSorterAddr) Len() int {
+	return isa.length
+}
+
+func (isa IntSorterAddr) Less(i, j int) bool {
+	return isa.ints[i] > isa.ints[j]
+}
+
+func (isa IntSorterAddr) Swap(i, j int) {
+	isa.ints[i], isa.ints[j] = isa.ints[j], isa.ints[i]
+	isa.values[i], isa.values[j] = isa.values[j], isa.values[i]
+}
+
 func stateGrowth1() {
 	startTime := time.Now()
 	//db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
@@ -275,21 +302,29 @@ func stateGrowth2() {
 	fmt.Printf("Storage history records: %d\n", count)
 	fmt.Printf("Creating dataset...\n")
 	totalCreationsByBlock := make(map[uint64]int)
-	for _, c := range creationsByBlock {
+	isa := NewIntSorterAddr(len(creationsByBlock))
+	idx := 0
+	for addr, c := range creationsByBlock {
+		cumulative := 0
 		for timestamp, count := range c {
 			totalCreationsByBlock[timestamp] += count
+			cumulative += count
 		}
+		isa.ints[idx] = cumulative
+		isa.values[idx] = addr
+		idx++
 	}
+	sort.Sort(isa)
 	// Sort accounts by timestamp
 	tsi := NewTimeSorterInt(len(totalCreationsByBlock))
-	idx := 0
+	idx = 0
 	for timestamp, count := range totalCreationsByBlock {
 		tsi.timestamps[idx] = timestamp
 		tsi.values[idx] = count
 		idx++
 	}
 	sort.Sort(tsi)
-	fmt.Printf("Writing dataset...")
+	fmt.Printf("Writing dataset...\n")
 	f, err := os.Create("storage_growth.csv")
 	check(err)
 	defer f.Close()
@@ -300,8 +335,30 @@ func stateGrowth2() {
 		cumulative += tsi.values[i]
 		fmt.Fprintf(w, "%d, %d\n", tsi.timestamps[i], cumulative)
 	}
+	// Top 16 contracts
+	for i := 0; i < 16 && i < isa.length; i++ {
+		addr := isa.values[i]
+		tsi := NewTimeSorterInt(len(creationsByBlock[addr]))
+		idx := 0
+		for timestamp, count := range creationsByBlock[addr] {
+			tsi.timestamps[idx] = timestamp
+			tsi.values[idx] = count
+			idx++
+		}
+		sort.Sort(tsi)
+		fmt.Printf("Writing dataset for contract %x...\n", addr[:])
+		f, err := os.Create(fmt.Sprintf("growth_%x.csv", addr[:]))
+		check(err)
+		defer f.Close()
+		w := bufio.NewWriter(f)
+		defer w.Flush()
+		cumulative := 0
+		for i := 0; i < tsi.length; i++ {
+			cumulative += tsi.values[i]
+			fmt.Fprintf(w, "%d, %d\n", tsi.timestamps[i], cumulative)
+		}
+	}
 }
-
 
 func parseFloat64(str string) float64 {
 	v, _ := strconv.ParseFloat(str, 64)
@@ -506,6 +563,6 @@ func main() {
 	}
 	//stateGrowth1()
 	//stateGrowthChart1()
-	//stateGrowth2()
-	stateGrowthChart2()
+	stateGrowth2()
+	//stateGrowthChart2()
 }
