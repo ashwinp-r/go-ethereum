@@ -19,6 +19,7 @@ import (
 	"github.com/boltdb/bolt"
 	"github.com/wcharczuk/go-chart"
 	util "github.com/wcharczuk/go-chart/util"
+	"github.com/wcharczuk/go-chart/drawing"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -548,6 +549,93 @@ func stateGrowthChart2() {
     check(err)
 }
 
+func stateGrowthChart3() {
+	files, err := ioutil.ReadDir("./")
+	if err != nil {
+		panic(err)
+	}
+	colors := []drawing.Color{
+		chart.ColorRed,
+		chart.ColorOrange,
+		chart.ColorYellow,
+		chart.ColorGreen,
+		chart.ColorCyan,
+		chart.ColorBlue,
+		drawing.Color{R: 255, G: 0, B: 255, A: 255},
+		chart.ColorBlack,
+		drawing.Color{R: 165, G: 42, B: 42, A: 255},
+	}
+	seriesList := []chart.Series{}
+	colorIdx := 0
+	for _, f := range files {
+		if !f.IsDir() && strings.HasPrefix(f.Name(), "growth_") && strings.HasSuffix(f.Name(), ".csv") {
+			blocks, items, err := readData(f.Name())
+			check(err)
+			seriesList = append(seriesList, &chart.ContinuousSeries{
+				Name: f.Name()[len("growth_"):len(f.Name())-len(".csv")],
+				Style: chart.Style{
+					StrokeWidth: float64(1+colorIdx/len(colors)),
+					StrokeColor: colors[colorIdx%len(colors)],
+					Show:        true,
+				},
+				XValues: blocks,
+				YValues: items,
+			})
+			colorIdx++
+		}
+	}	
+	graph1 := chart.Chart{
+		Width:  1280,
+		Height: 720,
+		Background: chart.Style{
+			Padding: chart.Box{
+				Top: 50,
+			},
+		},
+		YAxis: chart.YAxis{
+			Name:      "Storage items",
+			NameStyle: chart.StyleShow(),
+			Style:     chart.StyleShow(),
+			TickStyle: chart.Style{
+				TextRotationDegrees: 45.0,
+			},
+			ValueFormatter: func(v interface{}) string {
+				return fmt.Sprintf("%.3fm", v.(float64))
+			},
+			GridMajorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: chart.ColorBlue,
+				StrokeWidth: 1.0,
+			},
+			GridLines: storageMillions(),
+		},
+		XAxis: chart.XAxis{
+			Name: "Blocks, million",
+			Style: chart.Style{
+				Show: true,
+			},
+			ValueFormatter: func(v interface{}) string {
+				return fmt.Sprintf("%.3fm", v.(float64))
+			},
+			GridMajorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: chart.ColorAlternateGray,
+				StrokeWidth: 1.0,
+			},
+			GridLines: blockMillions(),
+		},
+		Series: seriesList,
+	}
+
+	graph1.Elements = []chart.Renderable{chart.LegendLeft(&graph1)}
+
+	buffer := bytes.NewBuffer([]byte{})
+	err = graph1.Render(chart.PNG, buffer)
+	check(err)
+	err = ioutil.WriteFile("top_16_contracts.png", buffer.Bytes(), 0644)
+    check(err)
+}
+
 
 func main() {
 	flag.Parse()
@@ -565,4 +653,5 @@ func main() {
 	//stateGrowthChart1()
 	stateGrowth2()
 	//stateGrowthChart2()
+	stateGrowthChart3()
 }
