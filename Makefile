@@ -36,6 +36,11 @@ rpctest:
 	@echo "Done building."
 	@echo "Run \"$(GOBIN)/rpctest\" to launch rpctest."
 
+state:
+	build/env.sh go run build/ci.go install ./cmd/state
+	@echo "Done building."
+	@echo "Run \"$(GOBIN)/state\" to launch state."
+
 all:
 	build/env.sh go run build/ci.go install
 

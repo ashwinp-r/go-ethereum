@@ -1267,7 +1267,7 @@ func main() {
  	//check(err)
  	//defer db.Close()
  	//bucketStats(db)
- 	mychart()
+ 	//mychart()
  	//testRebuild()
  	//testRewind(*rewind)
  	//hashFile()
