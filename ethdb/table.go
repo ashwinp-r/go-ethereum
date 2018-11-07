@@ -67,8 +67,8 @@ func (dt *table) WalkAsOf(bucket, hBucket, startkey []byte, fixedbits uint, time
 	panic("Not implemented")
 }
 
-func (dt *table) MultiWalkAsOf(hBucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
-	return dt.db.MultiWalkAsOf(hBucket, startkeys, fixedbits, timestamp, walker)
+func (dt *table) MultiWalkAsOf(bucket, hBucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
+	return dt.db.MultiWalkAsOf(bucket, hBucket, startkeys, fixedbits, timestamp, walker)
 }
 
 func (dt *table) RewindData(timestampSrc, timestampDst uint64, df func(bucket, key, value []byte) error) error {

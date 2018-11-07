@@ -616,13 +616,13 @@ func (tr *TrieResolver) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
 	var err error
 	if tr.accounts {
 		if tr.historical {
-			err = db.MultiWalkAsOf([]byte("hAT"), startkeys, fixedbits, blockNr, tr.Walker)
+			err = db.MultiWalkAsOf([]byte("AT"), []byte("hAT"), startkeys, fixedbits, blockNr+1, tr.Walker)
 		} else {
 			err = db.MultiWalk([]byte("AT"), startkeys, fixedbits, tr.Walker)
 		}
 	} else {
 		if tr.historical {
-			err = db.MultiWalkAsOf([]byte("hST"), startkeys, fixedbits, blockNr, tr.Walker)
+			err = db.MultiWalkAsOf([]byte("ST"), []byte("hST"), startkeys, fixedbits, blockNr+1, tr.Walker)
 		} else {
 			err = db.MultiWalk([]byte("ST"), startkeys, fixedbits, tr.Walker)
 		}

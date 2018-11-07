@@ -363,10 +363,10 @@ func (db *LDBDatabase) MultiWalk(bucket []byte, startkeys [][]byte, fixedbits []
 						}
 						fixedbytes, mask = bytesmask(fixedbits[keyIdx])
 						startkey = startkeys[keyIdx]
-						k, v = c.SeekTo(startkey)
-						if k == nil {
-							return nil
-						}
+						//k, v = c.SeekTo(startkey)
+						//if k == nil {
+						//	return nil
+						//}
 					}
 				}
 			}
@@ -465,8 +465,144 @@ func (db *LDBDatabase) WalkAsOf(bucket, hBucket, startkey []byte, fixedbits uint
 	return err
 }
 
-func (db *LDBDatabase) MultiWalkAsOf(hBucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
-	panic("Not implemented")
+func (db *LDBDatabase) MultiWalkAsOf(bucket, hBucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
+	if len(startkeys) == 0 {
+		return nil
+	}
+	keyIdx := 0 // What is the current key we are extracting
+	fixedbytes, mask := bytesmask(fixedbits[keyIdx])
+	startkey := startkeys[keyIdx]
+	suffix := encodeTimestamp(timestamp)
+	l := len(startkey)
+	sl := l + len(suffix)
+	keyBuffer := make([]byte, l+len(EndSuffix))
+	if err := db.db.View(func (tx *bolt.Tx) error {
+		b := tx.Bucket(bucket)
+		if b == nil {
+			return nil
+		}
+		hB := tx.Bucket(hBucket)
+		if hB == nil {
+			return nil
+		}
+		c := b.Cursor()
+		hC := hB.Cursor()
+		k, v := c.Seek(startkey)
+		hK, hV := hC.Seek(startkey)
+		goOn := true
+		var err error
+		for goOn { // k != nil
+			kFit := k != nil
+			hKFit := hK != nil
+			if fixedbytes > 0 {
+				cmp := 1
+				hCmp := 1
+				kDone := k == nil
+				hDone := hK == nil
+				for !kDone || !hDone {
+					if k != nil {
+						cmp = bytes.Compare(k[:fixedbytes-1], startkey[:fixedbytes-1])
+						if cmp == 0 {
+							k1 := k[fixedbytes-1]&mask
+							k2 := startkey[fixedbytes-1]&mask
+							if k1 < k2 {
+								cmp = -1
+							} else if k1 > k2 {
+								cmp = 1
+							}
+						}
+						if cmp == 0 {
+							kDone = true
+						} else if cmp < 0 {
+							k, v = c.SeekTo(startkey)
+							if k == nil {
+								cmp = 1
+								kDone = true
+							}
+						}
+					}
+					if hK != nil {
+						hCmp = bytes.Compare(hK[:fixedbytes-1], startkey[:fixedbytes-1])
+						if hCmp == 0 {
+							k1 := hK[fixedbytes-1]&mask
+							k2 := startkey[fixedbytes-1]&mask
+							if k1 < k2 {
+								cmp = -1
+							} else if k1 > k2 {
+								cmp = 1
+							}
+						}
+						if hCmp == 0 {
+							hDone = true
+						} else if hCmp < 0 {
+							hK, hV = c.SeekTo(startkey)
+							if hK == nil {
+								hCmp = 1
+								hDone = true
+							}
+						}
+					}
+					if (!kDone || !hDone) && cmp > 0 && hCmp > 0 {
+						keyIdx++
+						if _, err := walker(keyIdx, nil, nil); err != nil {
+							return err
+						}
+						if keyIdx == len(startkeys) {
+							return nil
+						}
+						fixedbytes, mask = bytesmask(fixedbits[keyIdx])
+						startkey = startkeys[keyIdx]
+					}
+				}
+				kFit = cmp == 0
+				hKFit = hCmp == 0
+			}
+			if hKFit && bytes.Compare(hK[l:], suffix) < 0 {
+				copy(keyBuffer, hK[:l])
+				copy(keyBuffer[l:], suffix)
+				hK, hV = hC.Seek(keyBuffer[:sl])
+				continue
+			}
+			var cmp int
+			if !kFit {
+				if !hKFit {
+					goOn = false
+					break
+				} else {
+					cmp = 1
+				}
+			} else if !hKFit {
+				cmp = -1
+			} else {
+				cmp = bytes.Compare(k, hK[:l])
+			}
+			if cmp < 0 {
+				goOn, err = walker(keyIdx, k, v)
+			} else {
+				goOn, err = walker(keyIdx, hK[:l], hV)
+			}
+			if goOn {
+				if cmp <= 0 {
+					k, v = c.Next()
+				}
+				if cmp >= 0 {
+					copy(keyBuffer, hK[:l])
+					copy(keyBuffer[l:], EndSuffix)
+					hK, hV = hC.SeekTo(keyBuffer)
+				}
+			}
+		}
+		return err
+	}); err != nil {
+		return err
+	}
+	for keyIdx < len(startkeys) {
+		keyIdx++
+		if _, err := walker(keyIdx, nil, nil); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (db *LDBDatabase) RewindData(timestampSrc, timestampDst uint64, df func(hBucket, key, value []byte) error) error {
@@ -849,8 +985,12 @@ func (m *mutation) WalkAsOf(bucket, hBucket, startkey []byte, fixedbits uint, ti
 	}
 }
 
-func (m *mutation) MultiWalkAsOf(hBucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
-	panic("Not implemented")
+func (m *mutation) MultiWalkAsOf(bucket, hBucket []byte, startkeys [][]byte, fixedbits []uint, timestamp uint64, walker func(int, []byte, []byte) (bool, error)) error {
+	if m.db == nil {
+		panic("Not implemented")
+	} else {
+		return m.db.MultiWalkAsOf(bucket, hBucket, startkeys, fixedbits, timestamp, walker)
+	}
 }
 
 func (m *mutation) RewindData(timestampSrc, timestampDst uint64, df func(hBucket, key, value []byte) error) error {

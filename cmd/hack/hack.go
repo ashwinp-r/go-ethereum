@@ -677,11 +677,11 @@ func trieChart() {
 }
 
 func testRewind(blocks int) {
-	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
-	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
+	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/testnet/geth/chaindata")
+	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
 	check(err)
 	defer ethDb.Close()
-	bc, err := core.NewBlockChain(ethDb, nil, params.MainnetChainConfig, ethash.NewFaker(), vm.Config{}, nil)
+	bc, err := core.NewBlockChain(ethDb, nil, params.TestnetChainConfig, ethash.NewFaker(), vm.Config{}, nil)
 	check(err)
 	currentBlock := bc.CurrentBlock()
 	currentBlockNr := currentBlock.NumberU64()
@@ -748,6 +748,26 @@ func testRewind(blocks int) {
 	rewoundRoot, err := tds.TrieRoot()
 	check(err)
 	fmt.Printf("Calculated rewound root hash: %x\n", rewoundRoot)
+	/*
+	filename := fmt.Sprintf("root_%d.txt", rewoundBlock.NumberU64())
+	fmt.Printf("Generating deep snapshot of the wront tries... %s\n", filename)
+	f, err := os.Create(filename)
+	if err == nil {
+		defer f.Close()
+		tds.PrintTrie(f)
+	}
+	*/
+	{
+		tds, err = state.NewTrieDbState(rewoundBlock.Root(), db, rewoundBlock.NumberU64())
+		tds.SetHistorical(true)
+		check(err)
+		startTime := time.Now()
+		tds.Rebuild()
+		fmt.Printf("Rebuld done in %v\n", time.Since(startTime))
+		rebuiltRoot, err := tds.TrieRoot()
+		fmt.Printf("Rebuilt root: %x\n", rebuiltRoot)
+		check(err)
+	}
 }
 
 func testStartup() {
@@ -1269,7 +1289,7 @@ func main() {
  	//bucketStats(db)
  	//mychart()
  	//testRebuild()
- 	//testRewind(*rewind)
+ 	testRewind(*rewind)
  	//hashFile()
  	//buildHashFromFile()
  	//testResolve()
