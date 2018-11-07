@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	//"encoding/binary"
-	//"math/big"
+	"math/big"
 	"fmt"
 	"strings"
 	"strconv"
@@ -15,6 +15,9 @@ import (
 	"bufio"
 	"sort"
 	"time"
+	"syscall"
+	"os/signal"
+	"io"
 
 	"github.com/boltdb/bolt"
 	"github.com/wcharczuk/go-chart"
@@ -23,14 +26,14 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
-	//"github.com/ethereum/go-ethereum/consensus/ethash"
-	//"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/core"
 	//"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
-	//"github.com/ethereum/go-ethereum/core/types"
-	//"github.com/ethereum/go-ethereum/core/vm"
-	//"github.com/ethereum/go-ethereum/ethdb"
-	//"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/params"
 	//"github.com/ethereum/go-ethereum/trie"
 	//"github.com/ethereum/go-ethereum/rlp"
 )
@@ -636,6 +639,89 @@ func stateGrowthChart3() {
     check(err)
 }
 
+type CreationTracer struct {
+	w io.Writer
+}
+
+func NewCreationTracer(w io.Writer) CreationTracer {
+	return CreationTracer{w: w}
+}
+
+func (ct CreationTracer) CaptureStart(from common.Address, to common.Address, call bool, input []byte, gas uint64, value *big.Int) error {
+	return nil
+}
+func (ct CreationTracer) CaptureState(env *vm.EVM, pc uint64, op vm.OpCode, gas, cost uint64, memory *vm.Memory, stack *vm.Stack, contract *vm.Contract, depth int, err error) error {
+	return nil
+}
+func (ct CreationTracer) CaptureFault(env *vm.EVM, pc uint64, op vm.OpCode, gas, cost uint64, memory *vm.Memory, stack *vm.Stack, contract *vm.Contract, depth int, err error) error {
+	return nil
+}
+func (ct CreationTracer) CaptureEnd(output []byte, gasUsed uint64, t time.Duration, err error) error {
+	return nil
+}
+func (ct CreationTracer) CaptureCreate(creator common.Address, creation common.Address) error {
+	_, err := fmt.Fprintf(ct.w, "%x,%x\n", creation, creator)
+	return err
+}
+
+func creators() {
+	sigs := make(chan os.Signal, 1)
+	interruptCh := make(chan bool, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigs
+		interruptCh <- true
+	}()
+
+	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
+	ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/geth/chaindata")
+	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
+	check(err)
+	defer ethDb.Close()
+	f, err := os.OpenFile("creators.csv", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+	check(err)
+	defer f.Close()
+	w := bufio.NewWriter(f)
+	defer w.Flush()
+	ct := NewCreationTracer(w)
+	chainConfig := params.MainnetChainConfig
+	vmConfig := vm.Config{Tracer: ct, Debug: true}
+	bc, err := core.NewBlockChain(ethDb, nil, chainConfig, ethash.NewFaker(), vmConfig, nil)
+	check(err)
+	blockNum := uint64(*block)
+	interrupt := false
+	for !interrupt {
+		block := bc.GetBlockByNumber(blockNum)
+		if block == nil {
+			break
+		}
+		dbstate := state.NewDbState(ethDb, block.NumberU64()-1)
+		statedb := state.New(dbstate)
+		signer := types.MakeSigner(chainConfig, block.Number())
+		for _, tx := range block.Transactions() {
+			// Assemble the transaction call message and return if the requested offset
+			msg, _ := tx.AsMessage(signer)
+			context := core.NewEVMContext(msg, block.Header(), bc, nil)
+			// Not yet the searched for transaction, execute on top of the current state
+			vmenv := vm.NewEVM(context, statedb, chainConfig, vmConfig)
+			if _, _, _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(tx.Gas())); err != nil {
+				panic(fmt.Errorf("tx %x failed: %v", tx.Hash(), err))
+			}
+		}
+		blockNum++
+		if blockNum % 1000 == 0 {
+			fmt.Printf("Processed %d blocks\n", blockNum)
+		}
+		// Check for interrupts
+		select {
+		case interrupt = <-interruptCh:
+			fmt.Println("interrupted, please wait for cleanup...")
+		default:
+		}
+	}
+	fmt.Printf("Next time specify -block %d\n", blockNum)
+}
 
 func main() {
 	flag.Parse()
@@ -651,7 +737,8 @@ func main() {
 	}
 	//stateGrowth1()
 	//stateGrowthChart1()
-	stateGrowth2()
+	//stateGrowth2()
 	//stateGrowthChart2()
-	stateGrowthChart3()
+	//stateGrowthChart3()
+	creators()
 }

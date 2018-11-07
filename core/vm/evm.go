@@ -209,6 +209,9 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 			}
 			return nil, gas, nil
 		}
+		if evm.vmConfig.Debug {
+			evm.vmConfig.Tracer.CaptureCreate(caller.Address(), addr)
+		}
 		evm.StateDB.CreateAccount(addr, false)
 	}
 	evm.Transfer(evm.StateDB, caller.Address(), to.Address(), value)
@@ -433,6 +436,9 @@ func (evm *EVM) create(caller ContractRef, code []byte, gas uint64, value *big.I
 // Create creates a new contract using code as deployment code.
 func (evm *EVM) Create(caller ContractRef, code []byte, gas uint64, value *big.Int) (ret []byte, contractAddr common.Address, leftOverGas uint64, err error) {
 	contractAddr = crypto.CreateAddress(caller.Address(), evm.StateDB.GetNonce(caller.Address()))
+	if evm.vmConfig.Debug {
+		evm.vmConfig.Tracer.CaptureCreate(caller.Address(), contractAddr)
+	}
 	return evm.create(caller, code, gas, value, contractAddr)
 }
 
