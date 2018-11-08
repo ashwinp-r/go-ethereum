@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"os/signal"
 	"io"
+	"encoding/csv"
 
 	"github.com/boltdb/bolt"
 	"github.com/wcharczuk/go-chart"
@@ -217,12 +218,22 @@ func stateGrowth2() {
 	db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
 	check(err)
 	defer db.Close()
+	creatorsFile, err := os.Open("creators.csv")
+	check(err)
+	defer creatorsFile.Close()
+	creatorsReader := csv.NewReader(bufio.NewReader(creatorsFile))
+	creators := make(map[common.Address]common.Address)
+	for records, _ := creatorsReader.Read(); records != nil; records, _ = creatorsReader.Read() {
+		creators[common.HexToAddress(records[0])] = common.HexToAddress(records[1])
+	}
 	var count int
 	var maxTimestamp uint64
 	// For each address hash, when was it last accounted
 	lastTimestamps := make(map[common.Address]map[common.Hash]uint64)
-	// For each timestamp, how many accounts were created in the state
+	// For each timestamp, how many storage items were created
 	creationsByBlock := make(map[common.Address]map[uint64]int)
+	// For each timestamp, how many accounts or storage items were created by the creator
+	creatorsByBlock := make(map[common.Address]map[uint64]int)
 	var address common.Address
 	var hash common.Hash
 	// Go through the history of account first
@@ -237,6 +248,7 @@ func stateGrowth2() {
 			copy(address[:], k[:20])
 			copy(hash[:], k[20:52])
 			timestamp, _ := decodeTimestamp(k[52:])
+			creator := creators[address]
 			if timestamp+1 > maxTimestamp {
 				maxTimestamp = timestamp + 1
 			}
@@ -247,6 +259,12 @@ func stateGrowth2() {
 					creationsByBlock[address] = c
 				}
 				c[timestamp]++
+				cr, ok := creatorsByBlock[creator]
+				if !ok {
+					cr = make(map[uint64]int)
+					creatorsByBlock[creator] = cr
+				}
+				cr[timestamp]++
 				l, ok := lastTimestamps[address]
 				if !ok {
 					l = make(map[common.Hash]uint64)
@@ -254,6 +272,7 @@ func stateGrowth2() {
 				}
 				if lt, ok := l[hash]; ok {
 					c[lt]--
+					cr[lt]--
 				}
 			}
 			l, ok := lastTimestamps[address]
@@ -298,6 +317,7 @@ func stateGrowth2() {
 		for _, lt := range l {
 			if lt < maxTimestamp {
 				creationsByBlock[address][lt]--
+				creatorsByBlock[creators[address]][lt]--
 			}
 		}
 	}
@@ -352,6 +372,41 @@ func stateGrowth2() {
 		sort.Sort(tsi)
 		fmt.Printf("Writing dataset for contract %x...\n", addr[:])
 		f, err := os.Create(fmt.Sprintf("growth_%x.csv", addr[:]))
+		check(err)
+		defer f.Close()
+		w := bufio.NewWriter(f)
+		defer w.Flush()
+		cumulative := 0
+		for i := 0; i < tsi.length; i++ {
+			cumulative += tsi.values[i]
+			fmt.Fprintf(w, "%d, %d\n", tsi.timestamps[i], cumulative)
+		}
+	}
+	cisa := NewIntSorterAddr(len(creatorsByBlock))
+	idx = 0
+	for creator, cr := range creatorsByBlock {
+		cumulative := 0
+		for _, count := range cr {
+			cumulative += count
+		}
+		cisa.ints[idx] = cumulative
+		cisa.values[idx] = creator
+		idx++
+	}
+	sort.Sort(cisa)
+	// Top 16 creators
+	for i := 0; i < 16 && i < cisa.length; i++ {
+		creator := cisa.values[i]
+		tsi := NewTimeSorterInt(len(creatorsByBlock[creator]))
+		idx := 0
+		for timestamp, count := range creatorsByBlock[creator] {
+			tsi.timestamps[idx] = timestamp
+			tsi.values[idx] = count
+			idx++
+		}
+		sort.Sort(tsi)
+		fmt.Printf("Writing dataset for creator %x...\n", creator[:])
+		f, err := os.Create(fmt.Sprintf("creator_%x.csv", creator[:]))
 		check(err)
 		defer f.Close()
 		w := bufio.NewWriter(f)
@@ -736,8 +791,8 @@ func main() {
 	}
 	//stateGrowth1()
 	//stateGrowthChart1()
-	//stateGrowth2()
+	stateGrowth2()
 	//stateGrowthChart2()
 	//stateGrowthChart3()
-	creators()
+	//creators()
 }

@@ -428,7 +428,7 @@ func (db *LDBDatabase) WalkAsOf(bucket, hBucket, startkey []byte, fixedbits uint
 			if hK != nil && bytes.Compare(hK[l:], suffix) < 0 {
 				copy(keyBuffer, hK[:l])
 				copy(keyBuffer[l:], suffix)
-				hK, hV = hC.Seek(keyBuffer[:sl])
+				hK, hV = hC.SeekTo(keyBuffer[:sl])
 				continue
 			}
 			var cmp int
@@ -497,9 +497,7 @@ func (db *LDBDatabase) MultiWalkAsOf(bucket, hBucket []byte, startkeys [][]byte,
 			if fixedbytes > 0 {
 				cmp := 1
 				hCmp := 1
-				kDone := k == nil
-				hDone := hK == nil
-				for !kDone || !hDone {
+				for cmp != 0 && hCmp != 0 {
 					if k != nil {
 						cmp = bytes.Compare(k[:fixedbytes-1], startkey[:fixedbytes-1])
 						if cmp == 0 {
@@ -511,13 +509,10 @@ func (db *LDBDatabase) MultiWalkAsOf(bucket, hBucket []byte, startkeys [][]byte,
 								cmp = 1
 							}
 						}
-						if cmp == 0 {
-							kDone = true
-						} else if cmp < 0 {
+						if cmp < 0 {
 							k, v = c.SeekTo(startkey)
 							if k == nil {
 								cmp = 1
-								kDone = true
 							}
 						}
 					}
@@ -527,22 +522,19 @@ func (db *LDBDatabase) MultiWalkAsOf(bucket, hBucket []byte, startkeys [][]byte,
 							k1 := hK[fixedbytes-1]&mask
 							k2 := startkey[fixedbytes-1]&mask
 							if k1 < k2 {
-								cmp = -1
+								hCmp = -1
 							} else if k1 > k2 {
-								cmp = 1
+								hCmp = 1
 							}
 						}
-						if hCmp == 0 {
-							hDone = true
-						} else if hCmp < 0 {
-							hK, hV = c.SeekTo(startkey)
+						if hCmp < 0 {
+							hK, hV = hC.SeekTo(startkey)
 							if hK == nil {
 								hCmp = 1
-								hDone = true
 							}
 						}
 					}
-					if (!kDone || !hDone) && cmp > 0 && hCmp > 0 {
+					if cmp > 0 && hCmp > 0 {
 						keyIdx++
 						if _, err := walker(keyIdx, nil, nil); err != nil {
 							return err
@@ -560,7 +552,7 @@ func (db *LDBDatabase) MultiWalkAsOf(bucket, hBucket []byte, startkeys [][]byte,
 			if hKFit && bytes.Compare(hK[l:], suffix) < 0 {
 				copy(keyBuffer, hK[:l])
 				copy(keyBuffer[l:], suffix)
-				hK, hV = hC.Seek(keyBuffer[:sl])
+				hK, hV = hC.SeekTo(keyBuffer[:sl])
 				continue
 			}
 			var cmp int

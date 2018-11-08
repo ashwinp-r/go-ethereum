@@ -602,9 +602,9 @@ func (tr *TrieResolver) Walker(keyIdx int, k []byte, v []byte) (bool, error) {
 				tr.value = common.CopyBytes(v)
 			}
 		} else {
-				tr.value = common.CopyBytes(v)
+			tr.value = common.CopyBytes(v)
 		}
-		 tr.key_set = true
+		tr.key_set = true
 	}
 	return true, nil
 }
