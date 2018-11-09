@@ -215,7 +215,13 @@ func stateGrowth1() {
 	for address, lt := range lastTimestamps {
 		if lt < maxTimestamp {
 			creationsByBlock[lt]--
-			creatorsByBlock[creators[address]][lt]--
+			creator := creators[address]
+			cr, ok := creatorsByBlock[creator]
+			if !ok {
+				cr = make(map[uint64]int)
+				creatorsByBlock[creator] = cr
+			}
+			cr[lt]--
 		}
 	}
 
@@ -255,7 +261,7 @@ func stateGrowth1() {
 	}
 	sort.Sort(cisa)
 	// Top 16 account creators
-	for i := 0; i < 16 && i < cisa.length; i++ {
+	for i := 0; i < 20 && i < cisa.length; i++ {
 		creator := cisa.values[i]
 		tsi := NewTimeSorterInt(len(creatorsByBlock[creator]))
 		idx := 0
@@ -385,7 +391,13 @@ func stateGrowth2() {
 		for _, lt := range l {
 			if lt < maxTimestamp {
 				creationsByBlock[address][lt]--
-				creatorsByBlock[creators[address]][lt]--
+				creator := creators[address]
+				cr, ok := creatorsByBlock[creator]
+				if !ok {
+					cr = make(map[uint64]int)
+					creatorsByBlock[creator] = cr
+				}
+				cr[lt]--
 			}
 		}
 	}
@@ -806,7 +818,7 @@ func stateGrowthChart4() {
 			})
 			colorIdx++
 		}
-	}	
+	}
 	graph1 := chart.Chart{
 		Width:  1280,
 		Height: 720,
@@ -856,6 +868,104 @@ func stateGrowthChart4() {
 	err = graph1.Render(chart.PNG, buffer)
 	check(err)
 	err = ioutil.WriteFile("top_16_creators.png", buffer.Bytes(), 0644)
+    check(err)
+}
+
+func stateGrowthChart5() {
+	addrFile, err := os.Open("addresses.csv")
+	check(err)
+	defer addrFile.Close()
+	addrReader := csv.NewReader(bufio.NewReader(addrFile))
+	names := make(map[string]string)
+	for records, _ := addrReader.Read(); records != nil; records, _ = addrReader.Read() {
+		names[records[0]] = records[1]
+	}
+	files, err := ioutil.ReadDir("./")
+	if err != nil {
+		panic(err)
+	}
+	colors := []drawing.Color{
+		chart.ColorRed,
+		chart.ColorOrange,
+		chart.ColorYellow,
+		chart.ColorGreen,
+		chart.ColorBlue,
+		drawing.Color{R: 255, G: 0, B: 255, A: 255},
+		chart.ColorBlack,
+		drawing.Color{R: 165, G: 42, B: 42, A: 255},
+	}
+	seriesList := []chart.Series{}
+	colorIdx := 0
+	for _, f := range files {
+		if !f.IsDir() && strings.HasPrefix(f.Name(), "acc_creator_") && strings.HasSuffix(f.Name(), ".csv") {
+			blocks, items, err := readData(f.Name())
+			check(err)
+			addr := f.Name()[len("acc_creator_"):len(f.Name())-len(".csv")]
+			if name, ok := names[addr]; ok {
+				addr = name
+			}
+			seriesList = append(seriesList, &chart.ContinuousSeries{
+				Name: addr,
+				Style: chart.Style{
+					StrokeWidth: float64(1+2*(colorIdx/len(colors))),
+					StrokeColor: colors[colorIdx%len(colors)],
+					Show:        true,
+				},
+				XValues: blocks,
+				YValues: items,
+			})
+			colorIdx++
+		}
+	}
+	graph1 := chart.Chart{
+		Width:  1280,
+		Height: 720,
+		Background: chart.Style{
+			Padding: chart.Box{
+				Top: 50,
+			},
+		},
+		YAxis: chart.YAxis{
+			Name:      "Accounts created",
+			NameStyle: chart.StyleShow(),
+			Style:     chart.StyleShow(),
+			TickStyle: chart.Style{
+				TextRotationDegrees: 45.0,
+			},
+			ValueFormatter: func(v interface{}) string {
+				return fmt.Sprintf("%.3fm", v.(float64))
+			},
+			GridMajorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: chart.ColorBlue,
+				StrokeWidth: 1.0,
+			},
+			GridLines: storageMillions(),
+		},
+		XAxis: chart.XAxis{
+			Name: "Blocks, million",
+			Style: chart.Style{
+				Show: true,
+			},
+			ValueFormatter: func(v interface{}) string {
+				return fmt.Sprintf("%.3fm", v.(float64))
+			},
+			GridMajorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: chart.ColorAlternateGray,
+				StrokeWidth: 1.0,
+			},
+			GridLines: blockMillions(),
+		},
+		Series: seriesList,
+	}
+
+	graph1.Elements = []chart.Renderable{chart.LegendLeft(&graph1)}
+
+	buffer := bytes.NewBuffer([]byte{})
+	err = graph1.Render(chart.PNG, buffer)
+	check(err)
+	err = ioutil.WriteFile("top_20_acc_creators.png", buffer.Bytes(), 0644)
     check(err)
 }
 
@@ -955,11 +1065,12 @@ func main() {
 		}
 		defer pprof.StopCPUProfile()
 	}
-	stateGrowth1()
+	//stateGrowth1()
 	//stateGrowthChart1()
 	//stateGrowth2()
 	//stateGrowthChart2()
 	//stateGrowthChart3()
 	//creators()
 	//stateGrowthChart4()
+	stateGrowthChart5()
 }

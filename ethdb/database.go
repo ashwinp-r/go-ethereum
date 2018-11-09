@@ -21,7 +21,7 @@ package ethdb
 import (
 	"bytes"
 	"errors"
-	//"fmt"
+	"fmt"
 	"os"
 	"path"
 	"sync"
@@ -251,21 +251,29 @@ func (db *LDBDatabase) Get(bucket, key []byte) ([]byte, error) {
 // GetAsOf returns the first pair (k, v) where key is a prefix of key, or nil
 // if there are not such (k, v)
 func (db *LDBDatabase) GetAsOf(bucket, hBucket, key []byte, timestamp uint64) ([]byte, error) {
-	composite, _ := compositeKeySuffix(key, timestamp)
+	composite, suffix := compositeKeySuffix(key, timestamp)
 	var dat []byte
 	err := db.db.View(func(tx *bolt.Tx) error {
+		var first bool
 		{
 			hB := tx.Bucket(hBucket)
 			if hB == nil {
 				return ErrKeyNotFound
 			}
 			hC := hB.Cursor()
-			hK, hV := hC.Seek(composite)
-			if hK != nil && bytes.HasPrefix(hK, key) {
+			hK, hV := hC.Seek(key)
+			first = (hK != nil) && bytes.HasPrefix(hK, key)
+			if first && bytes.Compare(hK[len(key):], suffix) < 0 {
+				hK, hV = hC.SeekTo(composite)
+			}
+			if first && bytes.HasPrefix(hK, key) {
 				dat = make([]byte, len(hV))
 				copy(dat, hV)
 				return nil
 			}
+		}
+		if !first {
+			return ErrKeyNotFound
 		}
 		{
 			b := tx.Bucket(bucket)
@@ -477,6 +485,10 @@ func (db *LDBDatabase) MultiWalkAsOf(bucket, hBucket []byte, startkeys [][]byte,
 	sl := l + len(suffix)
 	keyBuffer := make([]byte, l+len(EndSuffix))
 	if err := db.db.View(func (tx *bolt.Tx) error {
+		pre := tx.Bucket([]byte("secure-key-"))
+		if pre == nil {
+			return nil
+		}
 		b := tx.Bucket(bucket)
 		if b == nil {
 			return nil
@@ -569,8 +581,22 @@ func (db *LDBDatabase) MultiWalkAsOf(bucket, hBucket []byte, startkeys [][]byte,
 				cmp = bytes.Compare(k, hK[:l])
 			}
 			if cmp < 0 {
+				if l == 32 {
+					//addr := pre.Get(k)
+					//fmt.Printf("c %x (%x): %x\n", k, addr, v)
+				} else {
+					//fmt.Printf("c %x: %x\n", k, v)
+				}
 				goOn, err = walker(keyIdx, k, v)
 			} else {
+				if hKFit && bytes.Equal(hK[l:], suffix) && timestamp == 3405379 {
+					if l == 32 {
+						addr := pre.Get(hK[:l])
+						fmt.Printf("h %x (%x): %x\n", hK[:l], addr, hV)
+					} else {
+						fmt.Printf("h %x: %x\n", hK[:l], hV)
+					}
+				}
 				goOn, err = walker(keyIdx, hK[:l], hV)
 			}
 			if goOn {
