@@ -35,7 +35,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
-	//"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie"
 	//"github.com/ethereum/go-ethereum/rlp"
 )
 
@@ -121,19 +121,33 @@ func (isa IntSorterAddr) Swap(i, j int) {
 func stateGrowth1() {
 	startTime := time.Now()
 	//db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
-	//db, err := bolt.Open("/Volumes/tb4/turbo-geth/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
-	db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	db, err := bolt.Open("/Volumes/tb4/turbo-geth/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	//db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
 	check(err)
 	defer db.Close()
+	creatorsFile, err := os.Open("creators.csv")
+	check(err)
+	defer creatorsFile.Close()
+	creatorsReader := csv.NewReader(bufio.NewReader(creatorsFile))
+	creators := make(map[common.Address]common.Address)
+	for records, _ := creatorsReader.Read(); records != nil; records, _ = creatorsReader.Read() {
+		creators[common.HexToAddress(records[0])] = common.HexToAddress(records[1])
+	}
 	var count int
 	var maxTimestamp uint64
 	// For each address hash, when was it last accounted
-	lastTimestamps := make(map[common.Hash]uint64)
+	lastTimestamps := make(map[common.Address]uint64)
 	// For each timestamp, how many accounts were created in the state
 	creationsByBlock := make(map[uint64]int)
+	creatorsByBlock := make(map[common.Address]map[uint64]int)
 	var addrHash common.Hash
+	var address common.Address
 	// Go through the history of account first
 	err = db.View(func(tx *bolt.Tx) error {
+		pre := tx.Bucket(trie.SecureKeyPrefix)
+		if pre == nil {
+			return nil
+		}
 		b := tx.Bucket(state.AccountsHistoryBucket)
 		if b == nil {
 			return nil
@@ -142,17 +156,28 @@ func stateGrowth1() {
 		for k, v := c.First(); k != nil; k, v = c.Next() {
 			// First 32 bytes is the hash of the address, then timestamp encoding
 			copy(addrHash[:], k[:32])
+			// Figure out the addrees via preimage
+			addr := pre.Get(addrHash[:])
+			copy(address[:], addr)
+			creator := creators[address]
 			timestamp, _ := decodeTimestamp(k[32:])
 			if timestamp+1 > maxTimestamp {
 				maxTimestamp = timestamp + 1
 			}
 			if len(v) == 0 {
+				cr, ok := creatorsByBlock[creator]
+				if !ok {
+					cr = make(map[uint64]int)
+					creatorsByBlock[creator] = cr
+				}
 				creationsByBlock[timestamp]++
-				if lt, ok := lastTimestamps[addrHash]; ok {
+				cr[timestamp]++
+				if lt, ok := lastTimestamps[address]; ok {
 					creationsByBlock[lt]--
+					cr[lt]--
 				}
 			}
-			lastTimestamps[addrHash] = timestamp
+			lastTimestamps[address] = timestamp
 			count++
 			if count%100000 == 0 {
 				fmt.Printf("Processed %d account records\n", count)
@@ -163,6 +188,10 @@ func stateGrowth1() {
 	check(err)
 	// Go through the current state
 	err = db.View(func(tx *bolt.Tx) error {
+		pre := tx.Bucket(trie.SecureKeyPrefix)
+		if pre == nil {
+			return nil
+		}
 		b := tx.Bucket(state.AccountsBucket)
 		if b == nil {
 			return nil
@@ -171,7 +200,10 @@ func stateGrowth1() {
 		for k, _ := c.First(); k != nil; k, _ = c.Next() {
 			// First 32 bytes is the hash of the address
 			copy(addrHash[:], k[:32])
-			lastTimestamps[addrHash] = maxTimestamp
+			// Figure out the addrees via preimage
+			addr := pre.Get(addrHash[:])
+			copy(address[:], addr)
+			lastTimestamps[address] = maxTimestamp
 			count++
 			if count%100000 == 0 {
 				fmt.Printf("Processed %d account records\n", count)
@@ -180,9 +212,10 @@ func stateGrowth1() {
 		return nil
 	})
 	check(err)
-	for _, lt := range lastTimestamps {
+	for address, lt := range lastTimestamps {
 		if lt < maxTimestamp {
 			creationsByBlock[lt]--
+			creatorsByBlock[creators[address]][lt]--
 		}
 	}
 
@@ -208,6 +241,41 @@ func stateGrowth1() {
 	for i := 0; i < tsi.length; i++ {
 		cumulative += tsi.values[i]
 		fmt.Fprintf(w, "%d, %d\n", tsi.timestamps[i], cumulative)
+	}
+	cisa := NewIntSorterAddr(len(creatorsByBlock))
+	idx = 0
+	for creator, cr := range creatorsByBlock {
+		cumulative := 0
+		for _, count := range cr {
+			cumulative += count
+		}
+		cisa.ints[idx] = cumulative
+		cisa.values[idx] = creator
+		idx++
+	}
+	sort.Sort(cisa)
+	// Top 16 account creators
+	for i := 0; i < 16 && i < cisa.length; i++ {
+		creator := cisa.values[i]
+		tsi := NewTimeSorterInt(len(creatorsByBlock[creator]))
+		idx := 0
+		for timestamp, count := range creatorsByBlock[creator] {
+			tsi.timestamps[idx] = timestamp
+			tsi.values[idx] = count
+			idx++
+		}
+		sort.Sort(tsi)
+		fmt.Printf("Writing dataset for creator %x...\n", creator[:])
+		f, err := os.Create(fmt.Sprintf("acc_creator_%x.csv", creator[:]))
+		check(err)
+		defer f.Close()
+		w := bufio.NewWriter(f)
+		defer w.Flush()
+		cumulative := 0
+		for i := 0; i < tsi.length; i++ {
+			cumulative += tsi.values[i]
+			fmt.Fprintf(w, "%d, %d\n", tsi.timestamps[i], cumulative)
+		}
 	}
 }
 
@@ -694,6 +762,14 @@ func stateGrowthChart3() {
 }
 
 func stateGrowthChart4() {
+	addrFile, err := os.Open("addresses.csv")
+	check(err)
+	defer addrFile.Close()
+	addrReader := csv.NewReader(bufio.NewReader(addrFile))
+	names := make(map[string]string)
+	for records, _ := addrReader.Read(); records != nil; records, _ = addrReader.Read() {
+		names[records[0]] = records[1]
+	}
 	files, err := ioutil.ReadDir("./")
 	if err != nil {
 		panic(err)
@@ -714,8 +790,12 @@ func stateGrowthChart4() {
 		if !f.IsDir() && strings.HasPrefix(f.Name(), "creator_") && strings.HasSuffix(f.Name(), ".csv") {
 			blocks, items, err := readData(f.Name())
 			check(err)
+			addr := f.Name()[len("creator_"):len(f.Name())-len(".csv")]
+			if name, ok := names[addr]; ok {
+				addr = name
+			}
 			seriesList = append(seriesList, &chart.ContinuousSeries{
-				Name: f.Name()[len("creator_"):len(f.Name())-len(".csv")],
+				Name: addr,
 				Style: chart.Style{
 					StrokeWidth: float64(1+2*(colorIdx/len(colors))),
 					StrokeColor: colors[colorIdx%len(colors)],
@@ -875,11 +955,11 @@ func main() {
 		}
 		defer pprof.StopCPUProfile()
 	}
-	//stateGrowth1()
+	stateGrowth1()
 	//stateGrowthChart1()
 	//stateGrowth2()
 	//stateGrowthChart2()
 	//stateGrowthChart3()
 	//creators()
-	stateGrowthChart4()
+	//stateGrowthChart4()
 }
