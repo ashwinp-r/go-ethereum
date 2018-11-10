@@ -1056,13 +1056,22 @@ func creators() {
 func storageUsage() {
 	startTime := time.Now()
 	//db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
-	//db, err := bolt.Open("/Volumes/tb4/turbo-geth/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
-	db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	db, err := bolt.Open("/Volumes/tb4/turbo-geth/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	//db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
 	check(err)
 	defer db.Close()	
+	creatorsFile, err := os.Open("creators.csv")
+	check(err)
+	defer creatorsFile.Close()
+	creatorsReader := csv.NewReader(bufio.NewReader(creatorsFile))
+	creators := make(map[common.Address]common.Address)
+	for records, _ := creatorsReader.Read(); records != nil; records, _ = creatorsReader.Read() {
+		creators[common.HexToAddress(records[0])] = common.HexToAddress(records[1])
+	}
 	// Go through the current state
-	var address common.Address
+	var addr common.Address
 	itemsByAddress := make(map[common.Address]int)
+	itemsByCreator := make(map[common.Address]int)
 	count := 0
 	err = db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(state.StorageBucket)
@@ -1071,8 +1080,9 @@ func storageUsage() {
 		}
 		c := b.Cursor()
 		for k, _ := c.First(); k != nil; k, _ = c.Next() {
-			copy(address[:], k[:20])
-			itemsByAddress[address]++
+			copy(addr[:], k[:20])
+			itemsByAddress[addr]++
+			itemsByCreator[creators[addr]]++
 			count++
 			if count%100000 == 0 {
 				fmt.Printf("Processed %d storage records\n", count)
@@ -1101,7 +1111,26 @@ func storageUsage() {
 	cumulative := 0
 	for i := 0; i < iba.length; i++ {
 		cumulative += iba.ints[i]
-		fmt.Fprintf(w, "%x,%d,%.3f\n", iba.values[i], iba.ints[i], float64(cumulative)/float64(total))
+		fmt.Fprintf(w, "%d,%x,%d,%.3f\n", i, iba.values[i], iba.ints[i], float64(cumulative)/float64(total))
+	}
+	ciba := NewIntSorterAddr(len(itemsByCreator))
+	idx = 0
+	for creator, items := range itemsByCreator {
+		ciba.ints[idx] = items
+		ciba.values[idx] = creator
+		idx++
+	}
+	sort.Sort(ciba)	
+	fmt.Printf("Writing dataset...\n")
+	cf, err := os.Create("items_by_creator.csv")
+	check(err)
+	defer cf.Close()
+	cw := bufio.NewWriter(cf)
+	defer cw.Flush()
+	cumulative = 0
+	for i := 0; i < ciba.length; i++ {
+		cumulative += ciba.ints[i]
+		fmt.Fprintf(cw, "%d,%x,%d,%.3f\n", i, ciba.values[i], ciba.ints[i], float64(cumulative)/float64(total))
 	}
 }
 
