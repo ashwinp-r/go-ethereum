@@ -508,7 +508,13 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
 	var storagePutVals [][]byte
 	var storageDelKeys [][]byte
 	if err := tds.db.RewindData(tds.blockNr, blockNr, func (bucket, key, value []byte) error {
-		//fmt.Printf("Rewind with key %x value %x\n", key, value)
+		//var pre []byte
+		if len(key) == 32 {
+			//pre, _ = tds.db.Get(trie.SecureKeyPrefix, key)
+		} else {
+			//pre, _ = tds.db.Get(trie.SecureKeyPrefix, key[20:52])
+		}
+		//fmt.Printf("Rewind with key %x (%x) value %x\n", key, pre, value)
 		var err error
 		if bytes.Equal(bucket, AccountsHistoryBucket) {
 			var addrHash common.Hash

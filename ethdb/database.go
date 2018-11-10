@@ -499,6 +499,7 @@ func (db *LDBDatabase) MultiWalkAsOf(bucket, hBucket []byte, startkeys [][]byte,
 		}
 		c := b.Cursor()
 		hC := hB.Cursor()
+		hC1 := hB.Cursor()
 		k, v := c.Seek(startkey)
 		hK, hV := hC.Seek(startkey)
 		goOn := true
@@ -587,14 +588,18 @@ func (db *LDBDatabase) MultiWalkAsOf(bucket, hBucket []byte, startkeys [][]byte,
 				} else {
 					//fmt.Printf("c %x: %x\n", k, v)
 				}
-				goOn, err = walker(keyIdx, k, v)
+				hK1, _ := hC1.Seek(k)
+				if bytes.HasPrefix(hK1, k) {
+					goOn, err = walker(keyIdx, k, v)
+				}
 			} else {
-				if hKFit && bytes.Equal(hK[l:], suffix) && timestamp == 3405379 {
+				if hKFit && bytes.Equal(hK[l:], suffix) && timestamp == 3436035 {
 					if l == 32 {
 						addr := pre.Get(hK[:l])
 						fmt.Printf("h %x (%x): %x\n", hK[:l], addr, hV)
 					} else {
-						fmt.Printf("h %x: %x\n", hK[:l], hV)
+						item := pre.Get(hK[20:52])
+						fmt.Printf("h %x (%x): %x\n", hK[:l], item, hV)
 					}
 				}
 				goOn, err = walker(keyIdx, hK[:l], hV)

@@ -676,7 +676,39 @@ func trieChart() {
     check(err)
 }
 
-func testRewind(blocks int) {
+func execToBlock(block int) {
+	blockDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/testnet/geth/chaindata")
+	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
+	check(err)
+	bcb, err := core.NewBlockChain(blockDb, nil, params.TestnetChainConfig, ethash.NewFaker(), vm.Config{}, nil)
+	check(err)
+	defer blockDb.Close()
+	os.Remove("statedb")
+	os.Remove("statedb.hash")
+	stateDb, err := ethdb.NewLDBDatabase("statedb")
+	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
+	check(err)
+	defer stateDb.Close()
+	_, _, _, err = core.SetupGenesisBlock(stateDb, core.DefaultTestnetGenesisBlock())
+	check(err)
+	bc, err := core.NewBlockChain(stateDb, nil, params.TestnetChainConfig, ethash.NewFaker(), vm.Config{}, nil)
+	check(err)
+	blocks := types.Blocks{}
+	var lastBlock *types.Block
+	for i := 1; i <= block; i++ {
+		lastBlock = bcb.GetBlockByNumber(uint64(i))
+		blocks = append(blocks, lastBlock)
+	}
+	_, err = bc.InsertChain(blocks)
+	check(err)
+	tds := bc.GetTrieDbState()
+	root, err := tds.TrieRoot()
+	check(err)
+	fmt.Printf("Root hash: %x\n", root)
+	fmt.Printf("Last block root hash: %x\n", lastBlock.Root())
+}
+
+func testRewind(block, rewind int) {
 	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/testnet/geth/chaindata")
 	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
 	check(err)
@@ -685,51 +717,14 @@ func testRewind(blocks int) {
 	check(err)
 	currentBlock := bc.CurrentBlock()
 	currentBlockNr := currentBlock.NumberU64()
-	//currentBlockNr -= 22
-	//currentBlock = bc.GetBlockByNumber(currentBlockNr)
-	fmt.Printf("Current block number: %d\n", currentBlockNr)
-	fmt.Printf("Current block hash: %x\n", currentBlock.Hash())
-	fmt.Printf("Current block root hash: %x\n", currentBlock.Root())
-	fmt.Printf("All headers at the same height\n")
-	{
-		var hashes []common.Hash
-		numberEnc := make([]byte, 8)
-		binary.BigEndian.PutUint64(numberEnc, currentBlockNr)
-		if err := ethDb.Walk([]byte("h"), numberEnc, 8*8, func(k, v []byte) (bool, error) {
-			if len(k) == 8 + 32 {
-				hashes = append(hashes, common.BytesToHash(k[8:]))
-			}
-			return true, nil
-		}); err != nil {
-			panic(err)
-		}
-		for _, hash := range hashes {
-			h := rawdb.ReadHeader(ethDb, hash, currentBlockNr)
-			fmt.Printf("block hash: %x, root hash: %x\n", h.Hash(), h.Root)
-		}
-	}
-	fmt.Printf("All headers at the previous height\n")
-	{
-		var hashes []common.Hash
-		numberEnc := make([]byte, 8)
-		binary.BigEndian.PutUint64(numberEnc, currentBlockNr-1)
-		if err := ethDb.Walk([]byte("h"), numberEnc, 8*8, func(k, v []byte) (bool, error) {
-			if len(k) == 8 + 32 {
-				hashes = append(hashes, common.BytesToHash(k[8:]))
-			}
-			return true, nil
-		}); err != nil {
-			panic(err)
-		}
-		for _, hash := range hashes {
-			h := rawdb.ReadHeader(ethDb, hash, currentBlockNr-1)
-			fmt.Printf("block hash: %x, root hash: %x\n", h.Hash(), h.Root)
-		}
-	}
+	baseBlock := bc.GetBlockByNumber(uint64(block))
+	baseBlockNr := baseBlock.NumberU64()
+	fmt.Printf("Base block number: %d\n", baseBlockNr)
+	fmt.Printf("Base block root hash: %x\n", baseBlock.Root())
 	db := ethDb.NewBatch()
 	defer db.Rollback()
-	tds, err := state.NewTrieDbState(currentBlock.Root(), db, currentBlockNr)
-	tds.SetHistorical(false)
+	tds, err := state.NewTrieDbState(baseBlock.Root(), db, baseBlockNr)
+	tds.SetHistorical(baseBlockNr != currentBlockNr)
 	check(err)
 	startTime := time.Now()
 	tds.Rebuild()
@@ -738,13 +733,21 @@ func testRewind(blocks int) {
 	check(err)
 	fmt.Printf("Rebuit root hash: %x\n", rebuiltRoot)
 	startTime = time.Now()
-	rewindLen := uint64(blocks)
-	err = tds.UnwindTo(currentBlockNr - rewindLen)
+	rewindLen := uint64(rewind)
+	err = tds.UnwindTo(baseBlockNr - rewindLen)
 	fmt.Printf("Unwind done in %v\n", time.Since(startTime))
 	check(err)
-	rewoundBlock := bc.GetBlockByNumber(currentBlockNr - rewindLen)
+	rewoundBlock_1 := bc.GetBlockByNumber(baseBlockNr - rewindLen + 1)
+	fmt.Printf("Rewound+1 block number: %d\n", rewoundBlock_1.NumberU64())
+	fmt.Printf("Rewound+1 block hash: %x\n", rewoundBlock_1.Hash())
+	fmt.Printf("Rewound+1 block root hash: %x\n", rewoundBlock_1.Root())
+	fmt.Printf("Rewound+1 block parent hash: %x\n", rewoundBlock_1.ParentHash())
+
+	rewoundBlock := bc.GetBlockByNumber(baseBlockNr - rewindLen)
 	fmt.Printf("Rewound block number: %d\n", rewoundBlock.NumberU64())
+	fmt.Printf("Rewound block hash: %x\n", rewoundBlock.Hash())
 	fmt.Printf("Rewound block root hash: %x\n", rewoundBlock.Root())
+	fmt.Printf("Rewound block parent hash: %x\n", rewoundBlock.ParentHash())
 	rewoundRoot, err := tds.TrieRoot()
 	check(err)
 	fmt.Printf("Calculated rewound root hash: %x\n", rewoundRoot)
@@ -756,7 +759,6 @@ func testRewind(blocks int) {
 		defer f.Close()
 		tds.PrintTrie(f)
 	}
-	*/
 	{
 		tds, err = state.NewTrieDbState(rewoundBlock.Root(), db, rewoundBlock.NumberU64())
 		tds.SetHistorical(true)
@@ -768,6 +770,7 @@ func testRewind(blocks int) {
 		fmt.Printf("Rebuilt root: %x\n", rebuiltRoot)
 		check(err)
 	}
+	*/
 }
 
 func testStartup() {
@@ -1289,7 +1292,7 @@ func main() {
  	//bucketStats(db)
  	//mychart()
  	//testRebuild()
- 	testRewind(*rewind)
+ 	//testRewind(*block, *rewind)
  	//hashFile()
  	//buildHashFromFile()
  	//testResolve()
@@ -1313,5 +1316,6 @@ func main() {
  	//loadAccount()
  	//preimage()
  	//printBranches(uint64(*block))
+ 	execToBlock(*block)
 }
 

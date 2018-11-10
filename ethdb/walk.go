@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"sort"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/petar/GoLLRB/llrb"
@@ -70,7 +71,13 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 		return err
 	}
 	//suffixDst := encodeTimestamp(timestampDst)
-	for bucketStr, t := range m {
+	buckets := sort.StringSlice{}
+	for bucketStr, _ := range m {
+		buckets = append(buckets, bucketStr)
+	}
+	sort.Sort(buckets)
+	for _, bucketStr := range buckets {
+		t := m[bucketStr]
 		bucket := []byte(bucketStr)
 		//it := t.NewSeekIterator()
 		min, _ := t.Min().(*PutItem)

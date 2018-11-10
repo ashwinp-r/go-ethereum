@@ -965,7 +965,7 @@ func stateGrowthChart5() {
 	buffer := bytes.NewBuffer([]byte{})
 	err = graph1.Render(chart.PNG, buffer)
 	check(err)
-	err = ioutil.WriteFile("top_20_acc_creators.png", buffer.Bytes(), 0644)
+	err = ioutil.WriteFile("top_2_acc_creators.png", buffer.Bytes(), 0644)
     check(err)
 }
 
@@ -1053,6 +1053,58 @@ func creators() {
 	fmt.Printf("Next time specify -block %d\n", blockNum)
 }
 
+func storageUsage() {
+	startTime := time.Now()
+	//db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	//db, err := bolt.Open("/Volumes/tb4/turbo-geth/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	check(err)
+	defer db.Close()	
+	// Go through the current state
+	var address common.Address
+	itemsByAddress := make(map[common.Address]int)
+	count := 0
+	err = db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(state.StorageBucket)
+		if b == nil {
+			return nil
+		}
+		c := b.Cursor()
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
+			copy(address[:], k[:20])
+			itemsByAddress[address]++
+			count++
+			if count%100000 == 0 {
+				fmt.Printf("Processed %d storage records\n", count)
+			}
+		}
+		return nil
+	})
+	check(err)
+	fmt.Printf("Processing took %s\n", time.Since(startTime))
+	iba := NewIntSorterAddr(len(itemsByAddress))
+	idx := 0
+	total := 0
+	for address, items := range itemsByAddress {
+		total += items
+		iba.ints[idx] = items
+		iba.values[idx] = address
+		idx++
+	}
+	sort.Sort(iba)	
+	fmt.Printf("Writing dataset...\n")
+	f, err := os.Create("items_by_address.csv")
+	check(err)
+	defer f.Close()
+	w := bufio.NewWriter(f)
+	defer w.Flush()
+	cumulative := 0
+	for i := 0; i < iba.length; i++ {
+		cumulative += iba.ints[i]
+		fmt.Fprintf(w, "%x,%d,%.3f\n", iba.values[i], iba.ints[i], float64(cumulative)/float64(total))
+	}
+}
+
 func main() {
 	flag.Parse()
 	if *cpuprofile != "" {
@@ -1072,5 +1124,6 @@ func main() {
 	//stateGrowthChart3()
 	//creators()
 	//stateGrowthChart4()
-	stateGrowthChart5()
+	//stateGrowthChart5()
+	storageUsage()
 }
