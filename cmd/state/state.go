@@ -1226,7 +1226,7 @@ func main() {
 	//stateGrowth2()
 	//stateGrowthChart2()
 	//stateGrowthChart3()
-	creators()
+	//creators()
 	//stateGrowthChart4()
 	//stateGrowthChart5()
 	//storageUsage()

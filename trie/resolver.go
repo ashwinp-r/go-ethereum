@@ -130,14 +130,13 @@ func (t *Trie) Rebuild(db ethdb.Database, blockNr uint64, foldNodes bool) hashNo
 		for i := 0; i < ethdb.HeapSize/32; i++ {
 			db.PutHash(uint32(i), empty[:])
 		}
-		rt, hn, err := t.rebuildHashes(db, nil, 0, blockNr, true, n, foldNodes)
+		_, hn, err := t.rebuildHashes(db, nil, 0, blockNr, true, n, foldNodes)
 		if err != nil {
 			panic(err)
 		}
-		t.root = rt
 		root, roothash = t.rebuildFromHashes(db)
 		if bytes.Equal(roothash, hn) {
-			//t.root = root
+			t.root = root
 			log.Info("Rebuilt hashfile and verified", "root hash", roothash)
 		} else {
 			log.Error(fmt.Sprintf("Could not rebuild %s vs %s\n", roothash, hn))

@@ -427,7 +427,7 @@ func (self *StateDB) createObject(addr common.Address, previous *stateObject) (n
 	prev = previous
 	var account Account
 	if previous == nil {
-		account := Account{}
+		account = Account{}
 		account.Root.SetBytes(emptyRoot[:])
 	} else {
 		account = previous.data
