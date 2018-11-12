@@ -425,8 +425,13 @@ func (self *StateDB) GetOrNewStateObject(addr common.Address) *stateObject {
 func (self *StateDB) createObject(addr common.Address, previous *stateObject) (newobj, prev *stateObject) {
 	//fmt.Printf("CREATE %x\n", addr[:])
 	prev = previous
-	account := Account{}
-	account.Root.SetBytes(emptyRoot[:])
+	var account Account
+	if previous == nil {
+		account := Account{}
+		account.Root.SetBytes(emptyRoot[:])
+	} else {
+		account = previous.data
+	}
 	newobj = newObject(self, addr, account)
 	newobj.setNonce(0) // sets the object to dirty
 	if prev == nil {

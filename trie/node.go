@@ -386,10 +386,11 @@ func printDiff(n1, n2 node, w io.Writer, ind string, key string) {
 					child2 := n.Children[i]
 					if child == nil {
 						if child2 != nil {
-							fmt.Fprintf(w, "%s%s:(nil/)\n", ind, indices[i])
+							fmt.Fprintf(w, "%s%s:(nil/%T)\n", ind, indices[i], child2)
 						}
 					} else if child2 == nil {
-						fmt.Fprintf(w, "%s%s:(/nil)\n", ind, indices[i])
+						fmt.Fprintf(w, "%s%s:(%T/nil)\n", ind, indices[i], child)
+						printDiffSide(child, w, ind, key+indices[i])
 					} else {
 						fmt.Fprintf(w, "%s%s:", ind, indices[i])
 						printDiff(child, child2, w, "  " + ind, key+indices[i])

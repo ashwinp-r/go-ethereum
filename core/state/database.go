@@ -296,9 +296,11 @@ type TrieDbState struct {
 	codeCache        *lru.Cache
 	codeSizeCache    *lru.Cache
 	historical       bool
+	noHistory        bool
 	generationCounts map[uint64]int
 	nodeCount        int
 	oldestGeneration uint64
+	foldNodes        bool
 }
 
 func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieDbState, error) {
@@ -331,6 +333,14 @@ func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieD
 func (tds *TrieDbState) SetHistorical(h bool) {
 	tds.historical = h
 	tds.t.SetHistorical(h)
+}
+
+func (tds *TrieDbState) SetNoHistory(nh bool) {
+	tds.noHistory = nh
+}
+
+func (tds *TrieDbState) SetFoldNodes(f bool) {
+	tds.foldNodes = f
 }
 
 func (tds *TrieDbState) Copy() *TrieDbState {
@@ -492,7 +502,7 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 
 func (tds *TrieDbState) Rebuild() {
 	tr := tds.AccountTrie()
-	tr.Rebuild(tds.db, tds.blockNr)
+	tr.Rebuild(tds.db, tds.blockNr, tds.foldNodes)
 }
 
 func (tds *TrieDbState) SetBlockNr(blockNr uint64) {
@@ -888,6 +898,9 @@ func (dsw *DbStateWriter) UpdateAccountData(address common.Address, original, ac
 	if err = dsw.tds.db.Put(AccountsBucket, addrHash[:], data); err != nil {
 		return err
 	}
+	if dsw.tds.noHistory {
+		return nil
+	}
 	// Don't write historical record if the account did not change
 	if accountsEqual(original, account) {
 		return nil
@@ -921,6 +934,9 @@ func (dsw *DbStateWriter) DeleteAccount(address common.Address, original *Accoun
 	}
 	if err := dsw.tds.db.Delete(AccountsBucket, addrHash[:]); err != nil {
 		return err
+	}
+	if dsw.tds.noHistory {
+		return nil
 	}
 	var originalData []byte
 	if original.Balance == nil {
@@ -978,6 +994,9 @@ func (dsw *DbStateWriter) WriteAccountStorage(address common.Address, key, origi
 	}
 	if err != nil {
 		return err
+	}
+	if dsw.tds.noHistory {
+		return nil
 	}
 	o := bytes.TrimLeft(original[:], "\x00")
 	oo := make([]byte, len(o))

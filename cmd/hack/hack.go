@@ -686,26 +686,55 @@ func execToBlock(block int) {
 	os.Remove("statedb")
 	os.Remove("statedb.hash")
 	stateDb, err := ethdb.NewLDBDatabase("statedb")
-	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
 	check(err)
 	defer stateDb.Close()
 	_, _, _, err = core.SetupGenesisBlock(stateDb, core.DefaultTestnetGenesisBlock())
 	check(err)
 	bc, err := core.NewBlockChain(stateDb, nil, params.TestnetChainConfig, ethash.NewFaker(), vm.Config{}, nil)
 	check(err)
+	bc.SetNoHistory(true)
 	blocks := types.Blocks{}
 	var lastBlock *types.Block
 	for i := 1; i <= block; i++ {
 		lastBlock = bcb.GetBlockByNumber(uint64(i))
 		blocks = append(blocks, lastBlock)
+		if len(blocks) >= 100 || i == block {
+			_, err = bc.InsertChain(blocks)
+			check(err)
+			fmt.Printf("Inserted %d blocks\n", i)
+			blocks = types.Blocks{}
+		}
 	}
-	_, err = bc.InsertChain(blocks)
-	check(err)
 	tds := bc.GetTrieDbState()
 	root, err := tds.TrieRoot()
 	check(err)
 	fmt.Printf("Root hash: %x\n", root)
 	fmt.Printf("Last block root hash: %x\n", lastBlock.Root())
+}
+
+func extractTrie(block int) {
+	stateDb, err := ethdb.NewLDBDatabase("statedb")
+	check(err)
+	defer stateDb.Close()
+	bc, err := core.NewBlockChain(stateDb, nil, params.TestnetChainConfig, ethash.NewFaker(), vm.Config{}, nil)
+	check(err)
+	baseBlock := bc.GetBlockByNumber(uint64(block))
+	tds, err := state.NewTrieDbState(baseBlock.Root(), stateDb, baseBlock.NumberU64())
+	check(err)
+	startTime := time.Now()
+	tds.SetFoldNodes(true)
+	tds.Rebuild()
+	fmt.Printf("Rebuld done in %v\n", time.Since(startTime))
+	rebuiltRoot, err := tds.TrieRoot()
+	check(err)
+	fmt.Printf("Rebuit root hash: %x\n", rebuiltRoot)
+	filename := fmt.Sprintf("right_%d.txt", baseBlock.NumberU64())
+	fmt.Printf("Generating deep snapshot of the right tries... %s\n", filename)
+	f, err := os.Create(filename)
+	if err == nil {
+		defer f.Close()
+		tds.PrintTrie(f)
+	}
 }
 
 func testRewind(block, rewind int) {
@@ -751,7 +780,7 @@ func testRewind(block, rewind int) {
 	rewoundRoot, err := tds.TrieRoot()
 	check(err)
 	fmt.Printf("Calculated rewound root hash: %x\n", rewoundRoot)
-	/*
+	
 	filename := fmt.Sprintf("root_%d.txt", rewoundBlock.NumberU64())
 	fmt.Printf("Generating deep snapshot of the wront tries... %s\n", filename)
 	f, err := os.Create(filename)
@@ -759,6 +788,7 @@ func testRewind(block, rewind int) {
 		defer f.Close()
 		tds.PrintTrie(f)
 	}
+	/*
 	{
 		tds, err = state.NewTrieDbState(rewoundBlock.Root(), db, rewoundBlock.NumberU64())
 		tds.SetHistorical(true)
@@ -1311,11 +1341,13 @@ func main() {
  	//testRedis()
  	//upgradeBlocks()
  	//compareTries()
- 	//invTree("root", "right", "diff", *block, false)
+ 	//invTree("right", "root", "diff", *block, false)
  	//invTree("iw", "ir", "id", *block, true)
  	//loadAccount()
  	//preimage()
  	//printBranches(uint64(*block))
- 	execToBlock(*block)
+ 	//execToBlock(*block)
+ 	//extractTrie(*block)
+ 	fmt.Printf("%x\n", crypto.Keccak256(nil))
 }
 
