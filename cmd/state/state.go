@@ -1134,6 +1134,81 @@ func storageUsage() {
 	}
 }
 
+func oldStorage() {
+	startTime := time.Now()
+	//db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	db, err := bolt.Open("/Volumes/tb4/turbo-geth/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	//db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	check(err)
+	defer db.Close()
+	histKey := make([]byte, 32 + len(ethdb.EndSuffix))
+	copy(histKey[32:], ethdb.EndSuffix)
+	// Go through the current state
+	var addr common.Address
+	itemsByAddress := make(map[common.Address]int)
+	count := 0
+	err = db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(state.StorageBucket)
+		if b == nil {
+			return nil
+		}
+		c := b.Cursor()
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
+			copy(addr[:], k[:20])
+			itemsByAddress[addr]++
+			count++
+			if count%100000 == 0 {
+				fmt.Printf("Processed %d storage records\n", count)
+			}
+		}
+		return nil
+	})
+	check(err)
+	err = db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(state.AccountsHistoryBucket)
+		if b == nil {
+			return nil
+		}
+		c := b.Cursor()
+		for addr, _ := range itemsByAddress {
+			addrHash := crypto.Keccak256(addr[:])
+			copy(histKey[:], addrHash)
+			c.Seek(histKey)
+			k, _ := c.Prev()
+			if bytes.HasPrefix(k, addrHash[:]) {
+				timestamp, _ := decodeTimestamp(k[32:])
+				if timestamp > 4530000 {
+					delete(itemsByAddress, addr)
+				}
+			}
+		}
+		return nil
+	})
+	check(err)
+	fmt.Printf("Processing took %s\n", time.Since(startTime))
+	iba := NewIntSorterAddr(len(itemsByAddress))
+	idx := 0
+	total := 0
+	for address, items := range itemsByAddress {
+		total += items
+		iba.ints[idx] = items
+		iba.values[idx] = address
+		idx++
+	}
+	sort.Sort(iba)	
+	fmt.Printf("Writing dataset (total %d)...\n", total)
+	f, err := os.Create("items_by_address.csv")
+	check(err)
+	defer f.Close()
+	w := bufio.NewWriter(f)
+	defer w.Flush()
+	cumulative := 0
+	for i := 0; i < iba.length; i++ {
+		cumulative += iba.ints[i]
+		fmt.Fprintf(w, "%d,%x,%d,%.3f\n", i, iba.values[i], iba.ints[i], float64(cumulative)/float64(total))
+	}
+}
+
 func main() {
 	flag.Parse()
 	if *cpuprofile != "" {
@@ -1151,8 +1226,9 @@ func main() {
 	//stateGrowth2()
 	//stateGrowthChart2()
 	//stateGrowthChart3()
-	//creators()
+	creators()
 	//stateGrowthChart4()
 	//stateGrowthChart5()
-	storageUsage()
+	//storageUsage()
+	//oldStorage()
 }
