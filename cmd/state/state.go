@@ -1259,7 +1259,7 @@ func dustEOA() {
 	defer db.Close()
 	count := 0
 	eoas := 0
-	maxBalance := big.NewInt(1000000000000000)
+	maxBalance := big.NewInt(1000000000000000000)
 	// Go through the current state
 	thresholdMap := make(map[uint64]int)
 	err = db.View(func(tx *bolt.Tx) error {
@@ -1370,8 +1370,9 @@ func dustChartEOA() {
 			{Value: 1e13, Label: "1e13"},
 			{Value: 1e14, Label: "1e14"},
 			{Value: 1e15, Label: "1e15"},
-			//{1e15, "finney"},
-			//{1e18, "ether"},
+			{Value: 1e16, Label: "1e16"},
+			{Value: 1e17, Label: "1e17"},
+			{Value: 1e18, Label: "1e18"},
 		},
 	}
 
@@ -1434,6 +1435,6 @@ func main() {
 	//stateGrowthChart5()
 	//storageUsage()
 	//oldStorage()
-	//dustEOA()
+	dustEOA()
 	dustChartEOA()
 }
