@@ -692,7 +692,7 @@ func execToBlock(block int) {
 	check(err)
 	bc, err := core.NewBlockChain(stateDb, nil, params.TestnetChainConfig, ethash.NewFaker(), vm.Config{}, nil)
 	check(err)
-	bc.SetNoHistory(true)
+	bc.SetNoHistory(false)
 	blocks := types.Blocks{}
 	var lastBlock *types.Block
 	for i := 1; i <= block; i++ {
@@ -1346,8 +1346,8 @@ func main() {
  	//loadAccount()
  	//preimage()
  	//printBranches(uint64(*block))
- 	//execToBlock(*block)
+ 	execToBlock(*block)
  	//extractTrie(*block)
- 	fmt.Printf("%x\n", crypto.Keccak256(nil))
+ 	//fmt.Printf("%x\n", crypto.Keccak256(nil))
 }
 

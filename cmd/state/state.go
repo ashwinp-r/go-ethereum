@@ -36,11 +36,11 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie"
-	//"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 var emptyCodeHash = crypto.Keccak256(nil)
-var emptyRoot = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421").Bytes()
+var emptyRoot = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
 
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile `file`")
 var reset = flag.Int("reset", -1, "reset to given block number")
@@ -500,7 +500,10 @@ func stateGrowth2() {
 }
 
 func parseFloat64(str string) float64 {
-	v, _ := strconv.ParseFloat(str, 64)
+	v, err := strconv.ParseFloat(str, 64)
+	if err != nil {
+		panic(err)
+	}
 	return v
 }
 
@@ -1209,6 +1212,206 @@ func oldStorage() {
 	}
 }
 
+type ExtAccount struct {
+	Nonce uint64
+	Balance *big.Int	
+}
+type Account struct {
+	Nonce    uint64
+	Balance  *big.Int
+	Root     common.Hash // merkle root of the storage trie
+	CodeHash []byte
+}
+
+func encodingToAccount(enc []byte) (*Account, error) {
+	if enc == nil || len(enc) == 0 {
+		return nil, nil
+	}
+	var data Account
+	// Kind of hacky
+	if len(enc) == 1 {
+		data.Balance = new(big.Int)
+		data.CodeHash = emptyCodeHash
+		data.Root = emptyRoot
+	} else if len(enc) < 60 {
+		var extData ExtAccount
+		if err := rlp.DecodeBytes(enc, &extData); err != nil {
+			return nil, err
+		}
+		data.Nonce = extData.Nonce
+		data.Balance = extData.Balance
+		data.CodeHash = emptyCodeHash
+		data.Root = emptyRoot
+	} else {
+		if err := rlp.DecodeBytes(enc, &data); err != nil {
+			return nil, err
+		}
+	}
+	return &data, nil
+}
+
+func dustEOA() {
+	startTime := time.Now()
+	//db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	db, err := bolt.Open("/Volumes/tb4/turbo-geth/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	//db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	check(err)
+	defer db.Close()
+	count := 0
+	eoas := 0
+	maxBalance := big.NewInt(1000000000000000)
+	// Go through the current state
+	thresholdMap := make(map[uint64]int)
+	err = db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(state.AccountsBucket)
+		if b == nil {
+			return nil
+		}
+		c := b.Cursor()
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			a, err := encodingToAccount(v)
+			if err != nil {
+				panic(err)
+			}
+			count++
+			if !bytes.Equal(a.CodeHash, emptyCodeHash) {
+				// Only processing EOA
+				continue
+			}
+			eoas++
+			if a.Balance.Cmp(maxBalance) >= 0 {
+				continue
+			}
+			thresholdMap[a.Balance.Uint64()]++
+			if count%100000 == 0 {
+				fmt.Printf("Processed %d account records\n", count)
+			}
+		}
+		return nil
+	})
+	check(err)
+	fmt.Printf("Total accounts: %d, EOAs: %d\n", count, eoas)
+	tsi := NewTimeSorterInt(len(thresholdMap))
+	idx := 0
+	for t, count := range thresholdMap {
+		tsi.timestamps[idx] = t
+		tsi.values[idx] = count
+		idx++
+	}
+	sort.Sort(tsi)
+	fmt.Printf("Writing dataset...")
+	f, err := os.Create("dust_eoa.csv")
+	check(err)
+	defer f.Close()
+	w := bufio.NewWriter(f)
+	defer w.Flush()
+	cumulative := 0
+	for i := 0; i < tsi.length; i++ {
+		cumulative += tsi.values[i]
+		fmt.Fprintf(w, "%d, %d\n", tsi.timestamps[i], cumulative)
+	}
+	fmt.Printf("Processing took %s\n", time.Since(startTime))
+}
+
+func dustChartEOA() {
+	dust_eoaFile, err := os.Open("dust_eoa.csv")
+	check(err)
+	defer dust_eoaFile.Close()
+	dust_eoaReader := csv.NewReader(bufio.NewReader(dust_eoaFile))
+	var thresholds, counts []float64
+	for records, _ := dust_eoaReader.Read(); records != nil; records, _ = dust_eoaReader.Read() {
+		thresholds = append(thresholds, parseFloat64(records[0]))
+		counts = append(counts, parseFloat64(records[1][1:]))
+	}
+	//thresholds = thresholds[1:]
+	//counts = counts[1:]
+	countSeries := &chart.ContinuousSeries{
+		Name: "EOA accounts",
+		Style: chart.Style{
+			Show:        true,
+			StrokeColor: chart.ColorBlue,
+			FillColor:   chart.ColorBlue.WithAlpha(100),
+		},
+		XValues: thresholds,
+		YValues: counts,
+	}
+	xaxis := &chart.XAxis{
+		Name: "Dust theshold",
+		Style: chart.Style{
+			Show: true,
+		},
+		ValueFormatter: func(v interface{}) string {
+			return fmt.Sprintf("%d wei", int(v.(float64)))
+		},
+		GridMajorStyle: chart.Style{
+			Show:        true,
+			StrokeColor: chart.DefaultStrokeColor,
+			StrokeWidth: 1.0,
+		},
+		Range: &chart.LogRange{
+			Min: thresholds[0],
+			Max: thresholds[len(thresholds)-1],
+		},
+		Ticks: []chart.Tick{
+			{Value: 0.0, Label: "0"},
+			{Value: 1.0, Label: "wei"},
+			{Value: 10.0, Label: "10"},
+			{Value: 100.0, Label: "100"},
+			{Value: 1e3, Label: "1e3"},
+			{Value: 1e4, Label: "1e4"},
+			{Value: 1e5, Label: "1e5"},
+			{Value: 1e6, Label: "1e6"},
+			{Value: 1e7, Label: "1e7"},
+			{Value: 1e8, Label: "1e8"},
+			{Value: 1e9, Label: "1e9"},
+			{Value: 1e10, Label: "1e10"},
+			{Value: 1e11, Label: "1e11"},
+			{Value: 1e12, Label: "1e12"},
+			{Value: 1e13, Label: "1e13"},
+			{Value: 1e14, Label: "1e14"},
+			{Value: 1e15, Label: "1e15"},
+			//{1e15, "finney"},
+			//{1e18, "ether"},
+		},
+	}
+
+	graph3 := chart.Chart{
+		Width:  1280,
+		Height: 720,
+		Background: chart.Style{
+			Padding: chart.Box{
+				Top: 50,
+			},
+		},
+		XAxis: *xaxis,
+		YAxis: chart.YAxis{
+			Name:      "EOA Accounts",
+			NameStyle: chart.StyleShow(),
+			Style:     chart.StyleShow(),
+			TickStyle: chart.Style{
+				TextRotationDegrees: 45.0,
+			},
+			ValueFormatter: func(v interface{}) string {
+				return fmt.Sprintf("%dm", int(v.(float64)/1e6))
+			},
+			GridMajorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: chart.DefaultStrokeColor,
+				StrokeWidth: 1.0,
+			},
+		},
+		Series: []chart.Series{
+			countSeries,
+		},
+	}
+	graph3.Elements = []chart.Renderable{chart.LegendThin(&graph3)}
+	buffer := bytes.NewBuffer([]byte{})
+	err = graph3.Render(chart.PNG, buffer)
+	check(err)
+	err = ioutil.WriteFile("dust_eoa.png", buffer.Bytes(), 0644)
+    check(err)
+}
+
 func main() {
 	flag.Parse()
 	if *cpuprofile != "" {
@@ -1231,4 +1434,6 @@ func main() {
 	//stateGrowthChart5()
 	//storageUsage()
 	//oldStorage()
+	//dustEOA()
+	dustChartEOA()
 }
