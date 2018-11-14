@@ -1193,7 +1193,7 @@ func concat(s1 []byte, s2 ...byte) []byte {
 }
 
 func (t *Trie) resolveHash(db ethdb.Database, n hashNode, key []byte, pos int, blockNr uint64) (node, error) {
-	root, gotHash, err := t.rebuildHashes(db, key, pos, blockNr, false, n, false)
+	root, gotHash, err := t.rebuildHashes(db, key, pos, blockNr, false, n)
 	if err != nil {
 		return nil, err
 	}

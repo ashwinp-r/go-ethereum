@@ -113,7 +113,7 @@ func (t *Trie) rebuildFromHashes(dbr DatabaseReader) (root node, roothash hashNo
 	return root, hashNode(rootHash[:])
 }
 
-func (t *Trie) Rebuild(db ethdb.Database, blockNr uint64, foldNodes bool) hashNode {
+func (t *Trie) Rebuild(db ethdb.Database, blockNr uint64) hashNode {
 	if t.root == nil {
 		return nil
 	}
@@ -130,7 +130,7 @@ func (t *Trie) Rebuild(db ethdb.Database, blockNr uint64, foldNodes bool) hashNo
 		for i := 0; i < ethdb.HeapSize/32; i++ {
 			db.PutHash(uint32(i), empty[:])
 		}
-		_, hn, err := t.rebuildHashes(db, nil, 0, blockNr, true, n, foldNodes)
+		_, hn, err := t.rebuildHashes(db, nil, 0, blockNr, true, n)
 		if err != nil {
 			panic(err)
 		}
@@ -186,7 +186,6 @@ type TrieResolver struct {
 	keyIdx int
 	h *hasher
 	historical bool
-	foldNodes bool
 }
 
 func NewResolver(dbw ethdb.Putter, hashes bool, accounts bool) *TrieResolver {
@@ -205,10 +204,6 @@ func NewResolver(dbw ethdb.Putter, hashes bool, accounts bool) *TrieResolver {
 
 func (tr *TrieResolver) SetHistorical(h bool) {
 	tr.historical = h
-}
-
-func (tr *TrieResolver) SetFoldNodes(f bool) {
-	tr.foldNodes = f
 }
 
 // TrieResolver implements sort.Interface
@@ -412,7 +407,7 @@ func (tr *TrieResolver) finishPreviousKey(k []byte) error {
 	}
 	for level := startLevel; level >= stopLevel; level-- {
 		keynibble := hex[level]
-		onResolvingPath := tr.foldNodes || level <= rhPrefixLen // <= instead of < to be able to resolve deletes in one go
+		onResolvingPath := level <= rhPrefixLen // <= instead of < to be able to resolve deletes in one go
 		var hashIdx uint32
 		if tr.hashes && level <= 5 {
 			hashIdx = binary.BigEndian.Uint32(tr.key[:4]) >> 8
@@ -651,10 +646,9 @@ func (tr *TrieResolver) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
 	return err
 }
 
-func (t *Trie) rebuildHashes(db ethdb.Database, key []byte, pos int, blockNr uint64, hashes bool, expected hashNode, foldNodes bool) (node, hashNode, error) {
+func (t *Trie) rebuildHashes(db ethdb.Database, key []byte, pos int, blockNr uint64, hashes bool, expected hashNode) (node, hashNode, error) {
 	tc := t.NewContinuation(key, pos, expected)
 	r := NewResolver(db, true, true)
-	r.SetFoldNodes(foldNodes)
 	r.SetHistorical(t.historical)
 	r.AddContinuation(tc)
 	if err := r.ResolveWithDb(db, blockNr); err != nil {

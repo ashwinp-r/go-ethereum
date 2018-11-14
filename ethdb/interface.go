@@ -30,6 +30,7 @@ type Putter interface {
 
 type Getter interface {
 	Get(bucket, key []byte) ([]byte, error)
+	GetS(hBucket, key []byte, timestamp uint64) ([]byte, error)
 	GetAsOf(bucket, hBucket, key []byte, timestamp uint64) ([]byte, error)
 	Has(bucket, key []byte) (bool, error)
 	Walk(bucket, startkey []byte, fixedbits uint, walker func([]byte, []byte) (bool, error)) error

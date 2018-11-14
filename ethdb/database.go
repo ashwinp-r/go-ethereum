@@ -248,32 +248,29 @@ func (db *LDBDatabase) Get(bucket, key []byte) ([]byte, error) {
 	return dat, err
 }
 
+func (db *LDBDatabase) GetS(hBucket, key []byte, timestamp uint64) ([]byte, error) {
+	composite, _ := compositeKeySuffix(key, timestamp)
+	return db.Get(hBucket, composite)
+}
+
 // GetAsOf returns the first pair (k, v) where key is a prefix of key, or nil
 // if there are not such (k, v)
 func (db *LDBDatabase) GetAsOf(bucket, hBucket, key []byte, timestamp uint64) ([]byte, error) {
-	composite, suffix := compositeKeySuffix(key, timestamp)
+	composite, _ := compositeKeySuffix(key, timestamp)
 	var dat []byte
 	err := db.db.View(func(tx *bolt.Tx) error {
-		var first bool
 		{
 			hB := tx.Bucket(hBucket)
 			if hB == nil {
 				return ErrKeyNotFound
 			}
 			hC := hB.Cursor()
-			hK, hV := hC.Seek(key)
-			first = (hK != nil) && bytes.HasPrefix(hK, key)
-			if first && bytes.Compare(hK[len(key):], suffix) < 0 {
-				hK, hV = hC.SeekTo(composite)
-			}
-			if first && bytes.HasPrefix(hK, key) {
+			hK, hV := hC.Seek(composite)
+			if hK != nil && bytes.HasPrefix(hK, key) {
 				dat = make([]byte, len(hV))
 				copy(dat, hV)
 				return nil
 			}
-		}
-		if !first {
-			return ErrKeyNotFound
 		}
 		{
 			b := tx.Bucket(bucket)
@@ -796,6 +793,11 @@ func (m *mutation) Get(bucket, key []byte) ([]byte, error) {
 		return m.db.Get(bucket, key)
 	}
 	return nil, ErrKeyNotFound
+}
+
+func (m *mutation) GetS(hBucket, key []byte, timestamp uint64) ([]byte, error) {
+	composite, _ := compositeKeySuffix(key, timestamp)
+	return m.Get(hBucket, composite)
 }
 
 func (m *mutation) getNoLock(bucket, key []byte) ([]byte, error) {

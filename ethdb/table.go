@@ -51,6 +51,10 @@ func (dt *table) Get(bucket, key []byte) ([]byte, error) {
 	return dt.db.Get(bucket, append([]byte(dt.prefix), key...))
 }
 
+func (dt *table) GetS(hBucket, key []byte, timestamp uint64) ([]byte, error) {
+	return dt.db.GetS(hBucket, append([]byte(dt.prefix), key...), timestamp)
+}
+
 func (dt *table) GetAsOf(bucket, hBucket, key []byte, timestamp uint64) ([]byte, error) {
 	return dt.db.GetAsOf(bucket, hBucket, append([]byte(dt.prefix), key...), timestamp)
 }

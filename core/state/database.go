@@ -204,27 +204,7 @@ func (dbs *DbState) ReadAccountData(address common.Address) (*Account, error) {
 	if err != nil || enc == nil || len(enc) == 0 {
 		return nil, nil
 	}
-	var data Account
-	// Kind of hacky
-	if len(enc) == 1 {
-		data.Balance = new(big.Int)
-		data.CodeHash = emptyCodeHash
-		data.Root = emptyRoot
-	} else if len(enc) < 60 {
-		var extData ExtAccount
-		if err := rlp.DecodeBytes(enc, &extData); err != nil {
-			return nil, err
-		}
-		data.Nonce = extData.Nonce
-		data.Balance = extData.Balance
-		data.CodeHash = emptyCodeHash
-		data.Root = emptyRoot
-	} else {
-		if err := rlp.DecodeBytes(enc, &data); err != nil {
-			return nil, err
-		}
-	}
-	return &data, nil
+	return encodingToAccount(enc)
 }
 
 func (dbs *DbState) ReadAccountStorage(address common.Address, key *common.Hash) ([]byte, error) {
@@ -284,6 +264,319 @@ func (dbs *DbState) WriteAccountStorage(address common.Address, key, original, v
 	return nil
 }
 
+type RepairDbState struct {
+	currentDb ethdb.Database
+	historyDb ethdb.GetterPutter
+	blockNr uint64
+	storageTries     map[common.Address]*trie.Trie
+	storageUpdates   map[common.Address]map[common.Hash][]byte
+	generationCounts map[uint64]int
+	nodeCount        int
+	oldestGeneration uint64
+}
+
+func NewRepairDbState(currentDb ethdb.Database, historyDb ethdb.GetterPutter, blockNr uint64) *RepairDbState {
+	return &RepairDbState{
+		currentDb: currentDb,
+		historyDb: historyDb,
+		blockNr: blockNr,
+		storageTries: make(map[common.Address]*trie.Trie),
+		storageUpdates: make(map[common.Address]map[common.Hash][]byte),
+		generationCounts: make(map[uint64]int, 4096),
+		oldestGeneration: blockNr,
+	}
+}
+
+func (rds *RepairDbState) SetBlockNr(blockNr uint64) {
+	rds.blockNr = blockNr
+}
+
+func (rds *RepairDbState) ReadAccountData(address common.Address) (*Account, error) {
+	h := newHasher()
+	defer returnHasherToPool(h)
+	h.sha.Reset()
+	h.sha.Write(address[:])
+	var buf common.Hash
+	h.sha.Read(buf[:])
+	enc, err := rds.currentDb.Get(AccountsBucket, buf[:])
+	if err != nil || enc == nil || len(enc) == 0 {
+		return nil, nil
+	}
+	return encodingToAccount(enc)
+}
+
+func (rds *RepairDbState) ReadAccountStorage(address common.Address, key *common.Hash) ([]byte, error) {
+	h := newHasher()
+	defer returnHasherToPool(h)
+	h.sha.Reset()
+	h.sha.Write(key[:])
+	var buf common.Hash
+	h.sha.Read(buf[:])
+	enc, err := rds.currentDb.Get(StorageBucket, append(address[:], buf[:]...))
+	if err != nil || enc == nil {
+		return nil, nil
+	}
+	return enc, nil
+}
+
+func (rds *RepairDbState) ReadAccountCode(codeHash common.Hash) ([]byte, error) {
+	if bytes.Equal(codeHash[:], emptyCodeHash) {
+		return nil, nil
+	}
+	return rds.currentDb.Get(CodeBucket, codeHash[:])
+}
+
+func (rds *RepairDbState) ReadAccountCodeSize(codeHash common.Hash) (int, error) {
+	code, err := rds.ReadAccountCode(codeHash)
+	if err != nil {
+		return 0, err
+	}
+	return len(code), nil
+}
+
+func (rds *RepairDbState) getStorageTrie(address common.Address, create bool) (*trie.Trie, error) {
+	t, ok := rds.storageTries[address]
+	if !ok && create {
+		account, err := rds.ReadAccountData(address)
+		if err != nil {
+			return nil, err
+		}
+		if account == nil {
+			t = trie.New(common.Hash{}, StorageBucket, address[:], true)
+		} else {
+			t = trie.New(account.Root, StorageBucket, address[:], true)
+		}
+		t.MakeListed(rds.joinGeneration, rds.leftGeneration)
+		rds.storageTries[address] = t
+	}
+	return t, nil
+}
+
+func (rds *RepairDbState) UpdateAccountData(address common.Address, original, account *Account) error {
+	oldContinuations := []*trie.TrieContinuation{}
+	newContinuations := []*trie.TrieContinuation{}
+	var storageTrie *trie.Trie
+	var err error
+	if m, ok := rds.storageUpdates[address]; ok {
+		storageTrie, err = rds.getStorageTrie(address, true)
+		if err != nil {
+			return err
+		}
+		for keyHash, v := range m {
+			var c *trie.TrieContinuation
+			if len(v) > 0 {
+				c = storageTrie.UpdateAction(keyHash[:], v)
+			} else {
+				c = storageTrie.DeleteAction(keyHash[:])
+			}
+			oldContinuations = append(oldContinuations, c)
+		}
+		delete(rds.storageUpdates, address)
+	}
+	it := 0
+	for len(oldContinuations) > 0 {
+		var resolver *trie.TrieResolver
+		for _, c := range oldContinuations {
+			if !c.RunWithDb(rds.currentDb, rds.blockNr) {
+				newContinuations = append(newContinuations, c)
+				if resolver == nil {
+					resolver = trie.NewResolver(rds.currentDb, false, false)
+				}
+				resolver.AddContinuation(c)
+			}
+		}
+		if len(newContinuations) > 0 {
+			if err := resolver.ResolveWithDb(rds.currentDb, rds.blockNr); err != nil {
+				return err
+			}
+			resolver = nil
+		}
+		oldContinuations, newContinuations = newContinuations, []*trie.TrieContinuation{}
+		it++
+	}
+	if it > 3 {
+		fmt.Printf("Resolved storage in %d iterations\n", it)
+	}
+	if storageTrie != nil {
+		account.Root = storageTrie.Hash()
+	}
+	// Don't write historical record if the account did not change
+	if accountsEqual(original, account) {
+		return nil
+	}
+	h := newHasher()
+	defer returnHasherToPool(h)
+	h.sha.Reset()
+	h.sha.Write(address[:])
+	var addrHash common.Hash
+	h.sha.Read(addrHash[:])
+	data, err := accountToEncoding(account)
+	if err != nil {
+		return err
+	}
+	if err = rds.currentDb.Put(AccountsBucket, addrHash[:], data); err != nil {
+		return err
+	}
+	var originalData []byte
+	if original.Balance == nil {
+		originalData = []byte{}
+	} else {
+		originalData, err = accountToEncoding(original)
+		if err != nil {
+			return err
+		}
+	}
+	v, _ := rds.historyDb.GetS(AccountsHistoryBucket, addrHash[:], rds.blockNr)
+	if !bytes.Equal(v, originalData) {
+		fmt.Printf("REPAIR (UpdateAccountData): At block %d, address: %x, expected %x, found %x\n", rds.blockNr, address, originalData, v)
+		return nil
+		//return rds.historyDb.PutS(AccountsHistoryBucket, addrHash[:], originalData, rds.blockNr)
+	}
+	return nil
+}
+
+func (rds *RepairDbState) DeleteAccount(address common.Address, original *Account) error {
+	h := newHasher()
+	defer returnHasherToPool(h)
+	h.sha.Reset()
+	h.sha.Write(address[:])
+	var addrHash common.Hash
+	h.sha.Read(addrHash[:])
+
+	delete(rds.storageUpdates, address)
+
+	if err := rds.currentDb.Delete(AccountsBucket, addrHash[:]); err != nil {
+		return err
+	}
+	var originalData []byte
+	var err error
+	if original.Balance == nil {
+		// Account has been created and deleted in the same block
+		originalData = []byte{}
+	} else {
+		originalData, err = accountToEncoding(original)
+		if err != nil {
+			return err
+		}
+	}
+	v, _ := rds.historyDb.GetS(AccountsHistoryBucket, addrHash[:], rds.blockNr)
+	if !bytes.Equal(v, originalData) {
+		fmt.Printf("REPAIR (DeleteAccount): At block %d, address: %x, expected %x, found %x\n", rds.blockNr, address, originalData, v)
+		return nil
+		//return rds.historyDb.PutS(AccountsHistoryBucket, addrHash[:], originalData, rds.blockNr)
+	}
+	return nil
+}
+
+func (rds *RepairDbState) UpdateAccountCode(codeHash common.Hash, code []byte) error {
+	return rds.currentDb.Put(CodeBucket, codeHash[:], code)
+}
+
+func (rds *RepairDbState) WriteAccountStorage(address common.Address, key, original, value *common.Hash) error {
+	h := newHasher()
+	defer returnHasherToPool(h)
+	h.sha.Reset()
+	h.sha.Write(key[:])
+	var seckey common.Hash
+	h.sha.Read(seckey[:])
+
+	v := bytes.TrimLeft(value[:], "\x00")
+	vv := make([]byte, len(v))
+	copy(vv, v)
+	m, ok := rds.storageUpdates[address]
+	if !ok {
+		m = make(map[common.Hash][]byte)
+		rds.storageUpdates[address] = m
+	}
+	if len(v) > 0 {
+		m[seckey] = vv
+	} else {
+		m[seckey] = nil
+	}
+
+	compositeKey := append(address[:], seckey[:]...)
+	var err error
+	if len(v) == 0 {
+		err = rds.currentDb.Delete(StorageBucket, compositeKey)
+	} else {
+		err = rds.currentDb.Put(StorageBucket, compositeKey, vv)
+	}
+	if err != nil {
+		return err
+	}
+
+	o := bytes.TrimLeft(original[:], "\x00")
+	oo := make([]byte, len(o))
+	copy(oo, o)
+	val, _ := rds.historyDb.GetS(StorageHistoryBucket, compositeKey, rds.blockNr)
+	if !bytes.Equal(val, oo) {
+		fmt.Printf("REPAIR (WriteAccountStorage): At block %d, address: %x, key %x, expected %x, found %x\n", rds.blockNr, address, key, oo, val)
+		return nil
+		//return rds.historyDb.PutS(StorageHistoryBucket, compositeKey, oo, rds.blockNr)
+	}
+	return nil
+}
+
+func (rds *RepairDbState) joinGeneration(gen uint64) {
+	rds.nodeCount++
+	rds.generationCounts[gen]++
+
+}
+
+func (rds *RepairDbState) leftGeneration(gen uint64) {
+	rds.nodeCount--
+	rds.generationCounts[gen]--
+}
+
+func (rds *RepairDbState) PruneTries() {
+	if rds.nodeCount > int(MaxTrieCacheGen) {
+		toRemove := 0
+		excess := rds.nodeCount - int(MaxTrieCacheGen)
+		gen := rds.oldestGeneration
+		for excess > 0 {
+			excess -= rds.generationCounts[gen]
+			toRemove += rds.generationCounts[gen]
+			delete(rds.generationCounts, gen)
+			gen++
+		}
+		// Unload all nodes with touch timestamp < gen
+		for address, storageTrie := range rds.storageTries {
+			empty := storageTrie.UnloadOlderThan(gen)
+			if empty {
+				delete(rds.storageTries, address)
+			}
+		}
+		rds.oldestGeneration = gen
+		rds.nodeCount -= toRemove
+	}
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	fmt.Printf("Memory: nodes=%d, alloc=%d, sys=%d\n", rds.nodeCount, int(m.Alloc / 1024), int(m.Sys / 1024))
+}
+
+type NoopWriter struct {
+}
+
+func NewNoopWriter() *NoopWriter {
+	return &NoopWriter{}
+}
+
+func (nw *NoopWriter) UpdateAccountData(address common.Address, original, account *Account) error {
+	return nil
+}
+
+func (nw *NoopWriter) DeleteAccount(address common.Address, original *Account) error {
+	return nil
+}
+
+func (nw *NoopWriter) UpdateAccountCode(codeHash common.Hash, code []byte) error {
+	return nil
+}
+
+func (nw *NoopWriter) WriteAccountStorage(address common.Address, key, original, value *common.Hash) error {
+	return nil
+}
+
 // Implements StateReader by wrapping a trie and a database, where trie acts as a cache for the database
 type TrieDbState struct {
 	t                *trie.Trie
@@ -296,11 +589,9 @@ type TrieDbState struct {
 	codeCache        *lru.Cache
 	codeSizeCache    *lru.Cache
 	historical       bool
-	noHistory        bool
 	generationCounts map[uint64]int
 	nodeCount        int
 	oldestGeneration uint64
-	foldNodes        bool
 }
 
 func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieDbState, error) {
@@ -333,14 +624,6 @@ func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieD
 func (tds *TrieDbState) SetHistorical(h bool) {
 	tds.historical = h
 	tds.t.SetHistorical(h)
-}
-
-func (tds *TrieDbState) SetNoHistory(nh bool) {
-	tds.noHistory = nh
-}
-
-func (tds *TrieDbState) SetFoldNodes(f bool) {
-	tds.foldNodes = f
 }
 
 func (tds *TrieDbState) Copy() *TrieDbState {
@@ -502,7 +785,7 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 
 func (tds *TrieDbState) Rebuild() {
 	tr := tds.AccountTrie()
-	tr.Rebuild(tds.db, tds.blockNr, tds.foldNodes)
+	tr.Rebuild(tds.db, tds.blockNr)
 }
 
 func (tds *TrieDbState) SetBlockNr(blockNr uint64) {
@@ -807,25 +1090,6 @@ func (tds *TrieDbState) PruneTries() {
 		tds.oldestGeneration = gen
 		tds.nodeCount -= toRemove
 	}
-	/*
-	actual := 0
-	actualM := make(map[uint64]int)
-	for _, storageTrie := range tds.storageTries {
-		actual += storageTrie.CountNodes(actualM)
-	}
-	actual += tds.t.CountNodes(actualM)
-	fmt.Printf("Actual node count: %d, accounted: %d\n", actual, tds.nodeCount)
-	for gen, count := range actualM {
-		if count != tds.generationCounts[gen] {
-			fmt.Printf("gen count[%d], actual: %d, accounted:%d\n", gen, count, tds.generationCounts[gen])
-		}
-	}
-	for gen, count := range tds.generationCounts {
-		if count != actualM[gen] {
-			fmt.Printf("gen count[%d], actual: %d, accounted:%d\n", gen, actualM[gen], count)
-		}
-	}
-	*/
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	log.Info("Memory", "nodes", tds.nodeCount, "alloc", int(m.Alloc / 1024), "sys", int(m.Sys / 1024), "numGC", int(m.NumGC))
@@ -898,9 +1162,6 @@ func (dsw *DbStateWriter) UpdateAccountData(address common.Address, original, ac
 	if err = dsw.tds.db.Put(AccountsBucket, addrHash[:], data); err != nil {
 		return err
 	}
-	if dsw.tds.noHistory {
-		return nil
-	}
 	// Don't write historical record if the account did not change
 	if accountsEqual(original, account) {
 		return nil
@@ -934,9 +1195,6 @@ func (dsw *DbStateWriter) DeleteAccount(address common.Address, original *Accoun
 	}
 	if err := dsw.tds.db.Delete(AccountsBucket, addrHash[:]); err != nil {
 		return err
-	}
-	if dsw.tds.noHistory {
-		return nil
 	}
 	var originalData []byte
 	if original.Balance == nil {
@@ -994,9 +1252,6 @@ func (dsw *DbStateWriter) WriteAccountStorage(address common.Address, key, origi
 	}
 	if err != nil {
 		return err
-	}
-	if dsw.tds.noHistory {
-		return nil
 	}
 	o := bytes.TrimLeft(original[:], "\x00")
 	oo := make([]byte, len(o))
