@@ -429,8 +429,7 @@ func (rds *RepairDbState) UpdateAccountData(address common.Address, original, ac
 	v, _ := rds.historyDb.GetS(AccountsHistoryBucket, addrHash[:], rds.blockNr)
 	if !bytes.Equal(v, originalData) {
 		fmt.Printf("REPAIR (UpdateAccountData): At block %d, address: %x, expected %x, found %x\n", rds.blockNr, address, originalData, v)
-		return nil
-		//return rds.historyDb.PutS(AccountsHistoryBucket, addrHash[:], originalData, rds.blockNr)
+		return rds.historyDb.PutS(AccountsHistoryBucket, addrHash[:], originalData, rds.blockNr)
 	}
 	return nil
 }
@@ -462,8 +461,7 @@ func (rds *RepairDbState) DeleteAccount(address common.Address, original *Accoun
 	v, _ := rds.historyDb.GetS(AccountsHistoryBucket, addrHash[:], rds.blockNr)
 	if !bytes.Equal(v, originalData) {
 		fmt.Printf("REPAIR (DeleteAccount): At block %d, address: %x, expected %x, found %x\n", rds.blockNr, address, originalData, v)
-		return nil
-		//return rds.historyDb.PutS(AccountsHistoryBucket, addrHash[:], originalData, rds.blockNr)
+		return rds.historyDb.PutS(AccountsHistoryBucket, addrHash[:], originalData, rds.blockNr)
 	}
 	return nil
 }
@@ -511,8 +509,7 @@ func (rds *RepairDbState) WriteAccountStorage(address common.Address, key, origi
 	val, _ := rds.historyDb.GetS(StorageHistoryBucket, compositeKey, rds.blockNr)
 	if !bytes.Equal(val, oo) {
 		fmt.Printf("REPAIR (WriteAccountStorage): At block %d, address: %x, key %x, expected %x, found %x\n", rds.blockNr, address, key, oo, val)
-		return nil
-		//return rds.historyDb.PutS(StorageHistoryBucket, compositeKey, oo, rds.blockNr)
+		return rds.historyDb.PutS(StorageHistoryBucket, compositeKey, oo, rds.blockNr)
 	}
 	return nil
 }
