@@ -1373,7 +1373,7 @@ func repair() {
 		_, _, _, err = core.SetupGenesisBlock(currentDb, core.DefaultGenesisBlock())
 		check(err)
 	}
-	chainConfig := params.MainChainConfig
+	chainConfig := params.MainnetChainConfig
 	vmConfig := vm.Config{}
 	bc, err := core.NewBlockChain(historyDb, nil, chainConfig, ethash.NewFaker(), vmConfig, nil)
 	check(err)
@@ -1457,7 +1457,7 @@ func main() {
  	//bucketStats(db)
  	//mychart()
  	//testRebuild()
- 	testRewind(*block, *rewind)
+ 	//testRewind(*block, *rewind)
  	//hashFile()
  	//buildHashFromFile()
  	//testResolve()
