@@ -1356,10 +1356,10 @@ func repair() {
 		interruptCh <- true
 	}()
 
-	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
-	//ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/geth/chaindata")
-	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
-	historyDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/testnet/geth/chaindata")
+	//historyDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
+	historyDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/geth/chaindata")
+	//historyDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
+	//historyDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/testnet/geth/chaindata")
 	check(err)
 	defer historyDb.Close()
 	if *block == 1 {
@@ -1370,10 +1370,10 @@ func repair() {
 	check(err)
 	defer currentDb.Close()
 	if *block == 1 {
-		_, _, _, err = core.SetupGenesisBlock(currentDb, core.DefaultTestnetGenesisBlock())
+		_, _, _, err = core.SetupGenesisBlock(currentDb, core.DefaultGenesisBlock())
 		check(err)
 	}
-	chainConfig := params.TestnetChainConfig
+	chainConfig := params.MainChainConfig
 	vmConfig := vm.Config{}
 	bc, err := core.NewBlockChain(historyDb, nil, chainConfig, ethash.NewFaker(), vmConfig, nil)
 	check(err)
@@ -1484,7 +1484,7 @@ func main() {
  	//execToBlock(*block)
  	//extractTrie(*block)
  	//fmt.Printf("%x\n", crypto.Keccak256(nil))
- 	//repair()
+ 	repair()
  	//readAccount()
 }
 
