@@ -133,6 +133,7 @@ type BlockChain struct {
 
 	badBlocks      *lru.Cache              // Bad block cache
 	shouldPreserve func(*types.Block) bool // Function used to determine whether should preserve the given block.
+	noHistory bool
 }
 
 // NewBlockChain returns a fully initialised block chain using information
@@ -201,6 +202,10 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	// Take ownership of this particular state
 	go bc.update()
 	return bc, nil
+}
+
+func (bc *BlockChain) SetNoHistory(nh bool) {
+	bc.noHistory = nh
 }
 
 func (bc *BlockChain) GetTrieDbState() *state.TrieDbState {
@@ -1140,6 +1145,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 			currentBlockNr := bc.CurrentBlock().NumberU64()
 			log.Info("Creating StateDB from latest state", "block", currentBlockNr)
 			bc.trieDbState, err = state.NewTrieDbState(bc.CurrentBlock().Header().Root, bc.db, currentBlockNr)
+			bc.trieDbState.SetNoHistory(bc.noHistory)
 			if err != nil {
 				return k, events, coalescedLogs, err
 			}

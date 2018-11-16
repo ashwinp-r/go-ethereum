@@ -387,7 +387,7 @@ func (self *StateDB) getStateObject(addr common.Address) (stateObject *stateObje
 		return nil
 	}
 	// Insert into the live set.
-	obj := newObject(self, addr, *account)
+	obj := newObject(self, addr, *account, *account)
 	self.setStateObject(obj)
 	return obj
 }
@@ -426,13 +426,16 @@ func (self *StateDB) createObject(addr common.Address, previous *stateObject) (n
 	//fmt.Printf("CREATE %x\n", addr[:])
 	prev = previous
 	var account Account
+	var original Account
 	if previous == nil {
 		account = Account{}
 		account.Root.SetBytes(emptyRoot[:])
+		original = Account{}
 	} else {
 		account = previous.data
+		original = previous.original
 	}
-	newobj = newObject(self, addr, account)
+	newobj = newObject(self, addr, account, original)
 	newobj.setNonce(0) // sets the object to dirty
 	if prev == nil {
 		self.journal.append(createObjectChange{account: &addr})

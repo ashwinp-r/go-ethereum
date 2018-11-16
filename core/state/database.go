@@ -23,6 +23,7 @@ import (
 	"io"
 	"runtime"
 	"math/big"
+	"encoding/binary"
 	//"runtime/debug"
 	//"sort"
 
@@ -273,6 +274,8 @@ type RepairDbState struct {
 	generationCounts map[uint64]int
 	nodeCount        int
 	oldestGeneration uint64
+	accountsKeys map[string]struct{}
+	storageKeys map[string]struct{}
 }
 
 func NewRepairDbState(currentDb ethdb.Database, historyDb ethdb.GetterPutter, blockNr uint64) *RepairDbState {
@@ -284,11 +287,96 @@ func NewRepairDbState(currentDb ethdb.Database, historyDb ethdb.GetterPutter, bl
 		storageUpdates: make(map[common.Address]map[common.Hash][]byte),
 		generationCounts: make(map[uint64]int, 4096),
 		oldestGeneration: blockNr,
+		accountsKeys: make(map[string]struct{}),
+		storageKeys: make(map[string]struct{}),
 	}
 }
 
 func (rds *RepairDbState) SetBlockNr(blockNr uint64) {
 	rds.blockNr = blockNr
+	rds.accountsKeys = make(map[string]struct{})
+	rds.storageKeys = make(map[string]struct{})
+}
+
+// If highZero is true, the most significant bits of every byte is left zero
+func encodeTimestamp(timestamp uint64) []byte {
+	var suffix []byte
+	var limit uint64
+	limit = 32
+	for bytecount := 1; bytecount <=8; bytecount++ {
+		if timestamp < limit {
+			suffix = make([]byte, bytecount)
+			b := timestamp
+			for i := bytecount - 1; i > 0; i-- {
+				suffix[i] = byte(b&0xff)
+				b >>= 8
+			}
+			suffix[0] = byte(b) | (byte(bytecount)<<5) // 3 most significant bits of the first byte are bytecount
+			break
+		}
+		limit <<= 8
+	}
+	return suffix
+}
+
+func (rds *RepairDbState) CheckKeys() {
+	aSet := make(map[string]struct{})
+	suffix := encodeTimestamp(rds.blockNr)
+	{
+		suffixkey := make([]byte, len(suffix) + len(AccountsHistoryBucket))
+		copy(suffixkey, suffix)
+		copy(suffixkey[len(suffix):], AccountsHistoryBucket)
+		v, _ := rds.historyDb.Get(ethdb.SuffixBucket, suffixkey)
+		if len(v) > 0 {
+			keycount := int(binary.BigEndian.Uint32(v))
+			for i, ki := 4, 0; ki < keycount; ki++ {
+				l := int(v[i])
+				i++
+				aSet[string(v[i:i+l])] = struct{}{}
+				i += l
+			}
+		}
+	}
+	aDiff := len(aSet) != len(rds.accountsKeys)
+	if !aDiff {
+		for a, _ := range aSet {
+			if _, ok := rds.accountsKeys[a]; !ok {
+				aDiff = true
+				break
+			}
+		}
+	}
+	if aDiff {
+		fmt.Printf("Accounts key set does not match for block %d\n", rds.blockNr)
+	}
+	sSet := make(map[string]struct{})
+	{
+		suffixkey := make([]byte, len(suffix) + len(StorageHistoryBucket))
+		copy(suffixkey, suffix)
+		copy(suffixkey[len(suffix):], StorageHistoryBucket)
+		v, _ := rds.historyDb.Get(ethdb.SuffixBucket, suffixkey)
+		if len(v) > 0 {
+			keycount := int(binary.BigEndian.Uint32(v))
+			for i, ki := 4, 0; ki < keycount; ki++ {
+				l := int(v[i])
+				i++
+				sSet[string(v[i:i+l])] = struct{}{}
+				i += l
+			}
+		}
+	}
+	sDiff := len(sSet) != len(rds.storageKeys)
+	if !sDiff {
+		for s, _ := range sSet {
+			if _, ok := rds.storageKeys[s]; !ok {
+				sDiff = true
+				break
+			}
+		}
+	}
+	if sDiff {
+		fmt.Printf("Storage key set does not match for block %d\n", rds.blockNr)
+	}
 }
 
 func (rds *RepairDbState) ReadAccountData(address common.Address) (*Account, error) {
@@ -410,6 +498,7 @@ func (rds *RepairDbState) UpdateAccountData(address common.Address, original, ac
 	h.sha.Write(address[:])
 	var addrHash common.Hash
 	h.sha.Read(addrHash[:])
+	rds.accountsKeys[string(addrHash[:])]=struct{}{}
 	data, err := accountToEncoding(account)
 	if err != nil {
 		return err
@@ -441,6 +530,7 @@ func (rds *RepairDbState) DeleteAccount(address common.Address, original *Accoun
 	h.sha.Write(address[:])
 	var addrHash common.Hash
 	h.sha.Read(addrHash[:])
+	rds.accountsKeys[string(addrHash[:])]=struct{}{}
 
 	delete(rds.storageUpdates, address)
 
@@ -493,6 +583,7 @@ func (rds *RepairDbState) WriteAccountStorage(address common.Address, key, origi
 	}
 
 	compositeKey := append(address[:], seckey[:]...)
+	rds.storageKeys[string(compositeKey)] = struct{}{}
 	var err error
 	if len(v) == 0 {
 		err = rds.currentDb.Delete(StorageBucket, compositeKey)
@@ -589,6 +680,7 @@ type TrieDbState struct {
 	generationCounts map[uint64]int
 	nodeCount        int
 	oldestGeneration uint64
+	noHistory        bool
 }
 
 func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieDbState, error) {
@@ -621,6 +713,10 @@ func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieD
 func (tds *TrieDbState) SetHistorical(h bool) {
 	tds.historical = h
 	tds.t.SetHistorical(h)
+}
+
+func (tds *TrieDbState) SetNoHistory(nh bool) {
+	tds.noHistory = nh
 }
 
 func (tds *TrieDbState) Copy() *TrieDbState {
@@ -1159,6 +1255,9 @@ func (dsw *DbStateWriter) UpdateAccountData(address common.Address, original, ac
 	if err = dsw.tds.db.Put(AccountsBucket, addrHash[:], data); err != nil {
 		return err
 	}
+	if dsw.tds.noHistory {
+		return nil
+	}
 	// Don't write historical record if the account did not change
 	if accountsEqual(original, account) {
 		return nil
@@ -1192,6 +1291,9 @@ func (dsw *DbStateWriter) DeleteAccount(address common.Address, original *Accoun
 	}
 	if err := dsw.tds.db.Delete(AccountsBucket, addrHash[:]); err != nil {
 		return err
+	}
+	if dsw.tds.noHistory {
+		return nil
 	}
 	var originalData []byte
 	if original.Balance == nil {
@@ -1249,6 +1351,9 @@ func (dsw *DbStateWriter) WriteAccountStorage(address common.Address, key, origi
 	}
 	if err != nil {
 		return err
+	}
+	if dsw.tds.noHistory {
+		return nil
 	}
 	o := bytes.TrimLeft(original[:], "\x00")
 	oo := make([]byte, len(o))

@@ -695,6 +695,7 @@ func execToBlock(block int) {
 	check(err)
 	bc, err := core.NewBlockChain(stateDb, nil, params.TestnetChainConfig, ethash.NewFaker(), vm.Config{}, nil)
 	check(err)
+	bc.SetNoHistory(true)
 	blocks := types.Blocks{}
 	var lastBlock *types.Block
 	for i := 1; i <= block; i++ {
@@ -712,6 +713,13 @@ func execToBlock(block int) {
 	check(err)
 	fmt.Printf("Root hash: %x\n", root)
 	fmt.Printf("Last block root hash: %x\n", lastBlock.Root())
+	filename := fmt.Sprintf("right_%d.txt", lastBlock.NumberU64())
+	fmt.Printf("Generating deep snapshot of the right tries... %s\n", filename)
+	f, err := os.Create(filename)
+	if err == nil {
+		defer f.Close()
+		tds.PrintTrie(f)
+	}
 }
 
 func extractTrie(block int) {
@@ -739,9 +747,9 @@ func extractTrie(block int) {
 }
 
 func testRewind(block, rewind int) {
-	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/testnet/geth/chaindata")
+	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/testnet/geth/chaindata")
 	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
-	ethDb, err := ethdb.NewLDBDatabase("statedb")
+	//ethDb, err := ethdb.NewLDBDatabase("statedb")
 	check(err)
 	defer ethDb.Close()
 	bc, err := core.NewBlockChain(ethDb, nil, params.TestnetChainConfig, ethash.NewFaker(), vm.Config{}, nil)
@@ -790,6 +798,7 @@ func testRewind(block, rewind int) {
 		defer f.Close()
 		tds.PrintTrie(f)
 	}
+	/*
 	{
 		tds, err = state.NewTrieDbState(rewoundBlock.Root(), db, rewoundBlock.NumberU64())
 		tds.SetHistorical(true)
@@ -1398,6 +1407,7 @@ func repair() {
 		if err := statedb.Commit(chainConfig.IsEIP158(block.Number()), dbstate); err != nil {
 			panic(err)
 		}
+		dbstate.CheckKeys()
 		if currentM.BatchSize() >= 200000 {
 			_, err := currentM.Commit()
 			check(err)
@@ -1419,6 +1429,15 @@ func repair() {
 	fmt.Printf("Next time specify -block %d\n", blockNum)
 }
 
+func readAccount() {
+	ethDb, err := ethdb.NewLDBDatabase("statedb")
+	check(err)
+	accountBytes := common.FromHex(*account)
+	secKey := crypto.Keccak256(accountBytes)
+	v, _ := ethDb.Get(state.AccountsBucket, secKey)
+	fmt.Printf("%x:%x\n", secKey, v)
+}
+
 func main() {
 	flag.Parse()
     if *cpuprofile != "" {
@@ -1438,7 +1457,7 @@ func main() {
  	//bucketStats(db)
  	//mychart()
  	//testRebuild()
- 	//testRewind(*block, *rewind)
+ 	testRewind(*block, *rewind)
  	//hashFile()
  	//buildHashFromFile()
  	//testResolve()
@@ -1465,6 +1484,7 @@ func main() {
  	//execToBlock(*block)
  	//extractTrie(*block)
  	//fmt.Printf("%x\n", crypto.Keccak256(nil))
- 	repair()
+ 	//repair()
+ 	//readAccount()
 }
 
