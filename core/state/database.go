@@ -348,6 +348,25 @@ func (rds *RepairDbState) CheckKeys() {
 	}
 	if aDiff {
 		fmt.Printf("Accounts key set does not match for block %d\n", rds.blockNr)
+		newlen := 4 + len(rds.accountsKeys)
+		for key, _ := range rds.accountsKeys {
+			newlen += len(key)
+		}
+		dv := make([]byte, newlen)
+		binary.BigEndian.PutUint32(dv, uint32(len(rds.accountsKeys)))
+		i := 4
+		for key, _ := range rds.accountsKeys {
+			dv[i] = byte(len(key))
+			i++
+			copy(dv[i:], key)
+			i += len(key)
+		}
+		suffixkey := make([]byte, len(suffix) + len(AccountsHistoryBucket))
+		copy(suffixkey, suffix)
+		copy(suffixkey[len(suffix):], AccountsHistoryBucket)
+		if err := rds.historyDb.Put(ethdb.SuffixBucket, suffixkey, dv); err != nil {
+			panic(err)
+		}
 	}
 	sSet := make(map[string]struct{})
 	{
@@ -376,6 +395,25 @@ func (rds *RepairDbState) CheckKeys() {
 	}
 	if sDiff {
 		fmt.Printf("Storage key set does not match for block %d\n", rds.blockNr)
+		newlen := 4 + len(rds.storageKeys)
+		for key, _ := range rds.storageKeys {
+			newlen += len(key)
+		}
+		dv := make([]byte, newlen)
+		binary.BigEndian.PutUint32(dv, uint32(len(rds.storageKeys)))
+		i := 4
+		for key, _ := range rds.storageKeys {
+			dv[i] = byte(len(key))
+			i++
+			copy(dv[i:], key)
+			i += len(key)
+		}
+		suffixkey := make([]byte, len(suffix) + len(StorageHistoryBucket))
+		copy(suffixkey, suffix)
+		copy(suffixkey[len(suffix):], StorageHistoryBucket)
+		if err := rds.historyDb.Put(ethdb.SuffixBucket, suffixkey, dv); err != nil {
+			panic(err)
+		}
 	}
 }
 

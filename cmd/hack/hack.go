@@ -790,7 +790,6 @@ func testRewind(block, rewind int) {
 	rewoundRoot, err := tds.TrieRoot()
 	check(err)
 	fmt.Printf("Calculated rewound root hash: %x\n", rewoundRoot)
-	/*
 	filename := fmt.Sprintf("root_%d.txt", rewoundBlock.NumberU64())
 	fmt.Printf("Generating deep snapshot of the wront tries... %s\n", filename)
 	f, err := os.Create(filename)
@@ -1481,10 +1480,10 @@ func main() {
  	//loadAccount()
  	//preimage()
  	//printBranches(uint64(*block))
- 	//execToBlock(*block)
+ 	execToBlock(*block)
  	//extractTrie(*block)
  	//fmt.Printf("%x\n", crypto.Keccak256(nil))
- 	repair()
+ 	//repair()
  	//readAccount()
 }
 
