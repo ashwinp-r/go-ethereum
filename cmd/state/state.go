@@ -1062,7 +1062,8 @@ func storageUsage() {
 	db, err := bolt.Open("/Volumes/tb4/turbo-geth/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
 	//db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
 	check(err)
-	defer db.Close()	
+	defer db.Close()
+	/*
 	creatorsFile, err := os.Open("creators.csv")
 	check(err)
 	defer creatorsFile.Close()
@@ -1071,10 +1072,19 @@ func storageUsage() {
 	for records, _ := creatorsReader.Read(); records != nil; records, _ = creatorsReader.Read() {
 		creators[common.HexToAddress(records[0])] = common.HexToAddress(records[1])
 	}
+	*/
+	addrFile, err := os.Open("addresses.csv")
+	check(err)
+	defer addrFile.Close()
+	addrReader := csv.NewReader(bufio.NewReader(addrFile))
+	names := make(map[common.Address]string)
+	for records, _ := addrReader.Read(); records != nil; records, _ = addrReader.Read() {
+		names[common.HexToAddress(records[0])] = records[1]
+	}
 	// Go through the current state
 	var addr common.Address
 	itemsByAddress := make(map[common.Address]int)
-	itemsByCreator := make(map[common.Address]int)
+	//itemsByCreator := make(map[common.Address]int)
 	count := 0
 	err = db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(state.StorageBucket)
@@ -1085,7 +1095,7 @@ func storageUsage() {
 		for k, _ := c.First(); k != nil; k, _ = c.Next() {
 			copy(addr[:], k[:20])
 			itemsByAddress[addr]++
-			itemsByCreator[creators[addr]]++
+			//itemsByCreator[creators[addr]]++
 			count++
 			if count%100000 == 0 {
 				fmt.Printf("Processed %d storage records\n", count)
@@ -1114,8 +1124,13 @@ func storageUsage() {
 	cumulative := 0
 	for i := 0; i < iba.length; i++ {
 		cumulative += iba.ints[i]
-		fmt.Fprintf(w, "%d,%x,%d,%.3f\n", i, iba.values[i], iba.ints[i], float64(cumulative)/float64(total))
+		if name, ok := names[iba.values[i]]; ok {
+			fmt.Fprintf(w, "%d,%s,%d,%.3f\n", i, name, iba.ints[i], 100.0*float64(cumulative)/float64(total))
+		} else {
+			fmt.Fprintf(w, "%d,%x,%d,%.3f\n", i, iba.values[i], iba.ints[i], 100.0*float64(cumulative)/float64(total))
+		}
 	}
+	/*
 	ciba := NewIntSorterAddr(len(itemsByCreator))
 	idx = 0
 	for creator, items := range itemsByCreator {
@@ -1135,6 +1150,7 @@ func storageUsage() {
 		cumulative += ciba.ints[i]
 		fmt.Fprintf(cw, "%d,%x,%d,%.3f\n", i, ciba.values[i], ciba.ints[i], float64(cumulative)/float64(total))
 	}
+	*/
 }
 
 func oldStorage() {
