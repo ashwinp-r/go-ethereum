@@ -440,6 +440,7 @@ func printDiff(n1, n2 node, w io.Writer, ind string, key string) {
 					fmt.Fprintf(w, "\n")
 				} else {
 					fmt.Fprintf(w, "%x:(/%x)", compactToHex(n1.Key), compactToHex(n.Key))
+					printDiffSide(n2, w, ind, key)
 				}
 			} else {
 				fmt.Fprintf(w, "/%T\n", n2)

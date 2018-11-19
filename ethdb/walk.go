@@ -20,7 +20,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"sort"
+	//"sort"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/petar/GoLLRB/llrb"
@@ -32,20 +32,20 @@ var EndSuffix []byte = []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 // timestapSrc is the current timestamp, and timestamp Dst is where we rewind
 func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, key, value []byte) error) error {
 	// Collect list of buckets and keys that need to be considered
-	m := make(map[string]*llrb.LLRB)
+	m := make(map[string]map[string]struct{})
 	suffixDst := encodeTimestamp(timestampDst+1)
 	if err := db.Walk(SuffixBucket, suffixDst, 0, func (k, v []byte) (bool, error) {
 		timestamp, bucket := decodeTimestamp(k)
 		if timestamp > timestampSrc {
 			return false, nil
 		}
-		var t *llrb.LLRB
+		var t map[string]struct{}
 		var ok bool
 		keycount := int(binary.BigEndian.Uint32(v))
 		if keycount > 0 {
 			bucketStr := string(common.CopyBytes(bucket))
 			if t, ok = m[bucketStr]; !ok {
-				t = llrb.New()
+				t = make(map[string]struct{})
 				m[bucketStr] = t
 			}
 		}
@@ -63,7 +63,10 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 			preimage, _ := db.Get([]byte("secure-key-"), sk)
 			fmt.Printf("timestamp: %d, key: %x, preimage: %x\n", timestamp, k, preimage)
 			*/
-			t.ReplaceOrInsert(&PutItem{key: common.CopyBytes(v[i:i+l]), value: nil})
+			if timestamp == 1828654 || timestamp == 2727676 {
+				fmt.Printf("key at block %d, bucket %s: %x\n", timestamp, bucket, v[i:i+l])
+			}
+			t[string(common.CopyBytes(v[i:i+l]))] = struct{}{}
 			i += l
 		}
 		return true, nil
@@ -71,75 +74,21 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 		return err
 	}
 	//suffixDst := encodeTimestamp(timestampDst)
-	buckets := sort.StringSlice{}
-	for bucketStr, _ := range m {
-		buckets = append(buckets, bucketStr)
-	}
-	sort.Sort(buckets)
-	for _, bucketStr := range buckets {
-		t := m[bucketStr]
+	//buckets := sort.StringSlice{}
+	//for bucketStr := range m {
+	//	buckets = append(buckets, bucketStr)
+	//}
+	//sort.Sort(buckets)
+	for bucketStr, t := range m {
+		//t := m[bucketStr]
 		bucket := []byte(bucketStr)
-		//it := t.NewSeekIterator()
-		min, _ := t.Min().(*PutItem)
-		if min == nil {
-			return nil
-		}
-		/*
-		var item *PutItem = it.SeekTo(min).(*PutItem)
-		seeking := false
-		for !seeking && item != nil {
-			startkey := make([]byte, len(item.key) + len(suffixDst))
-			copy(startkey[:], item.key)
-			copy(startkey[len(item.key):], suffixDst)
-			seeking = true
-			if err := db.Walk(bucket, startkey, 0, func (k, v []byte) ([]byte, WalkAction, error) {
-				if bytes.Compare(k, startkey) < 0 {
-					return nil, WalkActionNext, nil
-				}
-				// Check if we found the "item" in the database
-				if bytes.HasPrefix(k, item.key) {
-					item.value = common.CopyBytes(v)
-					item, _ = it.SeekTo(item).(*PutItem)
-				} else {
-					// Find the next item that could match
-					for bytes.Compare(item.key, k[:len(item.key)]) < 0 {
-						item, _ = it.SeekTo(item).(*PutItem)
-						if item == nil {
-							seeking = false
-							return nil, WalkActionStop, nil
-						}
-					}
-					if bytes.HasPrefix(k, item.key) && bytes.Compare(k[len(item.key):], suffixDst) <= 0 {
-						item.value = common.CopyBytes(v)
-						item, _ = it.SeekTo(item).(*PutItem)
-					}
-				}
-				if item == nil {
-					seeking = false
-					return nil, WalkActionStop, nil
-				}
-				wr := make([]byte, len(item.key) + len(suffixDst))
-				copy(wr, item.key)
-				copy(wr[len(item.key):], suffixDst)
-				seeking = true
-				return wr, WalkActionSeek, nil
-			}); err != nil {
-				return err
-			}
-		}
-		*/
-		var extErr error
-		t.AscendGreaterOrEqual(min, func(i llrb.Item) bool {
-			item := i.(*PutItem)
-			value, err := db.GetAsOf(bucket[1:], bucket, item.key, timestampDst+1)
+		for keyStr := range t {
+			key := []byte(keyStr)
+			value, err := db.GetAsOf(bucket[1:], bucket, key, timestampDst+1)
 			if err != nil {
 				value = nil
 			}
-			df(bucket, item.key, value)
-			return true
-		})
-		if extErr != nil {
-			return extErr
+			df(bucket, key, value)
 		}
 	}
 	return nil
