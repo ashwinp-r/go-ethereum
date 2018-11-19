@@ -790,7 +790,7 @@ func testRewind(block, rewind int) {
 	rewoundRoot, err := tds.TrieRoot()
 	check(err)
 	fmt.Printf("Calculated rewound root hash: %x\n", rewoundRoot)
-	/*
+/*
 	filename := fmt.Sprintf("root_%d.txt", rewoundBlock.NumberU64())
 	fmt.Printf("Generating deep snapshot of the wront tries... %s\n", filename)
 	f, err := os.Create(filename)
@@ -798,7 +798,6 @@ func testRewind(block, rewind int) {
 		defer f.Close()
 		tds.PrintTrie(f)
 	}
-
 	{
 		tds, err = state.NewTrieDbState(rewoundBlock.Root(), db, rewoundBlock.NumberU64())
 		tds.SetHistorical(true)
@@ -1476,7 +1475,7 @@ func main() {
  	//testRedis()
  	//upgradeBlocks()
  	//compareTries()
- 	//invTree("r3", "root", "diff", *block, false)
+ 	//invTree("root", "r3", "diff", *block, false)
  	//invTree("iw", "ir", "id", *block, true)
  	//loadAccount()
  	//preimage()

@@ -39,20 +39,20 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 		if timestamp > timestampSrc {
 			return false, nil
 		}
-		var t map[string]struct{}
-		var ok bool
 		keycount := int(binary.BigEndian.Uint32(v))
 		if keycount > 0 {
 			bucketStr := string(common.CopyBytes(bucket))
+			var t map[string]struct{}
+			var ok bool
 			if t, ok = m[bucketStr]; !ok {
 				t = make(map[string]struct{})
 				m[bucketStr] = t
 			}
-		}
-		for i, ki := 4, 0; ki < keycount; ki++ {
-			l := int(v[i])
-			i++
-			/*
+			i := 4
+			for ki := 0; ki < keycount; ki++ {
+				l := int(v[i])
+				i++
+				/*
 			k := v[i:i+l]
 			var sk []byte
 			if len(k) == 52 {
@@ -62,12 +62,13 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 			}
 			preimage, _ := db.Get([]byte("secure-key-"), sk)
 			fmt.Printf("timestamp: %d, key: %x, preimage: %x\n", timestamp, k, preimage)
-			*/
 			if timestamp == 1828654 || timestamp == 2727676 {
 				fmt.Printf("key at block %d, bucket %s: %x\n", timestamp, bucket, v[i:i+l])
 			}
-			t[string(common.CopyBytes(v[i:i+l]))] = struct{}{}
-			i += l
+			*/
+				t[string(common.CopyBytes(v[i:i+l]))] = struct{}{}
+				i += l
+			}
 		}
 		return true, nil
 	}); err != nil {
@@ -88,7 +89,9 @@ func rewindData(db Getter, timestampSrc, timestampDst uint64, df func(bucket, ke
 			if err != nil {
 				value = nil
 			}
-			df(bucket, key, value)
+			if err := df(bucket, key, value); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

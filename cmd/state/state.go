@@ -997,7 +997,7 @@ func (ct CreationTracer) CaptureCreate(creator common.Address, creation common.A
 	return err
 }
 
-func creators() {
+func makeCreators() {
 	sigs := make(chan os.Signal, 1)
 	interruptCh := make(chan bool, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
@@ -1413,6 +1413,90 @@ func dustChartEOA() {
     check(err)
 }
 
+func makeSha3Preimages() {
+	sigs := make(chan os.Signal, 1)
+	interruptCh := make(chan bool, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigs
+		interruptCh <- true
+	}()
+
+	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
+	ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/geth/chaindata")
+	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
+	check(err)
+	defer ethDb.Close()
+	f, err := bolt.Open("/Volumes/tb4/turbo-geth/sha3preimages", 0600, &bolt.Options{})
+	check(err)
+	defer f.Close()
+	bucket := []byte("sha3")
+	chainConfig := params.MainnetChainConfig
+	vmConfig := vm.Config{EnablePreimageRecording: true}
+	bc, err := core.NewBlockChain(ethDb, nil, chainConfig, ethash.NewFaker(), vmConfig, nil)
+	check(err)
+	blockNum := uint64(*block)
+	interrupt := false
+	for !interrupt {
+		block := bc.GetBlockByNumber(blockNum)
+		if block == nil {
+			break
+		}
+		dbstate := state.NewDbState(ethDb, block.NumberU64()-1)
+		statedb := state.New(dbstate)
+		signer := types.MakeSigner(chainConfig, block.Number())
+		for _, tx := range block.Transactions() {
+			// Assemble the transaction call message and return if the requested offset
+			msg, _ := tx.AsMessage(signer)
+			context := core.NewEVMContext(msg, block.Header(), bc, nil)
+			// Not yet the searched for transaction, execute on top of the current state
+			vmenv := vm.NewEVM(context, statedb, chainConfig, vmConfig)
+			if _, _, _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(tx.Gas())); err != nil {
+				panic(fmt.Errorf("tx %x failed: %v", tx.Hash(), err))
+			}
+		}
+		pi := statedb.Preimages()
+		for hash, preimage := range pi {
+			var found bool
+			if err := f.View(func(tx *bolt.Tx) error {
+				b := tx.Bucket(bucket)
+				if b == nil {
+					return nil
+				}
+				v := b.Get(hash[:])
+				if v != nil {
+					found = true
+				}
+				return nil
+			}); err != nil {
+				panic(err)
+			}
+			if err := f.Update(func(tx *bolt.Tx) error {
+				b, err := tx.CreateBucketIfNotExists(bucket)
+				if err != nil {
+					return err
+				}
+				return b.Put(hash[:], preimage)
+			}); err != nil {
+				panic(err)
+			}
+		}
+		blockNum++
+		if blockNum % 1000 == 0 {
+			fmt.Printf("Processed %d blocks\n", blockNum)
+		}
+		// Check for interrupts
+		select {
+		case interrupt = <-interruptCh:
+			fmt.Println("interrupted, please wait for cleanup...")
+		default:
+		}
+	}
+	fmt.Printf("Next time specify -block %d\n", blockNum)
+}
+
+
 func main() {
 	flag.Parse()
 	if *cpuprofile != "" {
@@ -1430,11 +1514,12 @@ func main() {
 	//stateGrowth2()
 	//stateGrowthChart2()
 	//stateGrowthChart3()
-	//creators()
+	//makeCreators()
 	//stateGrowthChart4()
 	//stateGrowthChart5()
 	//storageUsage()
 	//oldStorage()
-	dustEOA()
-	dustChartEOA()
+	//dustEOA()
+	//dustChartEOA()
+	makeSha3Preimages()
 }
