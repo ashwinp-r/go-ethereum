@@ -267,7 +267,7 @@ func (dbs *DbState) WriteAccountStorage(address common.Address, key, original, v
 
 type RepairDbState struct {
 	currentDb ethdb.Database
-	historyDb ethdb.GetterPutter
+	historyDb ethdb.Database
 	blockNr uint64
 	storageTries     map[common.Address]*trie.Trie
 	storageUpdates   map[common.Address]map[common.Hash][]byte
@@ -278,7 +278,7 @@ type RepairDbState struct {
 	storageKeys map[string]struct{}
 }
 
-func NewRepairDbState(currentDb ethdb.Database, historyDb ethdb.GetterPutter, blockNr uint64) *RepairDbState {
+func NewRepairDbState(currentDb ethdb.Database, historyDb ethdb.Database, blockNr uint64) *RepairDbState {
 	return &RepairDbState{
 		currentDb: currentDb,
 		historyDb: historyDb,
@@ -599,13 +599,23 @@ func (rds *RepairDbState) UpdateAccountCode(codeHash common.Hash, code []byte) e
 }
 
 func (rds *RepairDbState) WriteAccountStorage(address common.Address, key, original, value *common.Hash) error {
+
 	h := newHasher()
 	defer returnHasherToPool(h)
 	h.sha.Reset()
 	h.sha.Write(key[:])
 	var seckey common.Hash
 	h.sha.Read(seckey[:])
-
+	compositeKey := append(address[:], seckey[:]...)
+	if *original == *value {
+		val, _ := rds.historyDb.GetS(StorageHistoryBucket, compositeKey, rds.blockNr)
+		if val != nil {
+			fmt.Printf("REPAIR (WriteAccountStorage): At block %d, address: %x, key %x, expected nil, found %x\n", rds.blockNr, address, key, val)
+			suffix := encodeTimestamp(rds.blockNr)
+			return rds.historyDb.Delete(StorageHistoryBucket, append(compositeKey, suffix...))			
+		}
+		return nil
+	}
 	v := bytes.TrimLeft(value[:], "\x00")
 	vv := make([]byte, len(v))
 	copy(vv, v)
@@ -620,7 +630,6 @@ func (rds *RepairDbState) WriteAccountStorage(address common.Address, key, origi
 		m[seckey] = nil
 	}
 
-	compositeKey := append(address[:], seckey[:]...)
 	rds.storageKeys[string(compositeKey)] = struct{}{}
 	var err error
 	if len(v) == 0 {

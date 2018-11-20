@@ -1456,7 +1456,7 @@ func main() {
  	//bucketStats(db)
  	//mychart()
  	//testRebuild()
- 	testRewind(*block, *rewind)
+ 	//testRewind(*block, *rewind)
  	//hashFile()
  	//buildHashFromFile()
  	//testResolve()
@@ -1483,7 +1483,7 @@ func main() {
  	//execToBlock(*block)
  	//extractTrie(*block)
  	//fmt.Printf("%x\n", crypto.Keccak256(nil))
- 	//repair()
+ 	repair()
  	//readAccount()
 }
 
