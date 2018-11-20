@@ -1,27 +1,26 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
-	"math/big"
-	"fmt"
-	"strings"
-	"strconv"
 	"flag"
-	"runtime/pprof"
-	"os"
-	"log"
+	"fmt"
 	"io/ioutil"
-	"bufio"
-	"time"
-	"syscall"
+	"log"
+	"math/big"
+	"os"
 	"os/signal"
+	"runtime/pprof"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
 
 	"github.com/boltdb/bolt"
-	"github.com/wcharczuk/go-chart"
-	util "github.com/wcharczuk/go-chart/util"
+	chart "github.com/wcharczuk/go-chart"
+	"github.com/wcharczuk/go-chart/util"
 
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/consensus/misc"
@@ -30,10 +29,11 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 var emptyCodeHash = crypto.Keccak256(nil)
@@ -1068,11 +1068,11 @@ func invTree(wrong, right, diff string, block int, encodeToBytes bool) {
 
 func preimage() {
 	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
-	ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/geth/chaindata")
+	ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/ropsten/geth/chaindata")
 	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
 	check(err)
 	defer ethDb.Close()
-	p, err := ethDb.Get(trie.SecureKeyPrefix, common.FromHex("0x9f13f88230a70de90ed5fa41ba35a5fb78bc55d11cc9406f17d314fb67047ac7"))
+	p, err := ethDb.Get(trie.SecureKeyPrefix, common.FromHex("0x2f12fe87e1f189f0a0862d580f6ca859a4d27870da1d6f29028520e5380e076f"))
 	check(err)
 	fmt.Printf("%x\n", p)
 }
@@ -1456,7 +1456,7 @@ func main() {
  	//bucketStats(db)
  	//mychart()
  	//testRebuild()
- 	//testRewind(*block, *rewind)
+ 	testRewind(*block, *rewind)
  	//hashFile()
  	//buildHashFromFile()
  	//testResolve()
@@ -1475,7 +1475,7 @@ func main() {
  	//testRedis()
  	//upgradeBlocks()
  	//compareTries()
- 	//invTree("root", "r3", "diff", *block, false)
+ 	//invTree("root", "right", "diff", *block, false)
  	//invTree("iw", "ir", "id", *block, true)
  	//loadAccount()
  	//preimage()
@@ -1483,7 +1483,7 @@ func main() {
  	//execToBlock(*block)
  	//extractTrie(*block)
  	//fmt.Printf("%x\n", crypto.Keccak256(nil))
- 	repair()
+ 	//repair()
  	//readAccount()
 }
 

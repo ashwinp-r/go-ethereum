@@ -565,6 +565,7 @@ func (t *Trie) PrintDiff(t2 *Trie, w io.Writer) {
 
 func (tc *TrieContinuation) RunWithDb(db ethdb.Database, blockNr uint64) bool {
 	var done bool
+	tc.updated = false
 	switch tc.action {
 	case TrieActionInsert:
 		done = tc.t.insert(tc.t.root, tc.key, 0, tc.value, tc, blockNr)
