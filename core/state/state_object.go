@@ -78,6 +78,7 @@ type stateObject struct {
 	code Code // contract bytecode, which gets set when code is loaded
 
 	originStorage Storage // Storage cache of original entries to dedup rewrites
+	blockOriginStorage Storage
 	dirtyStorage  Storage // Storage entries that need to be flushed to disk
 
 	// Cache flags.
@@ -115,12 +116,13 @@ func newObject(db *StateDB, address common.Address, data, original Account) *sta
 		data.CodeHash = emptyCodeHash
 	}
 	return &stateObject{
-		db:            db,
-		address:       address,
-		data:          data,
-		original:      original,
-		originStorage: make(Storage),
-		dirtyStorage:  make(Storage),
+		db:                 db,
+		address:            address,
+		data:               data,
+		original:           original,
+		originStorage:      make(Storage),
+		blockOriginStorage: make(Storage),
+		dirtyStorage:       make(Storage),
 	}
 }
 
@@ -176,6 +178,7 @@ func (self *stateObject) GetCommittedState(key common.Hash) common.Hash {
 	}
 	value.SetBytes(enc)
 	self.originStorage[key] = value
+	self.blockOriginStorage[key] = value
 	return value
 }
 
@@ -202,8 +205,8 @@ func (self *stateObject) setState(key, value common.Hash) {
 // updateTrie writes cached storage modifications into the object's storage trie.
 func (self *stateObject) updateTrie(stateWriter StateWriter) error {
 	for key, value := range self.dirtyStorage {
-		original := self.originStorage[key]
-		if value == original {
+		original := self.blockOriginStorage[key]
+		if value == self.originStorage[key] {
 			continue
 		}
 		self.originStorage[key] = value
@@ -258,6 +261,7 @@ func (self *stateObject) deepCopy(db *StateDB) *stateObject {
 	stateObject.code = self.code
 	stateObject.dirtyStorage = self.dirtyStorage.Copy()
 	stateObject.originStorage = self.originStorage.Copy()
+	stateObject.blockOriginStorage = self.blockOriginStorage.Copy()
 	stateObject.suicided = self.suicided
 	stateObject.dirtyCode = self.dirtyCode
 	stateObject.deleted = self.deleted
