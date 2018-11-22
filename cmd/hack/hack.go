@@ -1356,9 +1356,10 @@ func repair() {
 	}()
 
 	//historyDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
-	historyDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/geth/chaindata")
+	//historyDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/geth/chaindata")
 	//historyDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
 	//historyDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/testnet/geth/chaindata")
+	historyDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/ropsten/geth/chaindata")
 	check(err)
 	defer historyDb.Close()
 	if *block == 1 {
@@ -1369,10 +1370,10 @@ func repair() {
 	check(err)
 	defer currentDb.Close()
 	if *block == 1 {
-		_, _, _, err = core.SetupGenesisBlock(currentDb, core.DefaultGenesisBlock())
+		_, _, _, err = core.SetupGenesisBlock(currentDb, core.DefaultTestnetGenesisBlock())
 		check(err)
 	}
-	chainConfig := params.MainnetChainConfig
+	chainConfig := params.TestnetChainConfig
 	vmConfig := vm.Config{}
 	bc, err := core.NewBlockChain(historyDb, nil, chainConfig, ethash.NewFaker(), vmConfig, nil)
 	check(err)
@@ -1456,7 +1457,7 @@ func main() {
  	//bucketStats(db)
  	//mychart()
  	//testRebuild()
- 	testRewind(*block, *rewind)
+ 	//testRewind(*block, *rewind)
  	//hashFile()
  	//buildHashFromFile()
  	//testResolve()
@@ -1483,7 +1484,7 @@ func main() {
  	//execToBlock(*block)
  	//extractTrie(*block)
  	//fmt.Printf("%x\n", crypto.Keccak256(nil))
- 	//repair()
+ 	repair()
  	//readAccount()
 }
 

@@ -166,9 +166,11 @@ func (self *stateObject) GetState(key common.Hash) common.Hash {
 // GetCommittedState retrieves a value from the committed account storage trie.
 func (self *stateObject) GetCommittedState(key common.Hash) common.Hash {
 	// If we have the original value cached, return that
-	value, cached := self.originStorage[key]
-	if cached {
-		return value
+	{
+		value, cached := self.originStorage[key]
+		if cached {
+			return value
+		}
 	}
 	// Load from DB in case it is missing.
 	enc, err := self.db.stateReader.ReadAccountStorage(self.address, &key)
@@ -176,7 +178,10 @@ func (self *stateObject) GetCommittedState(key common.Hash) common.Hash {
 		self.setError(err)
 		return common.Hash{}
 	}
-	value.SetBytes(enc)
+	var value common.Hash
+	if enc != nil {
+		value.SetBytes(enc)
+	}
 	self.originStorage[key] = value
 	self.blockOriginStorage[key] = value
 	return value
