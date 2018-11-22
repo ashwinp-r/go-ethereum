@@ -1364,6 +1364,9 @@ func (dsw *DbStateWriter) UpdateAccountCode(codeHash common.Hash, code []byte) e
 }
 
 func (tsw *TrieStateWriter) WriteAccountStorage(address common.Address, key, original, value *common.Hash) error {
+	if *original == *value {
+		return nil
+	}
 	v := bytes.TrimLeft(value[:], "\x00")
 	m, ok := tsw.tds.storageUpdates[address]
 	if !ok {
