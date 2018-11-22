@@ -1438,6 +1438,40 @@ func readAccount() {
 	fmt.Printf("%x:%x\n", secKey, v)
 }
 
+func repairCurrent() {
+	historyDb, err := bolt.Open("/Volumes/tb4/turbo-geth/ropsten/geth/chaindata", 0600, &bolt.Options{})
+	check(err)
+	defer historyDb.Close()
+	currentDb, err := bolt.Open("statedb", 0600, &bolt.Options{})
+	check(err)
+	defer currentDb.Close()
+	check(historyDb.Update(func(tx *bolt.Tx) error {
+		if err := tx.DeleteBucket(state.StorageBucket); err != nil {
+			return err
+		}
+		newB, err := tx.CreateBucket(state.StorageBucket)
+		if err != nil {
+			return err
+		}
+		count := 0
+		if err := currentDb.View(func (ctx *bolt.Tx) error {
+			b := ctx.Bucket(state.StorageBucket)
+			c := b.Cursor()
+			for k, v := c.First(); k != nil; k, v = c.Next() {
+				newB.Put(k, v)
+				count++
+				if count == 10000 {
+					fmt.Printf("Copied %d storage items\n", count)
+				}
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		return nil
+	}))
+}
+
 func main() {
 	flag.Parse()
     if *cpuprofile != "" {
@@ -1484,7 +1518,8 @@ func main() {
  	//execToBlock(*block)
  	//extractTrie(*block)
  	//fmt.Printf("%x\n", crypto.Keccak256(nil))
- 	repair()
+ 	//repair()
  	//readAccount()
+ 	repairCurrent()
 }
 
