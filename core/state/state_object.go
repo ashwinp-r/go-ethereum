@@ -206,9 +206,6 @@ func (self *stateObject) setState(key, value common.Hash) {
 func (self *stateObject) updateTrie(stateWriter StateWriter) error {
 	for key, value := range self.dirtyStorage {
 		original := self.blockOriginStorage[key]
-		if value == self.originStorage[key] {
-			continue
-		}
 		self.originStorage[key] = value
 		if err := stateWriter.WriteAccountStorage(self.address, &key, &original, &value); err != nil {
 			return err
