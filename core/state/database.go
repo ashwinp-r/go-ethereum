@@ -25,7 +25,7 @@ import (
 	"math/big"
 	"encoding/binary"
 	//"runtime/debug"
-	//"sort"
+	"sort"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto/sha3"
@@ -788,7 +788,9 @@ func (tds *TrieDbState) AccountTrie() *trie.Trie {
 }
 
 func (tds *TrieDbState) TrieRoot() (common.Hash, error) {
-	return tds.trieRoot(true)
+	root, err := tds.trieRoot(true)
+	tds.clearUpdates()
+	return root, err
 }
 
 func (tds *TrieDbState) PrintTrie(w io.Writer) {
@@ -796,6 +798,18 @@ func (tds *TrieDbState) PrintTrie(w io.Writer) {
 	for _, storageTrie := range tds.storageTries {
 		storageTrie.Print(w)
 	}
+}
+
+type Hashes []common.Hash
+
+func (hs Hashes) Len() int {
+	return len(hs)
+}
+func (hs Hashes) Less(i, j int) bool {
+	return bytes.Compare(hs[i][:], hs[j][:]) < 0
+}
+func (hs Hashes) Swap(i, j int) {
+	hs[i], hs[j] = hs[j], hs[i]
 }
 
 func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
@@ -857,8 +871,15 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 	}
 	oldContinuations = []*trie.TrieContinuation{}
 	newContinuations = []*trie.TrieContinuation{}
-	tds.storageUpdates = make(map[common.Address]map[common.Hash][]byte)
-	for addrHash, account := range tds.accountUpdates {
+	addrHashes := make(Hashes, len(tds.accountUpdates))
+	idx := 0
+	for addrHash, _ := range tds.accountUpdates {
+		addrHashes[idx] = addrHash
+		idx++
+	}
+	sort.Sort(addrHashes)
+	for _, addrHash := range addrHashes {
+		account := tds.accountUpdates[addrHash]
 		var c *trie.TrieContinuation
 		// first argument to getStorageTrie is not used unless the last one == true
 		storageTrie, err := tds.getStorageTrie(common.Address{}, addrHash, false)
@@ -889,8 +910,6 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 		}
 		oldContinuations = append(oldContinuations, c)
 	}
-	tds.accountUpdates = make(map[common.Hash]*Account)
-	tds.deleted = make(map[common.Hash]struct{})
 	it = 0
 	for len(oldContinuations) > 0 {
 		var resolver *trie.TrieResolver
@@ -921,6 +940,11 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 	return hash, nil
 }
 
+func (tds *TrieDbState) clearUpdates() {
+	tds.storageUpdates = make(map[common.Address]map[common.Hash][]byte)
+	tds.accountUpdates = make(map[common.Hash]*Account)
+	tds.deleted = make(map[common.Hash]struct{})
+}
 
 func (tds *TrieDbState) Rebuild() {
 	tr := tds.AccountTrie()
@@ -990,24 +1014,32 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
 	if _, err := tds.trieRoot(false); err != nil {
 		return err
 	}
-	for i, key := range accountPutKeys {
-		if err := tds.db.Put(AccountsBucket, key, accountPutVals[i]); err != nil {
-			return err
+	for addrHash, account := range tds.accountUpdates {
+		if account == nil {
+			if err := tds.db.Delete(AccountsBucket, addrHash[:]); err != nil {
+				return err
+			}
+		} else {
+			value, err := accountToEncoding(account)
+			if err != nil {
+				return err
+			}
+			if err := tds.db.Put(AccountsBucket, addrHash[:], value); err != nil {
+				return err
+			}
 		}
 	}
-	for _, key := range accountDelKeys {
-		if err := tds.db.Delete(AccountsBucket, key); err != nil {
-			return err
-		}
-	}
-	for i, key := range storagePutKeys {
-		if err := tds.db.Put(StorageBucket, key, storagePutVals[i]); err != nil {
-			return err
-		}
-	}
-	for _, key := range storageDelKeys {
-		if err := tds.db.Delete(StorageBucket, key); err != nil {
-			return err
+	for address, m := range tds.storageUpdates {
+		for keyHash, value := range m {
+			if len(value) == 0 {
+				if err := tds.db.Delete(StorageBucket, append(address[:], keyHash[:]...)); err != nil {
+					return err
+				}
+			} else {
+				if err := tds.db.Put(StorageBucket, append(address[:], keyHash[:]...), value); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	for i := tds.blockNr; i > blockNr; i-- {
@@ -1015,6 +1047,7 @@ func (tds *TrieDbState) UnwindTo(blockNr uint64) error {
 			return err
 		}
 	}
+	tds.clearUpdates()
 	tds.blockNr = blockNr
 	return nil
 }
