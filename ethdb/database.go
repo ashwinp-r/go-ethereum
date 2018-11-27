@@ -925,7 +925,7 @@ func (m *mutation) getAsOfMem(hBucket, key []byte, timestamp uint64) ([]byte, bo
 	}
 	composite, _ := compositeKeySuffix(key, timestamp)
 	var dat []byte
-	t.AscendGreaterOrEqual1(&PutItem{key: composite}, func(i llrb.Item) bool {
+	t.AscendGreaterOrEqual(&PutItem{key: composite}, func(i llrb.Item) bool {
 		item := i.(*PutItem)
 		if !bytes.HasPrefix(item.key, key) {
 			return false
@@ -964,7 +964,7 @@ func (m *mutation) walkMem(bucket, startkey []byte, fixedbits uint, walker func(
 		from := nextkey
 		nextkey = nil
 		var extErr error
-		t.AscendGreaterOrEqual1(&PutItem{key: from}, func(i llrb.Item) bool {
+		t.AscendGreaterOrEqual(&PutItem{key: from}, func(i llrb.Item) bool {
 			item := i.(*PutItem)
 			if item.value == nil {
 				return true
@@ -1133,7 +1133,7 @@ func (m *mutation) Commit() (uint64, error) {
 	tuples := make([][]byte, size*3)
 	var index int
 	for bucketStr, bt := range m.puts {
-		bt.AscendGreaterOrEqual1(&PutItem{}, func (i llrb.Item) bool {
+		bt.AscendGreaterOrEqual(&PutItem{}, func (i llrb.Item) bool {
 			item := i.(*PutItem)
 			tuples[index] = []byte(bucketStr)
 			index++
@@ -1175,7 +1175,7 @@ func (m *mutation) Keys() [][]byte {
 	pairs := make([][]byte, 2*size)
 	idx := 0
 	for bucketStr, bt := range m.puts {
-		bt.AscendGreaterOrEqual1(&PutItem{}, func(i llrb.Item) bool {
+		bt.AscendGreaterOrEqual(&PutItem{}, func(i llrb.Item) bool {
 			item := i.(*PutItem)
 			pairs[idx] = []byte(bucketStr)
 			idx++
