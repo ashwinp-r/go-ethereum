@@ -25,7 +25,6 @@ import (
 	"math/big"
 	"encoding/binary"
 	//"runtime/debug"
-	"sort"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto/sha3"
@@ -800,18 +799,6 @@ func (tds *TrieDbState) PrintTrie(w io.Writer) {
 	}
 }
 
-type Hashes []common.Hash
-
-func (hs Hashes) Len() int {
-	return len(hs)
-}
-func (hs Hashes) Less(i, j int) bool {
-	return bytes.Compare(hs[i][:], hs[j][:]) < 0
-}
-func (hs Hashes) Swap(i, j int) {
-	hs[i], hs[j] = hs[j], hs[i]
-}
-
 func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 	if len(tds.storageUpdates) == 0 && len(tds.accountUpdates) == 0 {
 		return tds.t.Hash(), nil
@@ -871,15 +858,7 @@ func (tds *TrieDbState) trieRoot(forward bool) (common.Hash, error) {
 	}
 	oldContinuations = []*trie.TrieContinuation{}
 	newContinuations = []*trie.TrieContinuation{}
-	addrHashes := make(Hashes, len(tds.accountUpdates))
-	idx := 0
-	for addrHash, _ := range tds.accountUpdates {
-		addrHashes[idx] = addrHash
-		idx++
-	}
-	sort.Sort(addrHashes)
-	for _, addrHash := range addrHashes {
-		account := tds.accountUpdates[addrHash]
+	for addrHash, account := range tds.accountUpdates {
 		var c *trie.TrieContinuation
 		// first argument to getStorageTrie is not used unless the last one == true
 		storageTrie, err := tds.getStorageTrie(common.Address{}, addrHash, false)

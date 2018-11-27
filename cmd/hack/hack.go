@@ -798,6 +798,7 @@ func testRewind(block, rewind int) {
 		defer f.Close()
 		tds.PrintTrie(f)
 	}
+
 	{
 		tds, err = state.NewTrieDbState(rewoundBlock.Root(), db, rewoundBlock.NumberU64())
 		tds.SetHistorical(true)
@@ -840,21 +841,23 @@ func testStartup() {
 func testResolve() {
 	startTime := time.Now()
 	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
-	ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
+	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
+	ethDb, err := ethdb.NewLDBDatabase("statedb")
 	check(err)
 	defer ethDb.Close()
-	treePrefix := common.FromHex("1194e966965418c7d73a42cceeb254d875860356")
-	t := trie.New(common.Hash{}, state.StorageBucket, treePrefix, true)
-	r := trie.NewResolver(ethDb, false, false)
-	key := common.FromHex("0d0c02060f0d09030a0a0000070808000c04080606090b070c060a0e020803030b030f040f0e080c090f0f020a0c06060b0402090e0b050007090d06010c0a0310")
-	resolveHash := common.FromHex("931f3dbc6b2e9c23cf9cd399504139efe208e33d3e3ce51a2f040aac0159b79e")
-	tc := t.NewContinuation(key, 0, resolveHash)
+	//treePrefix := common.FromHex("1194e966965418c7d73a42cceeb254d875860356")
+	t := trie.New(common.Hash{}, state.AccountsBucket, nil, true)
+	r := trie.NewResolver(ethDb, false, true)
+	key := common.FromHex("0803040c01")
+	resolveHash := common.FromHex("f123ef56888702971ba0604b51d0e229979f8e0b9f719cd18699e1238ab7bb4c")
+	tc := t.NewContinuation(key, 5, resolveHash)
 	r.AddContinuation(tc)
-	err = r.ResolveWithDb(ethDb, 244574)
+	err = r.ResolveWithDb(ethDb, 1828653)
 	if err != nil {
 		fmt.Printf("%v\n", err)
 	}
 	fmt.Printf("Took %v\n", time.Since(startTime))
+	tc.Print()
 }
 
 func hashFile() {

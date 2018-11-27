@@ -445,6 +445,7 @@ func printDiff(n1, n2 node, w io.Writer, ind string, key string) {
 			} else {
 				fmt.Fprintf(w, "/%T\n", n2)
 				printDiffSide(n1, w, ind, key)
+				printDiffSide(n2, w, ind, key)
 			}
 			fmt.Fprintf(w, "%s)\n", ind)
 		case hashNode:
@@ -452,7 +453,7 @@ func printDiff(n1, n2 node, w io.Writer, ind string, key string) {
 			if n, ok := n2.(hashNode); ok {
 				fmt.Fprintf(w, "%x/%x", []byte(n1), []byte(n))
 			} else {
-				fmt.Fprintf(w, "/%T\n", n2)
+				fmt.Fprintf(w, "hash(%x)/%T\n", []byte(n1), n2)
 				printDiffSide(n2, w, ind, key)
 			}
 			fmt.Fprintf(w, ")")

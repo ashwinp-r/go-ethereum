@@ -616,6 +616,9 @@ func (t *Trie) NewContinuation(key []byte, pos int, resolveHash []byte) *TrieCon
 
 func (tc *TrieContinuation) Print() {
 	fmt.Printf("tc{t:%x/%x,action:%d,key:%x,resolveKey:%x,resolvePos:%d}\n", tc.t.bucket, tc.t.prefix, tc.action, tc.key, tc.resolveKey, tc.resolvePos)
+	if tc.resolved != nil {
+		fmt.Printf("%s\n", tc.resolved)
+	}
 }
 
 func (t *Trie) insert(origNode node, key []byte, pos int, value node, c *TrieContinuation, blockNr uint64) bool {
@@ -953,6 +956,7 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 				c.n = n
 			} else {
 				nn := c.n
+				n.child1 = nn
 				if nn == nil {
 					if n.child2 == nil {
 						adjust = false
@@ -966,7 +970,6 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 				}
 				if nn != nil || (nn == nil && !done) {
 					if c.updated {
-						n.child1 = nn
 						n.flags.dirty = true
 					}
 					c.n = n
@@ -979,6 +982,7 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 				c.n = n
 			} else {
 				nn := c.n
+				n.child2 = nn
 				if nn == nil {
 					if n.child1 == nil {
 						adjust = false
@@ -988,11 +992,13 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 						done = true
 					} else {
 						done = t.convertToShortNode(key, keyStart, n.child1, uint(i1), c, blockNr, done)
+						//if trace {
+						//	fmt.Printf("i2, converting to short node, done: %t, keyStart %d\n", done, keyStart)
+						//}
 					}
 				}
 				if nn != nil || (nn == nil && !done) {
 					if c.updated {
-						n.child2 = nn
 						n.flags.dirty = true
 					}
 					c.n = n
@@ -1019,6 +1025,7 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 			done = false
 		} else {
 			nn := c.n
+			n.Children[key[keyStart]] = nn
 			// Check how many non-nil entries are left after deleting and
 			// reduce the full node to a short node if only one entry is
 			// left. Since n must've contained at least two children
@@ -1031,10 +1038,6 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 			var pos1, pos2 int
 			count := 0
 			for i, cld := range &n.Children {
-				if i == int(key[keyStart]) && nn == nil {
-					// Skip the child we are going to delete
-					continue
-				}
 				if cld != nil {
 					if count == 0 {
 						pos1 = i
@@ -1078,7 +1081,6 @@ func (t *Trie) delete(origNode node, key []byte, keyStart int, c *TrieContinuati
 			if count > 2 || (count == 1 && !done) {
 				if c.updated {
 					// n still contains at least three values and cannot be reduced.
-					n.Children[key[keyStart]] = nn
 					n.flags.dirty = true
 				}
 				c.n = n
