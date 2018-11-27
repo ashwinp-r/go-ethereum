@@ -210,10 +210,12 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 		if b.engine != nil {
 
 			// Finalize and seal the block
-			block, _ := b.engine.Finalize(b.blockchain, b.header, statedb, tds, b.txs, b.uncles, b.receipts)
+			block, _ := b.engine.Finalize(b.blockchain, b.header, statedb, b.txs, b.uncles, b.receipts)
+			var err error
+			b.header.Root, _ = tds.IntermediateRoot(statedb, config.IsEIP158(b.header.Number))
 			// Write state changes to db
 			tds.SetBlockNr(b.header.Number.Uint64())
-			err := statedb.Commit(config.IsEIP158(b.header.Number), tds.DbStateWriter())
+			err = statedb.Commit(config.IsEIP158(b.header.Number), tds.DbStateWriter())
 			if err != nil {
 				panic(fmt.Sprintf("state write error: %v", err))
 			}

@@ -170,9 +170,12 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tds
 		allLogs = append(allLogs, receipt.Logs...)
 	}
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
-	p.engine.Finalize(p.bc, header, statedb, tds, block.Transactions(), block.Uncles(), receipts)
-
-	return receipts, allLogs, *usedGas, nil
+	_, err := p.engine.Finalize(p.bc, header, statedb, block.Transactions(), block.Uncles(), receipts)
+	if err != nil {
+		return receipts, allLogs, *usedGas, err
+	}
+	header.Root, err = tds.IntermediateRoot(statedb, p.config.IsEIP158(header.Number))
+	return receipts, allLogs, *usedGas, err
 }
 
 // ApplyTransaction attempts to apply a transaction to the given state database

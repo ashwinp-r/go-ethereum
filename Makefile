@@ -41,6 +41,11 @@ state:
 	@echo "Done building."
 	@echo "Run \"$(GOBIN)/state\" to launch state."
 
+morus:
+	build/env.sh go run build/ci.go install ./cmd/morus
+	@echo "Done building."
+	@echo "Run \"$(GOBIN)/morus\" to launch state."
+
 all:
 	build/env.sh go run build/ci.go install
 

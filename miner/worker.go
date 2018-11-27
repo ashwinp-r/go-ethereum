@@ -965,7 +965,11 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 	}
 	s := w.current.state.Copy()
 	tds := w.current.tds.Copy()
-	block, err := w.engine.Finalize(w.chain, w.current.header, s, tds, w.current.txs, uncles, w.current.receipts)
+	block, err := w.engine.Finalize(w.chain, w.current.header, s, w.current.txs, uncles, w.current.receipts)
+	if err != nil {
+		return err
+	}
+	w.current.header.Root, err = tds.IntermediateRoot(s, w.chain.Config().IsEIP158(w.current.header.Number))
 	if err != nil {
 		return err
 	}
