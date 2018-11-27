@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"flag"
 	"fmt"
@@ -11,6 +12,9 @@ import (
 	"time"
 	"syscall"
 
+	"github.com/boltdb/bolt"
+	lru "github.com/hashicorp/golang-lru"
+
 	"github.com/ethereum/go-ethereum/avl"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
@@ -20,6 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -36,6 +41,9 @@ var (
 	load       = flag.Bool("load", false, "load blocks into pages")
 	spacescan  = flag.Bool("spacescan", false, "perform space scan")
 )
+
+var emptyRoot = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
+var emptyCodeHash = crypto.Keccak256(nil)
 
 // ChainContext implements Ethereum's core.ChainContext and consensus.Engine
 // interfaces. It is needed in order to apply and process Ethereum
@@ -181,13 +189,28 @@ func (cc *ChainContext) Close() error {
 
 type MorusDb struct {
 	db *avl.Avl1
+	codeDb *bolt.DB
+	codeCache        *lru.Cache
+	codeSizeCache    *lru.Cache
 }
 
-func NewMorusDb(pagefile, valuefile, verfile string, hashlen int) *MorusDb {
+func NewMorusDb(pagefile, valuefile, verfile, codefile string, hashlen int) *MorusDb {
 	db := avl.NewAvl1()
 	db.SetHashLength(uint32(hashlen))
 	db.UseFiles(pagefile, valuefile, verfile, false)
-	return &MorusDb{db: db}
+	codeDb, err := bolt.Open(codefile, 0600, &bolt.Options{})
+	if err != nil {
+		panic(err)
+	}
+	csc, err := lru.New(100000)
+	if err != nil {
+		panic(err)
+	}
+	cc, err := lru.New(10000)
+	if err != nil {
+		panic(err)
+	}
+	return &MorusDb{db: db, codeDb: codeDb, codeCache: cc, codeSizeCache: csc}
 }
 
 func (md *MorusDb) LatestVersion() int64 {
@@ -198,39 +221,173 @@ func (md *MorusDb) Commit() uint64 {
 	return md.db.Commit()
 }
 
+func (md *MorusDb) Close() {
+	md.db.Close()
+	md.codeDb.Close()
+}
+
 func (md *MorusDb) PrintStats() {
 	md.db.PrintStats()
 }
 
+func accountToEncoding(account *state.Account) ([]byte, error) {
+	var data []byte
+	var err error
+	if (account.CodeHash == nil || bytes.Equal(account.CodeHash, emptyCodeHash)) && (account.Root == emptyRoot || account.Root == common.Hash{}) {
+		if (account.Balance == nil || account.Balance.Sign() == 0) && account.Nonce == 0 {
+			data = []byte{byte(192)}
+		} else {
+			var extAccount state.ExtAccount
+			extAccount.Nonce = account.Nonce
+			extAccount.Balance = account.Balance
+			if extAccount.Balance == nil {
+				extAccount.Balance = new(big.Int)
+			}
+			data, err = rlp.EncodeToBytes(extAccount)
+			if err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		a := *account
+		if a.Balance == nil {
+			a.Balance = new(big.Int)
+		}
+		if a.CodeHash == nil {
+			a.CodeHash = emptyCodeHash
+		}
+		if a.Root == (common.Hash{}) {
+			a.Root = emptyRoot
+		}
+		data, err = rlp.EncodeToBytes(a)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return data, err
+}
+
+func encodingToAccount(enc []byte) (*state.Account, error) {
+	if enc == nil || len(enc) == 0 {
+		return nil, nil
+	}
+	var data state.Account
+	// Kind of hacky
+	if len(enc) == 1 {
+		data.Balance = new(big.Int)
+		data.CodeHash = emptyCodeHash
+		data.Root = emptyRoot
+	} else if len(enc) < 60 {
+		var extData state.ExtAccount
+		if err := rlp.DecodeBytes(enc, &extData); err != nil {
+			return nil, err
+		}
+		data.Nonce = extData.Nonce
+		data.Balance = extData.Balance
+		data.CodeHash = emptyCodeHash
+		data.Root = emptyRoot
+	} else {
+		if err := rlp.DecodeBytes(enc, &data); err != nil {
+			return nil, err
+		}
+	}
+	return &data, nil
+}
+
+
 func (md *MorusDb) ReadAccountData(address common.Address) (*state.Account, error) {
-	return nil, nil
+	enc, found := md.db.Get(address[:])
+	if !found || enc == nil || len(enc) == 0 {
+		return nil, nil
+	}
+	return encodingToAccount(enc)
 }
 
 func (md *MorusDb) ReadAccountStorage(address common.Address, key *common.Hash) ([]byte, error) {
-	return nil, nil
+	enc, found := md.db.Get(append(address[:], (*key)[:]...))
+	if !found || enc == nil || len(enc) == 0 {
+		return nil, nil
+	}
+	return enc, nil
 }
 
+var codeBucket = []byte("C")
+
 func (md *MorusDb) ReadAccountCode(codeHash common.Hash) ([]byte, error) {
-	return nil, nil
+	if bytes.Equal(codeHash[:], emptyCodeHash) {
+		return nil, nil
+	}
+	if cached, ok := md.codeCache.Get(codeHash); ok {
+		return cached.([]byte), nil
+	}
+	var code []byte
+	if err := md.codeDb.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(codeBucket)
+		if bucket == nil {
+			return nil
+		}
+		v := bucket.Get(codeHash[:])
+		if len(v) > 0 {
+			code = common.CopyBytes(v)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if code != nil {
+		md.codeSizeCache.Add(codeHash, len(code))
+		md.codeCache.Add(codeHash, code)
+	}
+	return code, nil
 }
 
 func (md *MorusDb) ReadAccountCodeSize(codeHash common.Hash) (int, error) {
-	return 0, nil
+	if cached, ok := md.codeSizeCache.Get(codeHash); ok {
+		return cached.(int), nil
+	}
+	code, err := md.ReadAccountCode(codeHash)
+	if err != nil {
+		return 0, err
+	}
+	return len(code), nil
 }
 
 func (md *MorusDb) UpdateAccountData(address common.Address, original, account *state.Account) error {
+	data, err := accountToEncoding(account)
+	if err != nil {
+		return err
+	}
+	md.db.Insert(address[:], data)
 	return nil
 }
 
 func (md *MorusDb) UpdateAccountCode(codeHash common.Hash, code []byte) error {
+	if err := md.codeDb.Update(func(tx *bolt.Tx) error {
+		bucket, err := tx.CreateBucketIfNotExists(codeBucket)
+		if err != nil {
+			return err
+		}
+		return bucket.Put(codeHash[:], code)
+	}); err != nil {
+		return err
+	}
 	return nil
 }
 
 func (md *MorusDb) DeleteAccount(address common.Address, original *state.Account) error {
+	md.db.Delete(address[:])
 	return nil
 }
 
 func (md *MorusDb) WriteAccountStorage(address common.Address, key, original, value *common.Hash) error {
+	v := bytes.TrimLeft(value[:], "\x00")
+	vv := make([]byte, len(v))
+	copy(vv, v)
+	if len(vv) > 0 {
+		md.db.Insert(append(address[:], (*key)[:]...), vv)
+	} else {
+		md.db.Delete(append(address[:], (*key)[:]...))
+	}
 	return nil
 }
 
@@ -269,7 +426,7 @@ func accumulateRewards(config *params.ChainConfig, state *state.StateDB, header 
 
 func main() {
 	flag.Parse()
-	morus := NewMorusDb(*pagefile, *valuefile, *verfile, *hashlen)
+	morus := NewMorusDb(*pagefile, *valuefile, *verfile, *codefile, *hashlen)
 	if morus.LatestVersion() == 0 {
 		statedb := state.New(morus)
 		genBlock := core.DefaultGenesisBlock()
@@ -401,6 +558,7 @@ func main() {
 		default:
 		}
 	}
+	morus.Close()
 
 	fmt.Printf("processed %d blocks\n", block.NumberU64())
 }
