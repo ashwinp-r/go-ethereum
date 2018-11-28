@@ -339,8 +339,11 @@ func (md *MorusDb) createAccountKey(address *common.Address) []byte {
 	return k
 }
 
-func (md *MorusDb) createStorageKey(address *common.Address, key *common.Hash) []byte {
-	/*
+func (md *MorusDb) createStorageKey(address *common.Address, key *common.Hash) (full, comp []byte, compressed bool) {
+	full = make([]byte, 53)
+	full[0] = PREFIX_STORAGE
+	copy(full[1:], (*address)[:])
+	copy(full[21:], (*key)[:])
 	var preimage []byte
 	if err := md.preDb.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(preimageBucket)
@@ -362,7 +365,7 @@ func (md *MorusDb) createStorageKey(address *common.Address, key *common.Hash) [
 			k[0] = PREFIX_ONE_WORD
 			copy(k[1:], (*address)[:])
 			copy(k[21:], v)
-			return k
+			return full, k, true
 		} else if len(preimage) == 64 {
 			v1 := bytes.TrimLeft(preimage[:32], "\x00")
 			v2 := bytes.TrimLeft(preimage[32:], "\x00")
@@ -372,15 +375,10 @@ func (md *MorusDb) createStorageKey(address *common.Address, key *common.Hash) [
 			k[21] = byte(len(v1))
 			copy(k[22:], v1)
 			copy(k[22+len(v1):], v2)
-			return k
+			return full, k, true
 		}
 	}
-	*/
-	k := make([]byte, 53)
-	k[0] = PREFIX_STORAGE
-	copy(k[1:], (*address)[:])
-	copy(k[21:], (*key)[:])
-	return k
+	return full, full, false
 }
 
 func (md *MorusDb) ReadAccountData(address common.Address) (*state.Account, error) {
@@ -392,7 +390,18 @@ func (md *MorusDb) ReadAccountData(address common.Address) (*state.Account, erro
 }
 
 func (md *MorusDb) ReadAccountStorage(address common.Address, key *common.Hash) ([]byte, error) {
-	enc, found := md.db.Get(md.createStorageKey(&address, key))
+	full, comp, compressed := md.createStorageKey(&address, key)
+	var enc []byte
+	var found bool
+	if compressed {
+		enc, found = md.db.Get(full)
+	}
+	if found {
+		md.db.Delete(full)
+		md.db.Insert(comp, enc)
+	} else {
+		enc, found = md.db.Get(comp)
+	}
 	if !found || enc == nil || len(enc) == 0 {
 		return nil, nil
 	}
@@ -469,10 +478,11 @@ func (md *MorusDb) WriteAccountStorage(address common.Address, key, original, va
 	v := bytes.TrimLeft(value[:], "\x00")
 	vv := make([]byte, len(v))
 	copy(vv, v)
+	_, comp, _ := md.createStorageKey(&address, key)
 	if len(vv) > 0 {
-		md.db.Insert(md.createStorageKey(&address, key), vv)
+		md.db.Insert(comp, vv)
 	} else {
-		md.db.Delete(md.createStorageKey(&address, key))
+		md.db.Delete(comp)
 	}
 	return nil
 }
