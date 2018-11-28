@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"time"
 	"syscall"
 
@@ -34,10 +35,7 @@ var (
 	cpuprofile = flag.String("cpu-profile", "", "write cpu profile `file`")
 	blockchain = flag.String("blockchain", "data/blockchain", "file containing blocks to load")
 	hashlen    = flag.Int("hashlen", 32, "size of the hashes for inter-page references")
-	pagefile   = flag.String("pagefile", "pages", "name of the page file")
-	valuefile  = flag.String("valuefile", "values", "name of the value file")
-	codefile   = flag.String("codefile", "codes", "name of the code file")
-	verfile    = flag.String("verfile", "versions", "name of the versions file")
+	datadir   = flag.String("datadir", ".", "directory for data files")
 	load       = flag.Bool("load", false, "load blocks into pages")
 	spacescan  = flag.Bool("spacescan", false, "perform space scan")
 )
@@ -190,15 +188,26 @@ func (cc *ChainContext) Close() error {
 type MorusDb struct {
 	db *avl.Avl1
 	codeDb *bolt.DB
+	preDb  *bolt.DB
 	codeCache        *lru.Cache
 	codeSizeCache    *lru.Cache
+	currentStateDb   *state.StateDB
 }
 
-func NewMorusDb(pagefile, valuefile, verfile, codefile string, hashlen int) *MorusDb {
+func NewMorusDb(datadir string, hashlen int) *MorusDb {
 	db := avl.NewAvl1()
 	db.SetHashLength(uint32(hashlen))
+	pagefile := filepath.Join(datadir, "pages")
+	valuefile := filepath.Join(datadir, "values")
+	verfile := filepath.Join(datadir, "versions")
+	codefile := filepath.Join(datadir, "codes")
+	prefile := filepath.Join(datadir, "preimages")
 	db.UseFiles(pagefile, valuefile, verfile, false)
 	codeDb, err := bolt.Open(codefile, 0600, &bolt.Options{})
+	if err != nil {
+		panic(err)
+	}
+	preDb, err := bolt.Open(prefile, 0600, &bolt.Options{})
 	if err != nil {
 		panic(err)
 	}
@@ -210,7 +219,27 @@ func NewMorusDb(pagefile, valuefile, verfile, codefile string, hashlen int) *Mor
 	if err != nil {
 		panic(err)
 	}
-	return &MorusDb{db: db, codeDb: codeDb, codeCache: cc, codeSizeCache: csc}
+	return &MorusDb{db: db, codeDb: codeDb, preDb: preDb, codeCache: cc, codeSizeCache: csc}
+}
+
+var preimageBucket = []byte("P")
+
+func (md *MorusDb) CommitPreimages(statedb *state.StateDB) {
+	if err := md.preDb.Update(func(tx *bolt.Tx) error {
+		bucket, err := tx.CreateBucketIfNotExists(preimageBucket)
+		if err != nil {
+			return err
+		}
+		pi := statedb.Preimages()
+		for hash, preimage := range pi {
+			if err := bucket.Put(hash[:], preimage); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		panic(err)
+	}
 }
 
 func (md *MorusDb) LatestVersion() int64 {
@@ -224,6 +253,7 @@ func (md *MorusDb) Commit() uint64 {
 func (md *MorusDb) Close() {
 	md.db.Close()
 	md.codeDb.Close()
+	md.preDb.Close()
 }
 
 func (md *MorusDb) PrintStats() {
@@ -294,9 +324,67 @@ func encodingToAccount(enc []byte) (*state.Account, error) {
 	return &data, nil
 }
 
+var codeBucket = []byte("C")
+const (
+	PREFIX_ACCOUNT = byte(0)
+	PREFIX_STORAGE = byte(1)
+	PREFIX_ONE_WORD = byte(2)
+	PREFIX_TWO_WORDS = byte(3)
+)
+
+func (md *MorusDb) createAccountKey(address *common.Address) []byte {
+	k := make([]byte, 21)
+	k[0] = PREFIX_ACCOUNT
+	copy(k[1:], (*address)[:])
+	return k
+}
+
+func (md *MorusDb) createStorageKey(address *common.Address, key *common.Hash) []byte {
+	/*
+	var preimage []byte
+	if err := md.preDb.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(preimageBucket)
+		if bucket == nil {
+			return nil
+		}
+		v := bucket.Get((*key)[:])
+		if len(v) > 0 {
+			preimage = common.CopyBytes(v)
+		}
+		return nil
+	}); err != nil {
+		panic(err)
+	}
+	if preimage != nil {
+		if len(preimage) == 32 {
+			v := bytes.TrimLeft(preimage, "\x00")
+			k := make([]byte, 21 + len(v))
+			k[0] = PREFIX_ONE_WORD
+			copy(k[1:], (*address)[:])
+			copy(k[21:], v)
+			return k
+		} else if len(preimage) == 64 {
+			v1 := bytes.TrimLeft(preimage[:32], "\x00")
+			v2 := bytes.TrimLeft(preimage[32:], "\x00")
+			k := make([]byte, 22 + len(v1) + len(v2))
+			k[0] = PREFIX_TWO_WORDS
+			copy(k[1:], (*address)[:])
+			k[21] = byte(len(v1))
+			copy(k[22:], v1)
+			copy(k[22+len(v1):], v2)
+			return k
+		}
+	}
+	*/
+	k := make([]byte, 53)
+	k[0] = PREFIX_STORAGE
+	copy(k[1:], (*address)[:])
+	copy(k[21:], (*key)[:])
+	return k
+}
 
 func (md *MorusDb) ReadAccountData(address common.Address) (*state.Account, error) {
-	enc, found := md.db.Get(address[:])
+	enc, found := md.db.Get(md.createAccountKey(&address))
 	if !found || enc == nil || len(enc) == 0 {
 		return nil, nil
 	}
@@ -304,14 +392,12 @@ func (md *MorusDb) ReadAccountData(address common.Address) (*state.Account, erro
 }
 
 func (md *MorusDb) ReadAccountStorage(address common.Address, key *common.Hash) ([]byte, error) {
-	enc, found := md.db.Get(append(address[:], (*key)[:]...))
+	enc, found := md.db.Get(md.createStorageKey(&address, key))
 	if !found || enc == nil || len(enc) == 0 {
 		return nil, nil
 	}
 	return enc, nil
 }
-
-var codeBucket = []byte("C")
 
 func (md *MorusDb) ReadAccountCode(codeHash common.Hash) ([]byte, error) {
 	if bytes.Equal(codeHash[:], emptyCodeHash) {
@@ -357,7 +443,7 @@ func (md *MorusDb) UpdateAccountData(address common.Address, original, account *
 	if err != nil {
 		return err
 	}
-	md.db.Insert(address[:], data)
+	md.db.Insert(md.createAccountKey(&address), data)
 	return nil
 }
 
@@ -375,7 +461,7 @@ func (md *MorusDb) UpdateAccountCode(codeHash common.Hash, code []byte) error {
 }
 
 func (md *MorusDb) DeleteAccount(address common.Address, original *state.Account) error {
-	md.db.Delete(address[:])
+	md.db.Delete(md.createAccountKey(&address))
 	return nil
 }
 
@@ -384,9 +470,9 @@ func (md *MorusDb) WriteAccountStorage(address common.Address, key, original, va
 	vv := make([]byte, len(v))
 	copy(vv, v)
 	if len(vv) > 0 {
-		md.db.Insert(append(address[:], (*key)[:]...), vv)
+		md.db.Insert(md.createStorageKey(&address, key), vv)
 	} else {
-		md.db.Delete(append(address[:], (*key)[:]...))
+		md.db.Delete(md.createStorageKey(&address, key))
 	}
 	return nil
 }
@@ -426,7 +512,8 @@ func accumulateRewards(config *params.ChainConfig, state *state.StateDB, header 
 
 func main() {
 	flag.Parse()
-	morus := NewMorusDb(*pagefile, *valuefile, *verfile, *codefile, *hashlen)
+	noopWriter := state.NewNoopWriter()
+	morus := NewMorusDb(*datadir, *hashlen)
 	if morus.LatestVersion() == 0 {
 		statedb := state.New(morus)
 		genBlock := core.DefaultGenesisBlock()
@@ -442,6 +529,7 @@ func main() {
 		if err := statedb.Commit(false, morus); err != nil {
 			panic(err)
 		}
+		morus.CommitPreimages(statedb)
 		cp := morus.Commit()
 
 		fmt.Printf("Committed pages for genesis state: %d\n", cp)
@@ -466,7 +554,7 @@ func main() {
 	binary.BigEndian.PutUint64(prevRoot[:8], uint64(morus.LatestVersion()))
 
 	chainContext := NewChainContext()
-	vmConfig := vm.Config{}
+	vmConfig := vm.Config{EnablePreimageRecording: true}
 
 	startTime := time.Now()
 	interrupt := false
@@ -520,7 +608,7 @@ func main() {
 		for i, tx := range block.Transactions() {
 			statedb.Prepare(tx.Hash(), block.Hash(), i)
 
-			receipt, _, err := core.ApplyTransaction(chainConfig, chainContext, nil, gp, statedb, morus, header, tx, usedGas, vmConfig)
+			receipt, _, err := core.ApplyTransaction(chainConfig, chainContext, nil, gp, statedb, noopWriter, header, tx, usedGas, vmConfig)
 
 			if err != nil {
 				panic(fmt.Errorf("at block %d, tx %x: %v", block.NumberU64(), tx.Hash(), err))
@@ -541,6 +629,7 @@ func main() {
 		}
 
 		// commit block in Ethermint
+		morus.CommitPreimages(statedb)
 		cp := morus.Commit()
 		cpRun += cp
 
