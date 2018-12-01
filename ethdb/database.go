@@ -994,9 +994,13 @@ func (m *mutation) Walk(bucket, startkey []byte, fixedbits uint, walker func([]b
 	}
 }
 
+func (m *mutation) multiWalkMem(bucket []byte, startkeys [][]byte, fixedbits []uint, walker func(int, []byte, []byte) (bool, error)) error {
+	panic("Not implemented")
+}
+
 func (m *mutation) MultiWalk(bucket []byte, startkeys [][]byte, fixedbits []uint, walker func(int, []byte, []byte) (bool, error)) error {
 	if m.db == nil {
-		panic("Not implemented")
+		return m.multiWalkMem(bucket, startkeys, fixedbits, walker)
 	} else {
 		return m.db.MultiWalk(bucket, startkeys, fixedbits, walker)
 	}

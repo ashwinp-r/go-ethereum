@@ -1475,6 +1475,26 @@ func repairCurrent() {
 	}))
 }
 
+func testMemBolt() {
+	db, err := bolt.Open("membolt", 0600, &bolt.Options{MemOnly: true})
+	check(err)
+	defer db.Close()
+	err = db.Update(func(tx *bolt.Tx) error {
+		bucket, err := tx.CreateBucketIfNotExists([]byte("B"))
+		if err != nil {
+			return fmt.Errorf("Bucket creation: %v", err)
+		}
+		for i := 0; i < 1000; i++ {
+			err = bucket.Put(append([]byte("gjdfigjkdfljgdlfkjg"), []byte(fmt.Sprintf("%d", i))...), []byte("kljklgjfdkljkdjd"))
+			if err != nil {
+				return fmt.Errorf("Put: %v", err)
+			}
+		}
+		return nil
+	})
+	check(err)
+}
+
 func main() {
 	flag.Parse()
     if *cpuprofile != "" {
@@ -1494,7 +1514,7 @@ func main() {
  	//bucketStats(db)
  	//mychart()
  	//testRebuild()
- 	testRewind(*block, *rewind)
+ 	//testRewind(*block, *rewind)
  	//hashFile()
  	//buildHashFromFile()
  	//testResolve()
@@ -1524,5 +1544,6 @@ func main() {
  	//repair()
  	//readAccount()
  	//repairCurrent()
+ 	testMemBolt()
 }
 
