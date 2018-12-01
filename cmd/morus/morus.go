@@ -191,6 +191,7 @@ type MorusDb struct {
 	preDb  *bolt.DB
 	codeCache        *lru.Cache
 	codeSizeCache    *lru.Cache
+	preimageCache    *lru.Cache
 	currentStateDb   *state.StateDB
 }
 
@@ -219,7 +220,11 @@ func NewMorusDb(datadir string, hashlen int) *MorusDb {
 	if err != nil {
 		panic(err)
 	}
-	return &MorusDb{db: db, codeDb: codeDb, preDb: preDb, codeCache: cc, codeSizeCache: csc}
+	pic, err := lru.New(1000000)
+	if err != nil {
+		panic(err)
+	}
+	return &MorusDb{db: db, codeDb: codeDb, preDb: preDb, codeCache: cc, codeSizeCache: csc, preimageCache: pic}
 }
 
 var preimageBucket = []byte("P")
@@ -232,6 +237,7 @@ func (md *MorusDb) CommitPreimages(statedb *state.StateDB) {
 		}
 		pi := statedb.Preimages()
 		for hash, preimage := range pi {
+			md.preimageCache.Add(hash, preimage)
 			if err := bucket.Put(hash[:], preimage); err != nil {
 				return err
 			}
@@ -345,18 +351,23 @@ func (md *MorusDb) createStorageKey(address *common.Address, key *common.Hash) (
 	copy(full[1:], (*address)[:])
 	copy(full[21:], (*key)[:])
 	var preimage []byte
-	if err := md.preDb.View(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket(preimageBucket)
-		if bucket == nil {
+	if cached, ok := md.preimageCache.Get(*key); ok {
+		preimage = cached.([]byte)
+	} else {
+		if err := md.preDb.View(func(tx *bolt.Tx) error {
+			bucket := tx.Bucket(preimageBucket)
+			if bucket == nil {
+				return nil
+			}
+			v := bucket.Get((*key)[:])
+			if len(v) > 0 {
+				preimage = common.CopyBytes(v)
+			}
 			return nil
+		}); err != nil {
+			panic(err)
 		}
-		v := bucket.Get((*key)[:])
-		if len(v) > 0 {
-			preimage = common.CopyBytes(v)
-		}
-		return nil
-	}); err != nil {
-		panic(err)
+		md.preimageCache.Add(*key, preimage) // even if it is nil
 	}
 	if preimage != nil {
 		if len(preimage) == 32 {
