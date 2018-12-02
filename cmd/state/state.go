@@ -980,7 +980,7 @@ func NewCreationTracer(w io.Writer) CreationTracer {
 	return CreationTracer{w: w}
 }
 
-func (ct CreationTracer) CaptureStart(from common.Address, to common.Address, call bool, input []byte, gas uint64, value *big.Int) error {
+func (ct CreationTracer) CaptureStart(depth int, from common.Address, to common.Address, call bool, input []byte, gas uint64, value *big.Int) error {
 	return nil
 }
 func (ct CreationTracer) CaptureState(env *vm.EVM, pc uint64, op vm.OpCode, gas, cost uint64, memory *vm.Memory, stack *vm.Stack, contract *vm.Contract, depth int, err error) error {
@@ -989,7 +989,7 @@ func (ct CreationTracer) CaptureState(env *vm.EVM, pc uint64, op vm.OpCode, gas,
 func (ct CreationTracer) CaptureFault(env *vm.EVM, pc uint64, op vm.OpCode, gas, cost uint64, memory *vm.Memory, stack *vm.Stack, contract *vm.Contract, depth int, err error) error {
 	return nil
 }
-func (ct CreationTracer) CaptureEnd(output []byte, gasUsed uint64, t time.Duration, err error) error {
+func (ct CreationTracer) CaptureEnd(depth int, output []byte, gasUsed uint64, t time.Duration, err error) error {
 	return nil
 }
 func (ct CreationTracer) CaptureCreate(creator common.Address, creation common.Address) error {
@@ -1513,6 +1513,145 @@ func makeSha3Preimages() {
 }
 
 
+type TokenTracer struct {
+	tokens map[common.Address]struct{}
+	addrs map[int]common.Address
+	startMode map[int]bool
+}
+
+func NewTokenTracer() TokenTracer {
+	return TokenTracer{
+		tokens: make(map[common.Address]struct{}),
+		addrs: make(map[int]common.Address),
+		startMode: make(map[int]bool),
+	}
+}
+
+func (tt TokenTracer) CaptureStart(depth int, from common.Address, to common.Address, call bool, input []byte, gas uint64, value *big.Int) error {
+	if len(input) < 68 {
+		tt.startMode[depth] = false
+		return nil
+	}
+	//a9059cbb is transfer method ID
+	if input[0] != byte(0xa9) || input[1] != byte(5) || input[2] != byte(0x9c) || input[3] != byte(0xbb) {
+		tt.startMode[depth] = false
+		return nil
+	}
+	// Next 12 bytes are zero, because the first argument is an address
+	for i := 4; i < 16; i++ {
+		if input[i] != byte(0) {
+			tt.startMode[depth] = false
+			return nil
+		}
+	}
+	tt.addrs[depth] = to
+	tt.startMode[depth] = true
+	return nil
+}
+func (tt TokenTracer) CaptureState(env *vm.EVM, pc uint64, op vm.OpCode, gas, cost uint64, memory *vm.Memory, stack *vm.Stack, contract *vm.Contract, depth int, err error) error {
+	return nil
+}
+func (tt TokenTracer) CaptureFault(env *vm.EVM, pc uint64, op vm.OpCode, gas, cost uint64, memory *vm.Memory, stack *vm.Stack, contract *vm.Contract, depth int, err error) error {
+	return nil
+}
+func (tt TokenTracer) CaptureEnd(depth int, output []byte, gasUsed uint64, t time.Duration, err error) error {
+	if !tt.startMode[depth] {
+		return nil
+	}
+	tt.startMode[depth] = false
+	if err != nil {
+		return nil
+	}
+	if len(output) != 0 && len(output) != 32 {
+		return nil
+	}
+	if len(output) == 32 {
+		allZeros := true
+		for i := 0; i < 32; i++ {
+			if output[i] != byte(0) {
+				allZeros = false
+				break
+			}
+		}
+		if allZeros {
+			return nil
+		}
+	}
+	addr := tt.addrs[depth]
+	if _, ok := tt.tokens[addr]; !ok {
+		tt.tokens[addr] = struct{}{}
+		if len(tt.tokens) % 100 == 0 {
+			fmt.Printf("Found %d token contracts so far\n", len(tt.tokens))
+		}
+	}
+	return nil
+}
+func (tt TokenTracer) CaptureCreate(creator common.Address, creation common.Address) error {
+	return nil
+}
+
+func makeTokens() {
+	sigs := make(chan os.Signal, 1)
+	interruptCh := make(chan bool, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigs
+		interruptCh <- true
+	}()
+
+	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
+	ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/geth/chaindata")
+	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
+	check(err)
+	defer ethDb.Close()
+	chainConfig := params.MainnetChainConfig
+	tt := NewTokenTracer()
+	vmConfig := vm.Config{Tracer: tt, Debug: true}
+	bc, err := core.NewBlockChain(ethDb, nil, chainConfig, ethash.NewFaker(), vmConfig, nil)
+	check(err)
+	blockNum := uint64(*block)
+	interrupt := false
+	for !interrupt {
+		block := bc.GetBlockByNumber(blockNum)
+		if block == nil {
+			break
+		}
+		dbstate := state.NewDbState(ethDb, block.NumberU64()-1)
+		statedb := state.New(dbstate)
+		signer := types.MakeSigner(chainConfig, block.Number())
+		for _, tx := range block.Transactions() {
+			// Assemble the transaction call message and return if the requested offset
+			msg, _ := tx.AsMessage(signer)
+			context := core.NewEVMContext(msg, block.Header(), bc, nil)
+			// Not yet the searched for transaction, execute on top of the current state
+			vmenv := vm.NewEVM(context, statedb, chainConfig, vmConfig)
+			if _, _, _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(tx.Gas())); err != nil {
+				panic(fmt.Errorf("tx %x failed: %v", tx.Hash(), err))
+			}
+		}
+		blockNum++
+		if blockNum % 1000 == 0 {
+			fmt.Printf("Processed %d blocks\n", blockNum)
+		}
+		// Check for interrupts
+		select {
+		case interrupt = <-interruptCh:
+			fmt.Println("interrupted, please wait for cleanup...")
+		default:
+		}
+	}
+	fmt.Printf("Writing dataset...\n")
+	f, err := os.Create("tokens.csv")
+	check(err)
+	defer f.Close()
+	w := bufio.NewWriter(f)
+	defer w.Flush()
+	for token := range tt.tokens {
+		fmt.Fprintf(w, "%x\n", token)
+	}
+}
+
 func main() {
 	flag.Parse()
 	if *cpuprofile != "" {
@@ -1537,5 +1676,6 @@ func main() {
 	//oldStorage()
 	//dustEOA()
 	//dustChartEOA()
-	makeSha3Preimages()
+	//makeSha3Preimages()
+	makeTokens()
 }

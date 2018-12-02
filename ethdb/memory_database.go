@@ -26,7 +26,10 @@ func NewMemDatabase() *LDBDatabase {
 	logger := log.New("database", "in-memory")
 
 	// Open the db and recover any potential corruptions
-	db, _ := bolt.Open("in-memory", 0600, &bolt.Options{MemOnly: true})
+	db, err := bolt.Open("in-memory", 0600, &bolt.Options{MemOnly: true})
+	if err != nil {
+		panic(err)
+	}
 	return &LDBDatabase{
 		fn:  "in-memory",
 		db:  db,
