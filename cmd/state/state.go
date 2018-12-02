@@ -1611,6 +1611,15 @@ func makeTokens() {
 	bc, err := core.NewBlockChain(ethDb, nil, chainConfig, ethash.NewFaker(), vmConfig, nil)
 	check(err)
 	blockNum := uint64(*block)
+	if blockNum > 1 {
+		tokenFile, err := os.Open("tokens.csv")
+		check(err)
+		tokenReader := csv.NewReader(bufio.NewReader(tokenFile))
+		for records, _ := tokenReader.Read(); records != nil; records, _ = tokenReader.Read() {
+			tt.tokens[common.HexToAddress(records[0])] = struct{}{}
+		}
+		tokenFile.Close()
+	}
 	interrupt := false
 	for !interrupt {
 		block := bc.GetBlockByNumber(blockNum)
@@ -1650,6 +1659,7 @@ func makeTokens() {
 	for token := range tt.tokens {
 		fmt.Fprintf(w, "%x\n", token)
 	}
+	fmt.Printf("Next time specify -block %d\n", blockNum)
 }
 
 func main() {
