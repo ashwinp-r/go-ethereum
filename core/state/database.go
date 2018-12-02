@@ -264,6 +264,112 @@ func (dbs *DbState) WriteAccountStorage(address common.Address, key, original, v
 	return nil
 }
 
+type TraceDbState struct {
+	currentDb ethdb.Database
+}
+
+func NewTraceDbState(db ethdb.Database) *TraceDbState {
+	return &TraceDbState{
+		currentDb: db,
+	}
+}
+
+func (tds *TraceDbState) ReadAccountData(address common.Address) (*Account, error) {
+	h := newHasher()
+	defer returnHasherToPool(h)
+	h.sha.Reset()
+	h.sha.Write(address[:])
+	var buf common.Hash
+	h.sha.Read(buf[:])
+	enc, err := tds.currentDb.Get(AccountsBucket, buf[:])
+	if err != nil || enc == nil || len(enc) == 0 {
+		return nil, nil
+	}
+	return encodingToAccount(enc)
+}
+
+func (tds *TraceDbState) ReadAccountStorage(address common.Address, key *common.Hash) ([]byte, error) {
+	h := newHasher()
+	defer returnHasherToPool(h)
+	h.sha.Reset()
+	h.sha.Write(key[:])
+	var buf common.Hash
+	h.sha.Read(buf[:])
+	enc, err := tds.currentDb.Get(StorageBucket, append(address[:], buf[:]...))
+	if err != nil || enc == nil {
+		return nil, nil
+	}
+	return enc, nil
+}
+
+func (tds *TraceDbState) ReadAccountCode(codeHash common.Hash) ([]byte, error) {
+	if bytes.Equal(codeHash[:], emptyCodeHash) {
+		return nil, nil
+	}
+	return tds.currentDb.Get(CodeBucket, codeHash[:])
+}
+
+func (tds *TraceDbState) ReadAccountCodeSize(codeHash common.Hash) (int, error) {
+	code, err := tds.ReadAccountCode(codeHash)
+	if err != nil {
+		return 0, err
+	}
+	return len(code), nil
+}
+
+func (tds *TraceDbState) UpdateAccountData(address common.Address, original, account *Account) error {
+	// Don't write historical record if the account did not change
+	if accountsEqual(original, account) {
+		return nil
+	}
+	h := newHasher()
+	defer returnHasherToPool(h)
+	h.sha.Reset()
+	h.sha.Write(address[:])
+	var addrHash common.Hash
+	h.sha.Read(addrHash[:])
+	data, err := accountToEncoding(account)
+	if err != nil {
+		return err
+	}
+	return tds.currentDb.Put(AccountsBucket, addrHash[:], data)
+}
+
+func (tds *TraceDbState) DeleteAccount(address common.Address, original *Account) error {
+	h := newHasher()
+	defer returnHasherToPool(h)
+	h.sha.Reset()
+	h.sha.Write(address[:])
+	var addrHash common.Hash
+	h.sha.Read(addrHash[:])
+	return tds.currentDb.Delete(AccountsBucket, addrHash[:])
+}
+
+func (tds *TraceDbState) UpdateAccountCode(codeHash common.Hash, code []byte) error {
+	return tds.currentDb.Put(CodeBucket, codeHash[:], code)
+}
+
+func (tds *TraceDbState) WriteAccountStorage(address common.Address, key, original, value *common.Hash) error {
+	h := newHasher()
+	defer returnHasherToPool(h)
+	h.sha.Reset()
+	h.sha.Write(key[:])
+	var seckey common.Hash
+	h.sha.Read(seckey[:])
+	compositeKey := append(address[:], seckey[:]...)
+	if *original == *value {
+		return nil
+	}
+	v := bytes.TrimLeft(value[:], "\x00")
+	vv := make([]byte, len(v))
+	copy(vv, v)
+	if len(v) == 0 {
+		return tds.currentDb.Delete(StorageBucket, compositeKey)
+	} else {
+		return tds.currentDb.Put(StorageBucket, compositeKey, vv)
+	}
+}
+
 type RepairDbState struct {
 	currentDb ethdb.Database
 	historyDb ethdb.Database

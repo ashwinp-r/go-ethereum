@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/core"
 	//"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -1662,6 +1663,123 @@ func makeTokens() {
 	fmt.Printf("Next time specify -block %d\n", blockNum)
 }
 
+func makeTokens2() {
+	sigs := make(chan os.Signal, 1)
+	interruptCh := make(chan bool, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigs
+		interruptCh <- true
+	}()
+
+	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
+	//ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/geth/chaindata")
+	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
+	check(err)
+	defer ethDb.Close()
+	chainConfig := params.MainnetChainConfig
+	tt := NewTokenTracer()
+	vmConfig := vm.Config{Tracer: tt, Debug: true}
+	bc, err := core.NewBlockChain(ethDb, nil, chainConfig, ethash.NewFaker(), vmConfig, nil)
+	check(err)
+	blockNum := uint64(*block)
+	if blockNum > 1 {
+		tokenFile, err := os.Open("tokens.csv")
+		check(err)
+		tokenReader := csv.NewReader(bufio.NewReader(tokenFile))
+		for records, _ := tokenReader.Read(); records != nil; records, _ = tokenReader.Read() {
+			tt.tokens[common.HexToAddress(records[0])] = struct{}{}
+		}
+		tokenFile.Close()
+	}
+	interrupt := false
+	noopWriter := state.NewNoopWriter()
+	db := ethdb.NewMemDatabase()
+	if _, _, _, err := core.SetupGenesisBlock(db, core.DefaultGenesisBlock()); err != nil {
+		panic(err)
+	}
+	dbstate := state.NewTraceDbState(db)
+	for !interrupt {
+		block := bc.GetBlockByNumber(blockNum)
+		if block == nil {
+			break
+		}
+		statedb := state.New(dbstate)
+		var (
+			usedGas  = new(uint64)
+			gp       = new(core.GasPool).AddGas(block.GasLimit())
+		)
+		if chainConfig.DAOForkSupport && chainConfig.DAOForkBlock != nil && chainConfig.DAOForkBlock.Cmp(block.Number()) == 0 {
+			misc.ApplyDAOHardFork(statedb)
+		}
+		header := block.Header()
+		for _, tx := range block.Transactions() {
+			if _, _, err := core.ApplyTransaction(chainConfig, bc, nil, gp, statedb, noopWriter, header, tx, usedGas, vmConfig); err != nil {
+				panic(fmt.Errorf("at block %d, tx %x: %v", block.NumberU64(), tx.Hash(), err))
+			}
+		}
+		// apply mining rewards to the geth stateDB
+		accumulateRewards(chainConfig, statedb, header, block.Uncles())
+		if err := statedb.Commit(chainConfig.IsEIP158(block.Number()), dbstate); err != nil {
+			panic(err)
+		}
+		blockNum++
+		if blockNum % 1000 == 0 {
+			fmt.Printf("Processed %d blocks\n", blockNum)
+		}
+		// Check for interrupts
+		select {
+		case interrupt = <-interruptCh:
+			fmt.Println("interrupted, please wait for cleanup...")
+		default:
+		}
+	}
+	fmt.Printf("Writing dataset...\n")
+	f, err := os.Create("tokens.csv")
+	check(err)
+	defer f.Close()
+	w := bufio.NewWriter(f)
+	defer w.Flush()
+	for token := range tt.tokens {
+		fmt.Fprintf(w, "%x\n", token)
+	}
+	fmt.Printf("Next time specify -block %d\n", blockNum)
+}
+
+// Some weird constants to avoid constant memory allocs for them.
+var (
+	big8  = big.NewInt(8)
+	big32 = big.NewInt(32)
+)
+
+// accumulateRewards credits the coinbase of the given block with the mining
+// reward. The total reward consists of the static block reward and rewards for
+// included uncles. The coinbase of each uncle block is also rewarded.
+func accumulateRewards(config *params.ChainConfig, state *state.StateDB, header *types.Header, uncles []*types.Header) {
+	// select the correct block reward based on chain progression
+	blockReward := ethash.FrontierBlockReward
+	if config.IsByzantium(header.Number) {
+		blockReward = ethash.ByzantiumBlockReward
+	}
+
+	// accumulate the rewards for the miner and any included uncles
+	reward := new(big.Int).Set(blockReward)
+	r := new(big.Int)
+
+	for _, uncle := range uncles {
+		r.Add(uncle.Number, big8)
+		r.Sub(r, header.Number)
+		r.Mul(r, blockReward)
+		r.Div(r, big8)
+		state.AddBalance(uncle.Coinbase, r)
+		r.Div(blockReward, big32)
+		reward.Add(reward, r)
+	}
+
+	state.AddBalance(header.Coinbase, reward)
+}
+
 func main() {
 	flag.Parse()
 	if *cpuprofile != "" {
@@ -1687,5 +1805,5 @@ func main() {
 	//dustEOA()
 	//dustChartEOA()
 	//makeSha3Preimages()
-	makeTokens()
+	makeTokens2()
 }
