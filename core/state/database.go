@@ -350,6 +350,9 @@ func (tds *TraceDbState) UpdateAccountCode(codeHash common.Hash, code []byte) er
 }
 
 func (tds *TraceDbState) WriteAccountStorage(address common.Address, key, original, value *common.Hash) error {
+	if *original == *value {
+		return nil
+	}
 	h := newHasher()
 	defer returnHasherToPool(h)
 	h.sha.Reset()
@@ -357,9 +360,6 @@ func (tds *TraceDbState) WriteAccountStorage(address common.Address, key, origin
 	var seckey common.Hash
 	h.sha.Read(seckey[:])
 	compositeKey := append(address[:], seckey[:]...)
-	if *original == *value {
-		return nil
-	}
 	v := bytes.TrimLeft(value[:], "\x00")
 	vv := make([]byte, len(v))
 	copy(vv, v)

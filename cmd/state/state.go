@@ -1516,32 +1516,32 @@ func makeSha3Preimages() {
 
 type TokenTracer struct {
 	tokens map[common.Address]struct{}
-	addrs map[int]common.Address
-	startMode map[int]bool
+	addrs []common.Address
+	startMode []bool
 }
 
 func NewTokenTracer() TokenTracer {
 	return TokenTracer{
 		tokens: make(map[common.Address]struct{}),
-		addrs: make(map[int]common.Address),
-		startMode: make(map[int]bool),
+		addrs: make([]common.Address, 16384),
+		startMode: make([]bool, 16384),
 	}
 }
 
 func (tt TokenTracer) CaptureStart(depth int, from common.Address, to common.Address, call bool, input []byte, gas uint64, value *big.Int) error {
 	if len(input) < 68 {
-		tt.startMode[depth] = false
+		return nil
+	}
+	if _, ok := tt.tokens[to]; ok {
 		return nil
 	}
 	//a9059cbb is transfer method ID
 	if input[0] != byte(0xa9) || input[1] != byte(5) || input[2] != byte(0x9c) || input[3] != byte(0xbb) {
-		tt.startMode[depth] = false
 		return nil
 	}
 	// Next 12 bytes are zero, because the first argument is an address
 	for i := 4; i < 16; i++ {
 		if input[i] != byte(0) {
-			tt.startMode[depth] = false
 			return nil
 		}
 	}
