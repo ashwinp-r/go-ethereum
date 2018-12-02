@@ -705,13 +705,16 @@ func (db *LDBDatabase) Close() {
 	db.quitLock.Lock()
 	defer db.quitLock.Unlock()
 
-	err := db.hashfile.Close()
-	if err == nil {
-		db.log.Info("Hashfile closed")
-	} else {
-		db.log.Error("Failed to close hashfile", "err", err)
+	var err error
+	if db.hashfile != nil {
+		err = db.hashfile.Close()
+		if err == nil {
+			db.log.Info("Hashfile closed")
+		} else {
+			db.log.Error("Failed to close hashfile", "err", err)
+		}
+		db.hashfile = nil
 	}
-	db.hashfile = nil
 	if db.quitChan != nil {
 		errc := make(chan error)
 		db.quitChan <- errc

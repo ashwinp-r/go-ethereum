@@ -880,16 +880,8 @@ func (db *DB) allocate(count int) (*page, error) {
 	p.id = db.rwtx.meta.pgid
 	var minsz = int((p.id+pgid(count))+1) * db.pageSize
 	if minsz >= db.datasz {
-		if !db.memOnly {
-			if err := db.mmap(minsz); err != nil {
-				return nil, fmt.Errorf("mmap allocate error: %s", err)
-			}
-		} else {
-			newmem := make([]byte, minsz)
-			copy(newmem, db.dataref)
-			db.dataref = newmem
-			db.data = (*[maxMapSize]byte)(unsafe.Pointer(&db.dataref[0]))
-			db.datasz = minsz
+		if err := db.mmap(minsz); err != nil {
+			return nil, fmt.Errorf("mmap allocate error: %s", err)
 		}
 	}
 

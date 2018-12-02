@@ -17,16 +17,22 @@
 package ethdb
 
 import (
-	"github.com/petar/GoLLRB/llrb"
+	"github.com/boltdb/bolt"
+
+	"github.com/ethereum/go-ethereum/log"
 )
 
-func NewMemDatabase() Mutation {
-	m := &mutation{
-		db: nil,
-		puts: make(map[string]*llrb.LLRB),
-		suffixkeys: make(map[uint64]map[string][][]byte),
-		hashes: make(map[uint32]Hash),
+func NewMemDatabase() *LDBDatabase {
+	logger := log.New("database", "in-memory")
+
+	// Open the db and recover any potential corruptions
+	db, _ := bolt.Open("in-memory", 0600, &bolt.Options{MemOnly: true})
+	return &LDBDatabase{
+		fn:  "in-memory",
+		db:  db,
+		log: logger,
+		hashfile: nil,
+		hashdata: make([]byte, HeapSize),
 	}
-	return m
 }
 
