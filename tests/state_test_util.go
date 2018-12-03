@@ -128,7 +128,10 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config) (*state.StateD
 	block, _, _, _ := t.genesis(config).ToBlock(nil)
 	readBlockNr := block.Number().Uint64()
 	db := ethdb.NewMemDatabase()
-	statedb, tds := MakePreState(db, t.json.Pre, readBlockNr)
+	statedb, tds, err := MakePreState(db, t.json.Pre, readBlockNr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("Error in MakePreState: %v", err)
+	}
 
 	post := t.json.Post[subtest.Fork][subtest.Index]
 	msg, err := t.json.Tx.toMessage(post)
@@ -146,7 +149,7 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config) (*state.StateD
 		statedb.RevertToSnapshot(snapshot)
 	}
 	// Commit block
-	statedb.Finalise(config.IsEIP158(block.Number()), tds.DbStateWriter())
+	statedb.Finalise(config.IsEIP158(block.Number()), tds.TrieStateWriter())
 	// Add 0-value mining reward. This only makes a difference in the cases
 	// where
 	// - the coinbase suicided, or
@@ -154,7 +157,10 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config) (*state.StateD
 	//   the coinbase gets no txfee, so isn't created, and thus needs to be touched
 	statedb.AddBalance(block.Coinbase(), new(big.Int))
 	// And _now_ get the state root
-	root, _ := tds.IntermediateRoot(statedb, config.IsEIP158(block.Number()))
+	root, err := tds.IntermediateRoot(statedb, config.IsEIP158(block.Number()))
+	if err != nil {
+		return nil, nil, fmt.Errorf("Error calculating state root: %v", err)
+	}
 	// N.B: We need to do this in a two-step process, because the first Commit takes care
 	// of suicides, and we need to touch the coinbase _after_ it has potentially suicided.
 	if root != common.Hash(post.Root) {
@@ -170,8 +176,11 @@ func (t *StateTest) gasLimit(subtest StateSubtest) uint64 {
 	return t.json.Tx.GasLimit[t.json.Post[subtest.Fork][subtest.Index].Indexes.Gas]
 }
 
-func MakePreState(db ethdb.Database, accounts core.GenesisAlloc, blockNr uint64) (*state.StateDB, *state.TrieDbState) {
-	tds, _ := state.NewTrieDbState(common.Hash{}, db, blockNr)
+func MakePreState(db ethdb.Database, accounts core.GenesisAlloc, blockNr uint64) (*state.StateDB, *state.TrieDbState, error) {
+	tds, err := state.NewTrieDbState(common.Hash{}, db, blockNr)
+	if err != nil {
+		return nil, nil, err
+	}
 	statedb := state.New(tds)
 	for addr, a := range accounts {
 		statedb.SetCode(addr, a.Code)
@@ -182,13 +191,19 @@ func MakePreState(db ethdb.Database, accounts core.GenesisAlloc, blockNr uint64)
 		}
 	}
 	// Commit and re-open to start with a clean state.
-	root, _ := tds.IntermediateRoot(statedb, false)
 	tds.SetBlockNr(blockNr+1)
-	statedb.Finalise(false, tds.DbStateWriter())
-
-	tds, _ = state.NewTrieDbState(root, db, blockNr)
+	statedb.Finalise(false, tds.TrieStateWriter())
+	statedb.Commit(false, tds.DbStateWriter())
+	root, err := tds.IntermediateRoot(statedb, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	tds, err = state.NewTrieDbState(root, db, blockNr)
+	if err != nil {
+		return nil, nil, err
+	}
 	statedb = state.New(tds)
-	return statedb, tds
+	return statedb, tds, nil
 }
 
 func (t *StateTest) genesis(config *params.ChainConfig) *core.Genesis {

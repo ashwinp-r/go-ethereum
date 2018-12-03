@@ -96,10 +96,11 @@ func stateTestCmd(ctx *cli.Context) error {
 		for _, st := range test.Subtests() {
 			// Run the test and aggregate the result
 			result := &StatetestResult{Name: key, Fork: st.Fork, Pass: true}
-			state, err := test.Run(st, cfg)
+			state, tds, err := test.Run(st, cfg)
 			// print state root for evmlab tracing
 			if ctx.GlobalBool(MachineFlag.Name) && state != nil {
-				fmt.Fprintf(os.Stderr, "{\"stateRoot\": \"%x\"}\n", tds.IntermediateRoot(state, false))
+				root, _ := tds.IntermediateRoot(state, false)
+				fmt.Fprintf(os.Stderr, "{\"stateRoot\": \"%x\"}\n", root)
 			}
 			if err != nil {
 				// Test failed, mark as so and dump any state to aid debugging
