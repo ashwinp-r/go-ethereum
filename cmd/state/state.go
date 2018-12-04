@@ -1126,11 +1126,12 @@ func storageUsage() {
 	for i := 0; i < iba.length; i++ {
 		cumulative += iba.ints[i]
 		if name, ok := names[iba.values[i]]; ok {
-			fmt.Fprintf(w, "%d,%s,%d,%.3f\n", i, name, iba.ints[i], 100.0*float64(cumulative)/float64(total))
+			fmt.Fprintf(w, "%d,%s,%d,%.3f\n", i+1, name, iba.ints[i], 100.0*float64(cumulative)/float64(total))
 		} else {
-			fmt.Fprintf(w, "%d,%x,%d,%.3f\n", i, iba.values[i], iba.ints[i], 100.0*float64(cumulative)/float64(total))
+			fmt.Fprintf(w, "%d,%x,%d,%.3f\n", i+1, iba.values[i], iba.ints[i], 100.0*float64(cumulative)/float64(total))
 		}
 	}
+	fmt.Printf("Total storage items: %d\n", cumulative)
 	/*
 	ciba := NewIntSorterAddr(len(itemsByCreator))
 	idx = 0
@@ -1152,6 +1153,158 @@ func storageUsage() {
 		fmt.Fprintf(cw, "%d,%x,%d,%.3f\n", i, ciba.values[i], ciba.ints[i], float64(cumulative)/float64(total))
 	}
 	*/
+}
+
+func tokenUsage() {
+	startTime := time.Now()
+	//db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	db, err := bolt.Open("/Volumes/tb4/turbo-geth/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	//db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	check(err)
+	defer db.Close()
+	tokensFile, err := os.Open("tokens.csv")
+	check(err)
+	defer tokensFile.Close()
+	tokensReader := csv.NewReader(bufio.NewReader(tokensFile))
+	tokens := make(map[common.Address]struct{})
+	for records, _ := tokensReader.Read(); records != nil; records, _ = tokensReader.Read() {
+		tokens[common.HexToAddress(records[0])] = struct{}{}
+	}
+	addrFile, err := os.Open("addresses.csv")
+	check(err)
+	defer addrFile.Close()
+	addrReader := csv.NewReader(bufio.NewReader(addrFile))
+	names := make(map[common.Address]string)
+	for records, _ := addrReader.Read(); records != nil; records, _ = addrReader.Read() {
+		names[common.HexToAddress(records[0])] = records[1]
+	}
+	// Go through the current state
+	var addr common.Address
+	itemsByAddress := make(map[common.Address]int)
+	//itemsByCreator := make(map[common.Address]int)
+	count := 0
+	err = db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(state.StorageBucket)
+		if b == nil {
+			return nil
+		}
+		c := b.Cursor()
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
+			copy(addr[:], k[:20])
+			if _, ok := tokens[addr]; ok {
+				itemsByAddress[addr]++
+				count++
+				if count%100000 == 0 {
+					fmt.Printf("Processed %d storage records\n", count)
+				}
+			}
+		}
+		return nil
+	})
+	check(err)
+	fmt.Printf("Processing took %s\n", time.Since(startTime))
+	iba := NewIntSorterAddr(len(itemsByAddress))
+	idx := 0
+	total := 0
+	for address, items := range itemsByAddress {
+		total += items
+		iba.ints[idx] = items
+		iba.values[idx] = address
+		idx++
+	}
+	sort.Sort(iba)
+	fmt.Printf("Writing dataset...\n")
+	f, err := os.Create("items_by_token.csv")
+	check(err)
+	defer f.Close()
+	w := bufio.NewWriter(f)
+	defer w.Flush()
+	cumulative := 0
+	for i := 0; i < iba.length; i++ {
+		cumulative += iba.ints[i]
+		if name, ok := names[iba.values[i]]; ok {
+			fmt.Fprintf(w, "%d,%s,%d,%.3f\n", i+1, name, iba.ints[i], 100.0*float64(cumulative)/float64(total))
+		} else {
+			fmt.Fprintf(w, "%d,%x,%d,%.3f\n", i+1, iba.values[i], iba.ints[i], 100.0*float64(cumulative)/float64(total))
+		}
+	}
+	fmt.Printf("Total storage items: %d\n", cumulative)
+}
+
+func nonTokenUsage() {
+	startTime := time.Now()
+	//db, err := bolt.Open("/home/akhounov/.ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	db, err := bolt.Open("/Volumes/tb4/turbo-geth/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	//db, err := bolt.Open("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata", 0600, &bolt.Options{ReadOnly: true})
+	check(err)
+	defer db.Close()
+	tokensFile, err := os.Open("tokens.csv")
+	check(err)
+	defer tokensFile.Close()
+	tokensReader := csv.NewReader(bufio.NewReader(tokensFile))
+	tokens := make(map[common.Address]struct{})
+	for records, _ := tokensReader.Read(); records != nil; records, _ = tokensReader.Read() {
+		tokens[common.HexToAddress(records[0])] = struct{}{}
+	}
+	addrFile, err := os.Open("addresses.csv")
+	check(err)
+	defer addrFile.Close()
+	addrReader := csv.NewReader(bufio.NewReader(addrFile))
+	names := make(map[common.Address]string)
+	for records, _ := addrReader.Read(); records != nil; records, _ = addrReader.Read() {
+		names[common.HexToAddress(records[0])] = records[1]
+	}
+	// Go through the current state
+	var addr common.Address
+	itemsByAddress := make(map[common.Address]int)
+	//itemsByCreator := make(map[common.Address]int)
+	count := 0
+	err = db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(state.StorageBucket)
+		if b == nil {
+			return nil
+		}
+		c := b.Cursor()
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
+			copy(addr[:], k[:20])
+			if _, ok := tokens[addr]; !ok {
+				itemsByAddress[addr]++
+				count++
+				if count%100000 == 0 {
+					fmt.Printf("Processed %d storage records\n", count)
+				}
+			}
+		}
+		return nil
+	})
+	check(err)
+	fmt.Printf("Processing took %s\n", time.Since(startTime))
+	iba := NewIntSorterAddr(len(itemsByAddress))
+	idx := 0
+	total := 0
+	for address, items := range itemsByAddress {
+		total += items
+		iba.ints[idx] = items
+		iba.values[idx] = address
+		idx++
+	}
+	sort.Sort(iba)
+	fmt.Printf("Writing dataset...\n")
+	f, err := os.Create("items_by_nontoken.csv")
+	check(err)
+	defer f.Close()
+	w := bufio.NewWriter(f)
+	defer w.Flush()
+	cumulative := 0
+	for i := 0; i < iba.length; i++ {
+		cumulative += iba.ints[i]
+		if name, ok := names[iba.values[i]]; ok {
+			fmt.Fprintf(w, "%d,%s,%d,%.3f\n", i+1, name, iba.ints[i], 100.0*float64(cumulative)/float64(total))
+		} else {
+			fmt.Fprintf(w, "%d,%x,%d,%.3f\n", i+1, iba.values[i], iba.ints[i], 100.0*float64(cumulative)/float64(total))
+		}
+	}
+	fmt.Printf("Total storage items: %d\n", cumulative)
 }
 
 func oldStorage() {
@@ -1804,6 +1957,8 @@ func main() {
 	//oldStorage()
 	//dustEOA()
 	//dustChartEOA()
-	//makeSha3Preimages()
-	makeTokens2()
+	makeSha3Preimages()
+	//makeTokens2()
+	//tokenUsage()
+	//nonTokenUsage()
 }

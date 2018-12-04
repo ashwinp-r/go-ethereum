@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
+	"hash"
 	"io"
 	"math/big"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/sha3"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -189,9 +191,12 @@ type MorusDb struct {
 	db *avl.Avl1
 	codeDb *bolt.DB
 	preDb  *bolt.DB
+	addrDb *bolt.DB
 	codeCache        *lru.Cache
 	codeSizeCache    *lru.Cache
 	preimageCache    *lru.Cache
+	a2iCache         *lru.Cache
+	i2aCache         *lru.Cache
 	currentStateDb   *state.StateDB
 }
 
@@ -203,12 +208,17 @@ func NewMorusDb(datadir string, hashlen int) *MorusDb {
 	verfile := filepath.Join(datadir, "versions")
 	codefile := filepath.Join(datadir, "codes")
 	prefile := filepath.Join(datadir, "preimages")
+	addrfile := filepath.Join(datadir, "addrs")
 	db.UseFiles(pagefile, valuefile, verfile, false)
 	codeDb, err := bolt.Open(codefile, 0600, &bolt.Options{})
 	if err != nil {
 		panic(err)
 	}
 	preDb, err := bolt.Open(prefile, 0600, &bolt.Options{})
+	if err != nil {
+		panic(err)
+	}
+	addrDb, err := bolt.Open(addrfile, 0600, &bolt.Options{})
 	if err != nil {
 		panic(err)
 	}
@@ -224,10 +234,126 @@ func NewMorusDb(datadir string, hashlen int) *MorusDb {
 	if err != nil {
 		panic(err)
 	}
-	return &MorusDb{db: db, codeDb: codeDb, preDb: preDb, codeCache: cc, codeSizeCache: csc, preimageCache: pic}
+	a2i, err := lru.New(1000000)
+	if err != nil {
+		panic(err)
+	}
+	i2a, err := lru.New(1000000)
+	if err != nil {
+		panic(err)
+	}
+	morus := &MorusDb{
+		db: db,
+		codeDb: codeDb,
+		preDb: preDb,
+		addrDb: addrDb,
+		codeCache: cc,
+		codeSizeCache: csc,
+		preimageCache: pic,
+		a2iCache: a2i,
+		i2aCache: i2a,
+	}
+	db.SetCompare(morus.Compare)
+	return morus
 }
 
 var preimageBucket = []byte("P")
+
+func encodeUint64(x uint64) []byte {
+	var e []byte
+	var limit uint64
+	limit = 32
+	for bytecount := 1; bytecount <=8; bytecount++ {
+		if x < limit {
+			e = make([]byte, bytecount)
+			b := x
+			for i := bytecount - 1; i > 0; i-- {
+				e[i] = byte(b&0xff)
+				b >>= 8
+			}
+			e[0] = byte(b) | (byte(bytecount)<<5) // 3 most significant bits of the first byte are bytecount
+			break
+		}
+		limit <<= 8
+	}
+	return e
+}
+
+func decodeUint64(e []byte) uint64 {
+	bytecount := int(e[0]>>5)
+	x := uint64(e[0]&0x1f)
+	for i := 1; i < bytecount; i++ {
+		x = (x<<8) | uint64(e[i])
+	}
+	return x
+}
+
+var id2addrBucket = []byte("I2A")
+var addr2idBucket = []byte("A2I")
+
+func (md *MorusDb) AddrToId(addr common.Address) []byte {
+	if cached, ok := md.a2iCache.Get(addr); ok {
+		return cached.([]byte)
+	}
+	var id []byte
+	if err := md.addrDb.Update(func(tx *bolt.Tx) error {
+		bucket, err := tx.CreateBucketIfNotExists(addr2idBucket)
+		if err != nil {
+			return err
+		}
+		rBucket, err := tx.CreateBucketIfNotExists(id2addrBucket)
+		if err != nil {
+			return err
+		}
+		id = bucket.Get(addr[:])
+		if id == nil {
+			var err error
+			seq, err := bucket.NextSequence()
+			if err != nil {
+				return err
+			}
+			id = encodeUint64(seq)
+			if err = bucket.Put(addr[:], id); err != nil {
+				return err
+			}
+			if err = rBucket.Put(id, addr[:]); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		panic(err)
+	}
+	md.a2iCache.Add(addr, id)
+	return id
+}
+
+func (md *MorusDb) IdToAddr(id []byte) common.Address {
+	seq := decodeUint64(id)
+	if cached, ok := md.i2aCache.Get(seq); ok {
+		return cached.(common.Address)
+	}
+	var addr common.Address
+	var found bool
+	if err := md.addrDb.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(id2addrBucket)
+		if bucket == nil {
+			return nil
+		}
+		v := bucket.Get(id)
+		if v != nil {
+			copy(addr[:], v)
+			found = true
+		}
+		return nil
+	}); err != nil {
+		panic(err)
+	}
+	if found {
+		md.i2aCache.Add(seq, addr)
+	}
+	return addr
+}
 
 func (md *MorusDb) CommitPreimages(statedb *state.StateDB) {
 	if err := md.preDb.Update(func(tx *bolt.Tx) error {
@@ -339,9 +465,10 @@ const (
 )
 
 func (md *MorusDb) createAccountKey(address *common.Address) []byte {
-	k := make([]byte, 21)
+	id := md.AddrToId(*address)
+	k := make([]byte, 1 + len(id))
 	k[0] = PREFIX_ACCOUNT
-	copy(k[1:], (*address)[:])
+	copy(k[1:], id[:])
 	return k
 }
 
@@ -390,6 +517,76 @@ func (md *MorusDb) createStorageKey(address *common.Address, key *common.Hash) (
 		}
 	}
 	return full, full, false
+}
+
+// keccakState wraps sha3.state. In addition to the usual hash methods, it also supports
+// Read to get a variable amount of data from the hash state. Read is faster than Sum
+// because it doesn't copy the internal state, but also modifies the internal state.
+type keccakState interface {
+	hash.Hash
+	Read([]byte) (int, error)
+}
+
+type hasher struct {
+	sha     keccakState
+}
+
+var hasherPool = make(chan *hasher, 128)
+
+func newHasher() *hasher {
+	var h *hasher
+	select {
+		case h = <- hasherPool:
+		default:
+			h = &hasher{sha: sha3.NewKeccak256().(keccakState)}
+	}
+	return h
+}
+
+func returnHasherToPool(h *hasher) {
+	select {
+		case hasherPool <- h:
+		default:
+			fmt.Printf("Allowing hasher to be garbage collected, pool is full\n")
+	}
+}
+
+func (md *MorusDb) restoreKey(x []byte) []byte {
+	switch x[0] {
+	case PREFIX_ACCOUNT:
+		addr := md.IdToAddr(x[1:])
+		return addr[:]
+	case PREFIX_STORAGE:
+		return x[1:]
+	case PREFIX_ONE_WORD:
+		var k [52]byte
+		copy(k[:], x[1:21])
+		h := newHasher()
+		defer returnHasherToPool(h)
+		h.sha.Reset()
+		h.sha.Write(x[21:])
+		h.sha.Read(k[20:])
+		return k[:]
+	case PREFIX_TWO_WORDS:
+		var k [52]byte
+		l1 := int(x[21])
+		h := newHasher()
+		defer returnHasherToPool(h)
+		h.sha.Reset()
+		h.sha.Write(k[:32-l1]) // zeros
+		h.sha.Write(x[22:22+l1])
+		l2 := len(x) - 22 - l1
+		h.sha.Write(k[:32-l2])
+		h.sha.Write(x[22+l1:])
+		copy(k[:], x[1:21])
+		h.sha.Read(k[20:])
+		return k[:]
+	}
+	panic("")
+}
+
+func (md *MorusDb) Compare(x, y []byte) int {
+	return bytes.Compare(md.restoreKey(x), md.restoreKey(y))
 }
 
 func (md *MorusDb) ReadAccountData(address common.Address) (*state.Account, error) {

@@ -37,6 +37,7 @@ type Avl1 struct {
 	pageSpace uint64
 	pageFile, valueFile, verFile *os.File
 	hashLength uint32
+	compare func([]byte, []byte) int
 }
 
 func NewAvl1() *Avl1 {
@@ -53,7 +54,12 @@ func NewAvl1() *Avl1 {
 	}
 	t.pageCache = pageCache
 	t.hashLength = 32
+	t.compare = bytes.Compare
 	return t
+}
+
+func (t *Avl1) SetCompare(c func([]byte, []byte) int) {
+	t.compare = c
 }
 
 func (t *Avl1) walkToArrowPoint(r Ref1, key []byte, height uint32) Ref1 {
@@ -71,7 +77,7 @@ func (t *Avl1) walkToArrowPoint(r Ref1, key []byte, height uint32) Ref1 {
 			if n.height < height {
 				panic(fmt.Sprintf("Fork1 with height %d max %s, expected height %d key %s", n.height, n.max, height, key))
 			} else if n.height > height {
-				switch bytes.Compare(key, n.left.getmax()) {
+				switch t.compare(key, n.left.getmax()) {
 				case -1, 0:
 					current = n.left
 				case 1:
@@ -382,7 +388,7 @@ func (t *Avl1) Get(key []byte) ([]byte, bool) {
 			if trace {
 				fmt.Printf("Get %s on fork %s %d\n", key, n.max, n.height)
 			}
-			switch bytes.Compare(key, n.left.getmax()) {
+			switch t.compare(key, n.left.getmax()) {
 			case 0, -1:
 				if trace {
 					fmt.Printf("Go left\n")
@@ -516,7 +522,7 @@ func (t *Avl1) Insert(key, value []byte) bool {
 			}
 			break loop
 		case *Fork1:
-			switch bytes.Compare(key, n.left.getmax()) {
+			switch t.compare(key, n.left.getmax()) {
 			case 0, -1:
 				current = n.left
 			case 1:
@@ -546,7 +552,7 @@ func (t *Avl1) insert(current Ref1, key, value []byte) Ref1 {
 			fmt.Printf("Inserting %s, on Leaf %s\n", key, n.key)
 		}
 		var newnode *Fork1
-		switch bytes.Compare(key, n.key) {
+		switch t.compare(key, n.key) {
 		case 0:
 			n.value = value
 			t.freeValueId(n.valueId)
@@ -560,7 +566,7 @@ func (t *Avl1) insert(current Ref1, key, value []byte) Ref1 {
 		}
 		return newnode
 	case *Fork1:
-		c := bytes.Compare(key, n.left.getmax())
+		c := t.compare(key, n.left.getmax())
 		if trace {
 			fmt.Printf("Inserting %s, on node %s, height %d\n", key, n.max, n.height)
 		}
@@ -628,7 +634,7 @@ func (t *Avl1) insert(current Ref1, key, value []byte) Ref1 {
 				nl.right = n
 				nl.height = 1 + maxu32(nl.left.getheight(), nl.right.getheight())
 				nl.max = n.max
-				if bytes.Compare(key, nl.max) == 1 {
+				if t.compare(key, nl.max) == 1 {
 					nl.max = key
 				}
 				return nl
@@ -669,7 +675,7 @@ func (t *Avl1) Delete(key []byte) bool {
 				return false
 			}
 		case *Fork1:
-			switch bytes.Compare(key, n.left.getmax()) {
+			switch t.compare(key, n.left.getmax()) {
 			case 0, -1:
 				current = n.left
 			case 1:
@@ -702,7 +708,7 @@ func (t *Avl1) delete(current Ref1, key []byte) Ref1 {
 		t.freeValueId(n.valueId)
 		return nil
 	case *Fork1:
-		c := bytes.Compare(key, n.left.getmax())
+		c := t.compare(key, n.left.getmax())
 
 		// Special cases when both right and left are leaves (simple of lobed)
 		switch nl := t.Peek(n.left).(type) {
