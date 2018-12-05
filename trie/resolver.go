@@ -616,29 +616,13 @@ func (tr *TrieResolver) ResolveWithDb(db ethdb.Database, blockNr uint64) error {
 	var err error
 	if tr.accounts {
 		if tr.historical {
-			for i := 0; i < len(startkeys); i++ {
-				if err := db.WalkAsOf([]byte("AT"), []byte("hAT"), startkeys[i], fixedbits[i], blockNr+1, func(k, v []byte) (bool,error) {
-					return tr.Walker(i, k, v)
-				}); err != nil {
-					return err
-				}
-				tr.Walker(i, nil, nil)
-			}
-			//err = db.MultiWalkAsOf([]byte("AT"), []byte("hAT"), startkeys, fixedbits, blockNr+1, tr.Walker)
+			err = db.MultiWalkAsOf([]byte("AT"), []byte("hAT"), startkeys, fixedbits, blockNr+1, tr.Walker)
 		} else {
 			err = db.MultiWalk([]byte("AT"), startkeys, fixedbits, tr.Walker)
 		}
 	} else {
 		if tr.historical {
-			for i := 0; i < len(startkeys); i++ {
-				if err := db.WalkAsOf([]byte("ST"), []byte("hST"), startkeys[i], fixedbits[i], blockNr+1, func(k, v []byte) (bool,error) {
-					return tr.Walker(i, k, v)
-				}); err != nil {
-					return err
-				}
-				tr.Walker(i, nil, nil)
-			}
-			//err = db.MultiWalkAsOf([]byte("ST"), []byte("hST"), startkeys, fixedbits, blockNr+1, tr.Walker)
+			err = db.MultiWalkAsOf([]byte("ST"), []byte("hST"), startkeys, fixedbits, blockNr+1, tr.Walker)
 		} else {
 			err = db.MultiWalk([]byte("ST"), startkeys, fixedbits, tr.Walker)
 		}

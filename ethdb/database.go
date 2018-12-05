@@ -655,6 +655,9 @@ func (db *LDBDatabase) DeleteTimestamp(timestamp uint64) error {
 		c := sb.Cursor()
 		for k, v := c.Seek(suffix); k != nil && bytes.HasPrefix(k, suffix); k, v = c.Next() {
 			hb := tx.Bucket(k[len(suffix):])
+			if hb == nil {
+				return nil
+			}
 			keycount := int(binary.BigEndian.Uint32(v))
 			for i, ki := 4, 0; ki < keycount; ki++ {
 				l := int(v[i])

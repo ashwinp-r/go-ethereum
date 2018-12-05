@@ -134,6 +134,7 @@ type BlockChain struct {
 	badBlocks      *lru.Cache              // Bad block cache
 	shouldPreserve func(*types.Block) bool // Function used to determine whether should preserve the given block.
 	noHistory bool
+	enableReceipts bool                    // Whether receipts need to be written to the database
 }
 
 // NewBlockChain returns a fully initialised block chain using information
@@ -208,7 +209,22 @@ func (bc *BlockChain) SetNoHistory(nh bool) {
 	bc.noHistory = nh
 }
 
+func (bc *BlockChain) EnableReceipts(er bool) {
+	bc.enableReceipts = er
+}
+
 func (bc *BlockChain) GetTrieDbState() *state.TrieDbState {
+	if bc.trieDbState == nil {
+		currentBlockNr := bc.CurrentBlock().NumberU64()
+		log.Info("Creating StateDB from latest state", "block", currentBlockNr)
+		var err error
+		bc.trieDbState, err = state.NewTrieDbState(bc.CurrentBlock().Header().Root, bc.db, currentBlockNr)
+		bc.trieDbState.SetNoHistory(bc.noHistory)
+		if err != nil {
+			panic(err)
+		}
+		bc.trieDbState.Rebuild()
+	}
 	return bc.trieDbState
 }
 
@@ -877,7 +893,9 @@ func (bc *BlockChain) WriteBlockWithState(block *types.Block, receipts []*types.
 		return NonStatTy, err
 	}
 
-	//rawdb.WriteReceipts(bc.db, block.Hash(), block.NumberU64(), receipts)
+	if bc.enableReceipts {
+		rawdb.WriteReceipts(bc.db, block.Hash(), block.NumberU64(), receipts)
+	}
 
 	// If the total difficulty is higher than our known, add it to the canonical chain
 	// Second clause in the if statement reduces the vulnerability to selfish mining.

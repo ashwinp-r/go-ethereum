@@ -246,6 +246,10 @@ func (g *Genesis) ToBlock(db ethdb.Database) (*types.Block, *state.StateDB, *sta
 			statedb.SetState(addr, key, value)
 		}
 	}
+	err = statedb.Finalise(false, tds.TrieStateWriter())
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	root, err := tds.IntermediateRoot(statedb, false)
 	if err != nil {
 		return nil, nil, nil, err

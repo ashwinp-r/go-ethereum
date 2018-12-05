@@ -210,11 +210,17 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 		if b.engine != nil {
 
 			// Finalize and seal the block
-			block, _ := b.engine.Finalize(b.blockchain, b.header, statedb, b.txs, b.uncles, b.receipts)
-			var err error
-			b.header.Root, _ = tds.IntermediateRoot(statedb, config.IsEIP158(b.header.Number))
+			_, err := b.engine.Finalize(b.blockchain, b.header, statedb, b.txs, b.uncles, b.receipts)
+			if err != nil {
+				panic(fmt.Sprintf("could not finalize block: %v", err))
+			}
+			b.header.Root, err = tds.IntermediateRoot(statedb, config.IsEIP158(b.header.Number))
+			if err != nil {
+				panic(fmt.Sprintf("could not get root: %v", err))
+			}
+			// Recreating block to make sure Root makes it into the header
+			block := types.NewBlock(b.header, b.txs, b.uncles, b.receipts)
 			// Write state changes to db
-			tds.SetBlockNr(b.header.Number.Uint64())
 			err = statedb.Commit(config.IsEIP158(b.header.Number), tds.DbStateWriter())
 			if err != nil {
 				panic(fmt.Sprintf("state write error: %v", err))
@@ -223,17 +229,18 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 		}
 		return nil, nil
 	}
+	tds, err := state.NewTrieDbState(parent.Root(), db, parent.Number().Uint64())
+	if err != nil {
+		panic(err)
+	}
 	for i := 0; i < n; i++ {
-		tds, err := state.NewTrieDbState(parent.Root(), db, parent.Number().Uint64())
-		if err != nil {
-			panic(err)
-		}
 		statedb := state.New(tds)
 		err = db.DeleteTimestamp(parent.NumberU64()+1)
 		if err != nil {
 			panic(err)
 		}
 		block, receipt := genblock(i, parent, statedb, tds)
+		tds.SetBlockNr(block.NumberU64())
 		blocks[i] = block
 		receipts[i] = receipt
 		parent = block
@@ -248,15 +255,14 @@ func makeHeader(chain consensus.ChainReader, parent *types.Block, state *state.S
 	} else {
 		time = new(big.Int).Add(parent.Time(), big.NewInt(10)) // block time is fixed at 10 seconds
 	}
-	tds.SetBlockNr(parent.NumberU64())
 	number := new(big.Int).Add(parent.Number(), common.Big1)
-	root, err := tds.IntermediateRoot(state, chain.Config().IsEIP158(number))
-	if err != nil {
-		panic(err)
-	}
+	//root, err := tds.IntermediateRoot(state, chain.Config().IsEIP158(number))
+	//if err != nil {
+	//	panic(err)
+	//}
 
 	return &types.Header{
-		Root:       root,
+		Root:       common.Hash{},
 		ParentHash: parent.Hash(),
 		Coinbase:   parent.Coinbase(),
 		Difficulty: engine.CalcDifficulty(chain, time.Uint64(), &types.Header{
