@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/binary"
 	"flag"
 	"fmt"
 	"hash"
@@ -283,6 +282,9 @@ func decodeUint64(e []byte) uint64 {
 	bytecount := int(e[0]>>5)
 	x := uint64(e[0]&0x1f)
 	for i := 1; i < bytecount; i++ {
+		if i >= len(e) {
+			fmt.Printf("e: %x\n", e)
+		}
 		x = (x<<8) | uint64(e[i])
 	}
 	return x
@@ -291,11 +293,15 @@ func decodeUint64(e []byte) uint64 {
 var id2addrBucket = []byte("I2A")
 var addr2idBucket = []byte("A2I")
 
-func (md *MorusDb) AddrToId(addr common.Address) []byte {
-	if cached, ok := md.a2iCache.Get(addr); ok {
-		return cached.([]byte)
-	}
+func (md *MorusDb) AddrToId(addr common.Address, create bool) []byte {
 	var id []byte
+	if cached, ok := md.a2iCache.Get(addr); ok {
+		id = cached.([]byte)
+		if id != nil || !create {
+			return id
+		}
+	}
+	var seq uint64
 	if err := md.addrDb.Update(func(tx *bolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists(addr2idBucket)
 		if err != nil {
@@ -306,9 +312,11 @@ func (md *MorusDb) AddrToId(addr common.Address) []byte {
 			return err
 		}
 		id = bucket.Get(addr[:])
-		if id == nil {
+		if id != nil {
+			id = common.CopyBytes(id)
+		} else if create {
 			var err error
-			seq, err := bucket.NextSequence()
+			seq, err = bucket.NextSequence()
 			if err != nil {
 				return err
 			}
@@ -325,6 +333,9 @@ func (md *MorusDb) AddrToId(addr common.Address) []byte {
 		panic(err)
 	}
 	md.a2iCache.Add(addr, id)
+	if id != nil {
+		md.i2aCache.Add(seq, addr)
+	}
 	return id
 }
 
@@ -386,6 +397,7 @@ func (md *MorusDb) Close() {
 	md.db.Close()
 	md.codeDb.Close()
 	md.preDb.Close()
+	md.addrDb.Close()
 }
 
 func (md *MorusDb) PrintStats() {
@@ -464,8 +476,11 @@ const (
 	PREFIX_TWO_WORDS = byte(3)
 )
 
-func (md *MorusDb) createAccountKey(address *common.Address) []byte {
-	id := md.AddrToId(*address)
+func (md *MorusDb) createAccountKey(address *common.Address, create bool) []byte {
+	id := md.AddrToId(*address, create)
+	if id == nil {
+		return nil
+	}
 	k := make([]byte, 1 + len(id))
 	k[0] = PREFIX_ACCOUNT
 	copy(k[1:], id[:])
@@ -590,7 +605,11 @@ func (md *MorusDb) Compare(x, y []byte) int {
 }
 
 func (md *MorusDb) ReadAccountData(address common.Address) (*state.Account, error) {
-	enc, found := md.db.Get(md.createAccountKey(&address))
+	key := md.createAccountKey(&address, false)
+	if key == nil {
+		return nil, nil
+	}
+	enc, found := md.db.Get(key)
 	if !found || enc == nil || len(enc) == 0 {
 		return nil, nil
 	}
@@ -660,7 +679,7 @@ func (md *MorusDb) UpdateAccountData(address common.Address, original, account *
 	if err != nil {
 		return err
 	}
-	md.db.Insert(md.createAccountKey(&address), data)
+	md.db.Insert(md.createAccountKey(&address, true), data)
 	return nil
 }
 
@@ -678,7 +697,11 @@ func (md *MorusDb) UpdateAccountCode(codeHash common.Hash, code []byte) error {
 }
 
 func (md *MorusDb) DeleteAccount(address common.Address, original *state.Account) error {
-	md.db.Delete(md.createAccountKey(&address))
+	key := md.createAccountKey(&address, false)
+	if key == nil {
+		return nil
+	}
+	md.db.Delete(key)
 	return nil
 }
 
@@ -767,9 +790,6 @@ func main() {
 	stream := rlp.NewStream(input, 0)
 
 	var block types.Block
-
-	var prevRoot common.Hash
-	binary.BigEndian.PutUint64(prevRoot[:8], uint64(morus.LatestVersion()))
 
 	chainContext := NewChainContext()
 	vmConfig := vm.Config{EnablePreimageRecording: true}
