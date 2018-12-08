@@ -1608,6 +1608,14 @@ func makeSha3Preimages() {
 	check(err)
 	blockNum := uint64(*block)
 	interrupt := false
+	tx, err := f.Begin(true)
+	if err != nil {
+		panic(err)
+	}
+	b, err := tx.CreateBucketIfNotExists(bucket)
+	if err != nil {
+		panic(err)
+	}
 	for !interrupt {
 		block := bc.GetBlockByNumber(blockNum)
 		if block == nil {
@@ -1629,32 +1637,30 @@ func makeSha3Preimages() {
 		pi := statedb.Preimages()
 		for hash, preimage := range pi {
 			var found bool
-			if err := f.View(func(tx *bolt.Tx) error {
-				b := tx.Bucket(bucket)
-				if b == nil {
-					return nil
-				}
-				v := b.Get(hash[:])
-				if v != nil {
-					found = true
-				}
-				return nil
-			}); err != nil {
-				panic(err)
+			v := b.Get(hash[:])
+			if v != nil {
+				found = true
 			}
-			if err := f.Update(func(tx *bolt.Tx) error {
-				b, err := tx.CreateBucketIfNotExists(bucket)
-				if err != nil {
-					return err
+			if !found {
+				if err := b.Put(hash[:], preimage); err != nil {
+					panic(err)
 				}
-				return b.Put(hash[:], preimage)
-			}); err != nil {
-				panic(err)
 			}
 		}
 		blockNum++
-		if blockNum % 1000 == 0 {
+		if blockNum % 100 == 0 {
 			fmt.Printf("Processed %d blocks\n", blockNum)
+			if err := tx.Commit(); err != nil {
+				panic(err)
+			}
+			tx, err = f.Begin(true)
+			if err != nil {
+				panic(err)
+			}
+			b, err = tx.CreateBucketIfNotExists(bucket)
+			if err != nil {
+				panic(err)
+			}
 		}
 		// Check for interrupts
 		select {
@@ -1662,6 +1668,9 @@ func makeSha3Preimages() {
 			fmt.Println("interrupted, please wait for cleanup...")
 		default:
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		panic(err)
 	}
 	fmt.Printf("Next time specify -block %d\n", blockNum)
 }
