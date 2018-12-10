@@ -1886,12 +1886,72 @@ func tokenBalances() {
 	tokenFile.Close()
 	//tokens = append(tokens, common.HexToAddress("0xB8c77482e45F1F44dE1745F52C74426C631bDD52"))
 	caller := common.HexToAddress("0x742d35cc6634c0532925a3b844bc454e4438f44e")
-
+	f, err := os.Create("/Volumes/tb41/turbo-geth/token_balances.csv")
+	check(err)
+	defer f.Close()
+	w := bufio.NewWriter(f)
+	defer w.Flush()
 	for _, token := range tokens {
+		// Exclude EOAs and removed accounts
+		enc, err := ethDb.Get(state.AccountsBucket, crypto.Keccak256(token[:]))
+		if enc == nil {
+			continue
+		}
+		a, err := encodingToAccount(enc)
+		if err != nil {
+			panic(err)
+		}
+		if bytes.Equal(a.CodeHash, emptyCodeHash) {
+			// Only processing contracts
+			continue
+		}
 		fmt.Printf("Analysing token %x...", token)
 		count := 0
 		addrCount := 0
-		bases := make(map[byte]int)
+		dbstate := state.NewDbState(ethDb, currentBlockNr)
+		statedb := state.New(dbstate)
+		msg := types.NewMessage(
+			caller,
+			&token,
+			0,
+			big.NewInt(0), // value
+			math.MaxUint64 / 2, // gaslimit
+			big.NewInt(100000),
+			common.FromHex(fmt.Sprintf("0x70a08231000000000000000000000000%x", common.HexToAddress("0xe477292f1b3268687a29376116b0ed27a9c76170"))),
+			false, // checkNonce
+		)
+		chainConfig := params.MainnetChainConfig
+		vmConfig := vm.Config{EnablePreimageRecording: true}
+		context := core.NewEVMContext(msg, currentBlock.Header(), bc, nil)
+		// Not yet the searched for transaction, execute on top of the current state
+		vmenv := vm.NewEVM(context, statedb, chainConfig, vmConfig)
+		_, _, failed, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(math.MaxUint64))
+		if err != nil {
+			fmt.Printf("Call failed with error: %v\n", err)
+		}
+		if failed {
+			fmt.Printf("Call failed\n")
+		}
+		pi := statedb.Preimages()
+		var base byte
+		if len(pi) != 1 {
+			fmt.Printf(" balanceOf preimages: %d\n", len(pi))
+		} else {
+			for _, preimage := range pi {
+				allZerosBase := true
+				for i := 32; i < 63; i++ {
+					if preimage[i] != byte(0) {
+						allZerosBase = false
+						break
+					}
+				}
+				if !allZerosBase {
+					fmt.Printf(" base > 255\n")
+					continue
+				}
+				base = preimage[63]
+			}
+		}
 		err = ethDb.Walk(state.StorageBucket, token[:], 160, func(k, v []byte) (bool, error) {
 			var key []byte
 			key, err = ethDb.Get(pBucket, k[20:])
@@ -1927,8 +1987,9 @@ func tokenBalances() {
 						break
 					}
 				}
-				if allZerosKey && allZerosBase {
-					bases[preimage[63]]++
+				if allZerosKey && allZerosBase && len(pi) == 1 && preimage[63] == base {
+					balance := common.BytesToHash(v).Big()
+					fmt.Fprintf(w, "%x,%x,%d\n", token, preimage[12:32], balance)
 					addrCount++
 				}
 			}
@@ -1939,34 +2000,7 @@ func tokenBalances() {
 			fmt.Printf("Error walking: %v\n", err)
 			return
 		}
-		fmt.Printf(" %d storage items, addr items: %d, bases: %v\n", count, addrCount, bases)
-		dbstate := state.NewDbState(ethDb, currentBlockNr)
-		statedb := state.New(dbstate)
-		msg := types.NewMessage(
-			caller,
-			&token,
-			0,
-			big.NewInt(0), // value
-			math.MaxUint64 / 2, // gaslimit
-			big.NewInt(100000),
-			common.FromHex(fmt.Sprintf("0x70a08231000000000000000000000000%x", common.HexToAddress("0xe477292f1b3268687a29376116b0ed27a9c76170"))),
-			false, // checkNonce
-		)
-		chainConfig := params.MainnetChainConfig
-		vmConfig := vm.Config{}
-		context := core.NewEVMContext(msg, currentBlock.Header(), bc, nil)
-		// Not yet the searched for transaction, execute on top of the current state
-		vmenv := vm.NewEVM(context, statedb, chainConfig, vmConfig)
-		_, _, failed, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(math.MaxUint64))
-		if err != nil {
-			fmt.Printf("Call failed with error: %v\n", err)
-			return
-		}
-		if failed {
-			fmt.Printf("Call failed\n")
-			//return
-		}
-		//fmt.Printf("Result: %x\n", res)
+		fmt.Printf(" %d storage items, holders: %d, base: %d\n", count, addrCount, base)
 	}
 }
 
