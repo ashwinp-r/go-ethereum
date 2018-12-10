@@ -19,6 +19,7 @@ import (
 	"os/signal"
 	"io"
 	"encoding/csv"
+	"math"
 
 	"github.com/boltdb/bolt"
 	"github.com/wcharczuk/go-chart"
@@ -28,7 +29,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
-	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/core"
 	//"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -1009,11 +1009,11 @@ func makeCreators() {
 	}()
 
 	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
-	ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/geth/chaindata")
+	ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb41/turbo-geth/geth/chaindata")
 	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
 	check(err)
 	defer ethDb.Close()
-	f, err := os.OpenFile("creators.csv", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+	f, err := os.OpenFile("/Volumes/tb41/turbo-geth/creators.csv", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
 	check(err)
 	defer f.Close()
 	w := bufio.NewWriter(f)
@@ -1764,7 +1764,7 @@ func makeTokens() {
 	}()
 
 	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
-	ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/geth/chaindata")
+	ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb41/turbo-geth/geth/chaindata")
 	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
 	check(err)
 	defer ethDb.Close()
@@ -1775,7 +1775,7 @@ func makeTokens() {
 	check(err)
 	blockNum := uint64(*block)
 	if blockNum > 1 {
-		tokenFile, err := os.Open("tokens.csv")
+		tokenFile, err := os.Open("/Volumes/tb41/turbo-geth/tokens.csv")
 		check(err)
 		tokenReader := csv.NewReader(bufio.NewReader(tokenFile))
 		for records, _ := tokenReader.Read(); records != nil; records, _ = tokenReader.Read() {
@@ -1814,91 +1814,7 @@ func makeTokens() {
 		}
 	}
 	fmt.Printf("Writing dataset...\n")
-	f, err := os.Create("tokens.csv")
-	check(err)
-	defer f.Close()
-	w := bufio.NewWriter(f)
-	defer w.Flush()
-	for token := range tt.tokens {
-		fmt.Fprintf(w, "%x\n", token)
-	}
-	fmt.Printf("Next time specify -block %d\n", blockNum)
-}
-
-func makeTokens2() {
-	sigs := make(chan os.Signal, 1)
-	interruptCh := make(chan bool, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-
-	go func() {
-		<-sigs
-		interruptCh <- true
-	}()
-
-	ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
-	//ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb4/turbo-geth/geth/chaindata")
-	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
-	check(err)
-	defer ethDb.Close()
-	chainConfig := params.MainnetChainConfig
-	tt := NewTokenTracer()
-	vmConfig := vm.Config{Tracer: tt, Debug: true}
-	bc, err := core.NewBlockChain(ethDb, nil, chainConfig, ethash.NewFaker(), vmConfig, nil)
-	check(err)
-	blockNum := uint64(*block)
-	if blockNum > 1 {
-		tokenFile, err := os.Open("tokens.csv")
-		check(err)
-		tokenReader := csv.NewReader(bufio.NewReader(tokenFile))
-		for records, _ := tokenReader.Read(); records != nil; records, _ = tokenReader.Read() {
-			tt.tokens[common.HexToAddress(records[0])] = struct{}{}
-		}
-		tokenFile.Close()
-	}
-	interrupt := false
-	noopWriter := state.NewNoopWriter()
-	db := ethdb.NewMemDatabase()
-	if _, _, _, err := core.SetupGenesisBlock(db, core.DefaultGenesisBlock()); err != nil {
-		panic(err)
-	}
-	dbstate := state.NewTraceDbState(db)
-	for !interrupt {
-		block := bc.GetBlockByNumber(blockNum)
-		if block == nil {
-			break
-		}
-		statedb := state.New(dbstate)
-		var (
-			usedGas  = new(uint64)
-			gp       = new(core.GasPool).AddGas(block.GasLimit())
-		)
-		if chainConfig.DAOForkSupport && chainConfig.DAOForkBlock != nil && chainConfig.DAOForkBlock.Cmp(block.Number()) == 0 {
-			misc.ApplyDAOHardFork(statedb)
-		}
-		header := block.Header()
-		for _, tx := range block.Transactions() {
-			if _, _, err := core.ApplyTransaction(chainConfig, bc, nil, gp, statedb, noopWriter, header, tx, usedGas, vmConfig); err != nil {
-				panic(fmt.Errorf("at block %d, tx %x: %v", block.NumberU64(), tx.Hash(), err))
-			}
-		}
-		// apply mining rewards to the geth stateDB
-		accumulateRewards(chainConfig, statedb, header, block.Uncles())
-		if err := statedb.Commit(chainConfig.IsEIP158(block.Number()), dbstate); err != nil {
-			panic(err)
-		}
-		blockNum++
-		if blockNum % 1000 == 0 {
-			fmt.Printf("Processed %d blocks\n", blockNum)
-		}
-		// Check for interrupts
-		select {
-		case interrupt = <-interruptCh:
-			fmt.Println("interrupted, please wait for cleanup...")
-		default:
-		}
-	}
-	fmt.Printf("Writing dataset...\n")
-	f, err := os.Create("tokens.csv")
+	f, err := os.Create("/Volumes/tb41/turbo-geth/tokens.csv")
 	check(err)
 	defer f.Close()
 	w := bufio.NewWriter(f)
@@ -1942,6 +1858,179 @@ func accumulateRewards(config *params.ChainConfig, state *state.StateDB, header 
 	state.AddBalance(header.Coinbase, reward)
 }
 
+func tokenBalances() {
+	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
+	ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb41/turbo-geth/geth/chaindata")
+	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
+	check(err)
+	defer ethDb.Close()
+	bc, err := core.NewBlockChain(ethDb, nil, params.MainnetChainConfig, ethash.NewFaker(), vm.Config{}, nil)
+	check(err)
+	currentBlock := bc.CurrentBlock()
+	currentBlockNr := currentBlock.NumberU64()
+	fmt.Printf("Current block number: %d\n", currentBlockNr)
+
+	pdb, err := bolt.Open("/Volumes/tb41/turbo-geth/sha3preimages", 0600, &bolt.Options{})
+	check(err)
+	defer pdb.Close()
+	bucket := []byte("sha3")
+	pBucket := []byte("secure-key-")
+
+	var tokens []common.Address
+	tokenFile, err := os.Open("/Volumes/tb41/turbo-geth/tokens.csv")
+	check(err)
+	tokenReader := csv.NewReader(bufio.NewReader(tokenFile))
+	for records, _ := tokenReader.Read(); records != nil; records, _ = tokenReader.Read() {
+		tokens = append(tokens, common.HexToAddress(records[0]))
+	}
+	tokenFile.Close()
+	//tokens = append(tokens, common.HexToAddress("0xB8c77482e45F1F44dE1745F52C74426C631bDD52"))
+	caller := common.HexToAddress("0x742d35cc6634c0532925a3b844bc454e4438f44e")
+
+	for _, token := range tokens {
+		fmt.Printf("Analysing token %x...", token)
+		count := 0
+		addrCount := 0
+		bases := make(map[byte]int)
+		err = ethDb.Walk(state.StorageBucket, token[:], 160, func(k, v []byte) (bool, error) {
+			var key []byte
+			key, err = ethDb.Get(pBucket, k[20:])
+			var preimage []byte
+			if key != nil {
+				err := pdb.View(func(tx *bolt.Tx) error {
+					b := tx.Bucket(bucket)
+					if b == nil {
+						return nil
+					}
+					preimage = b.Get(key)
+					if preimage != nil {
+						preimage = common.CopyBytes(preimage)
+					}
+					return nil
+				})
+				if err != nil {
+					return false, err
+				}
+			}
+			if preimage != nil && len(preimage) == 64 {
+				allZerosKey := true
+				for i := 0; i < 12; i++ {
+					if preimage[i] != byte(0) {
+						allZerosKey = false
+						break
+					}
+				}
+				allZerosBase := true
+				for i := 32; i < 63; i++ {
+					if preimage[i] != byte(0) {
+						allZerosBase = false
+						break
+					}
+				}
+				if allZerosKey && allZerosBase {
+					bases[preimage[63]]++
+					addrCount++
+				}
+			}
+			count++
+			return true, nil
+		})
+		if err != nil {
+			fmt.Printf("Error walking: %v\n", err)
+			return
+		}
+		fmt.Printf(" %d storage items, addr items: %d, bases: %v\n", count, addrCount, bases)
+		dbstate := state.NewDbState(ethDb, currentBlockNr)
+		statedb := state.New(dbstate)
+		msg := types.NewMessage(
+			caller,
+			&token,
+			0,
+			big.NewInt(0), // value
+			math.MaxUint64 / 2, // gaslimit
+			big.NewInt(100000),
+			common.FromHex(fmt.Sprintf("0x70a08231000000000000000000000000%x", common.HexToAddress("0xe477292f1b3268687a29376116b0ed27a9c76170"))),
+			false, // checkNonce
+		)
+		chainConfig := params.MainnetChainConfig
+		vmConfig := vm.Config{}
+		context := core.NewEVMContext(msg, currentBlock.Header(), bc, nil)
+		// Not yet the searched for transaction, execute on top of the current state
+		vmenv := vm.NewEVM(context, statedb, chainConfig, vmConfig)
+		_, _, failed, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(math.MaxUint64))
+		if err != nil {
+			fmt.Printf("Call failed with error: %v\n", err)
+			return
+		}
+		if failed {
+			fmt.Printf("Call failed\n")
+			//return
+		}
+		//fmt.Printf("Result: %x\n", res)
+	}
+}
+
+/*
+	state, header, err := s.b.StateAndHeaderByNumber(ctx, blockNr)
+	if state == nil || err != nil {
+		return nil, 0, false, err
+	}
+	// Set sender address or use a default if none specified
+	addr := args.From
+	if addr == (common.Address{}) {
+		if wallets := s.b.AccountManager().Wallets(); len(wallets) > 0 {
+			if accounts := wallets[0].Accounts(); len(accounts) > 0 {
+				addr = accounts[0].Address
+			}
+		}
+	}
+	// Set default gas & gas price if none were set
+	gas, gasPrice := uint64(args.Gas), args.GasPrice.ToInt()
+	if gas == 0 {
+		gas = math.MaxUint64 / 2
+	}
+	if gasPrice.Sign() == 0 {
+		gasPrice = new(big.Int).SetUint64(defaultGasPrice)
+	}
+
+	// Create new call message
+	msg := types.NewMessage(addr, args.To, 0, args.Value.ToInt(), gas, gasPrice, args.Data, false)
+
+	// Setup context so it may be cancelled the call has completed
+	// or, in case of unmetered gas, setup a context with a timeout.
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
+	// Make sure the context is cancelled when the call has completed
+	// this makes sure resources are cleaned up.
+	defer cancel()
+
+	// Get a new instance of the EVM.
+	evm, vmError, err := s.b.GetEVM(ctx, msg, state, header, vmCfg)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	// Wait for the context to be done and cancel the evm. Even if the
+	// EVM has finished, cancelling may be done (repeatedly)
+	go func() {
+		<-ctx.Done()
+		evm.Cancel()
+	}()
+
+	// Setup the gas pool (also for unmetered requests)
+	// and apply the message.
+	gp := new(core.GasPool).AddGas(math.MaxUint64)
+	res, gas, failed, err := core.ApplyMessage(evm, msg, gp)
+	if err := vmError(); err != nil {
+		return nil, 0, false, err
+	}
+	return res, gas, failed, err	
+}
+*/
+
 func main() {
 	flag.Parse()
 	if *cpuprofile != "" {
@@ -1966,8 +2055,9 @@ func main() {
 	//oldStorage()
 	//dustEOA()
 	//dustChartEOA()
-	makeSha3Preimages()
-	//makeTokens2()
+	//makeSha3Preimages()
+	//makeTokens()
 	//tokenUsage()
 	//nonTokenUsage()
+	tokenBalances()
 }
