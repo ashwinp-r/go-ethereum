@@ -8,6 +8,7 @@ import (
 	"io"
 	"math/big"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"time"
@@ -751,8 +752,7 @@ func accumulateRewards(config *params.ChainConfig, state *state.StateDB, header 
 	state.AddBalance(header.Coinbase, reward)
 }
 
-func main() {
-	flag.Parse()
+func loadAll() {
 	noopWriter := state.NewNoopWriter()
 	morus := NewMorusDb(*datadir, *hashlen)
 	if morus.LatestVersion() == 0 {
@@ -888,4 +888,69 @@ func main() {
 	morus.Close()
 
 	fmt.Printf("processed %d blocks\n", block.NumberU64())
+}
+
+func avltest() {
+	f, err := os.Create("avl1.dot")
+	if err != nil {
+		panic(err)
+	}
+	tr := avl.NewAvl2()
+	tr.SetTracing(true)
+	tr.Insert([]byte("aC"), []byte("Cv"))
+	tr.Insert([]byte("aB"), []byte("Bv"))
+	tr.Insert([]byte("aF"), []byte("Fv"))
+	tr.Insert([]byte("aA"), []byte("Av"))
+	tr.Insert([]byte("aE"), []byte("Ev"))
+	tr.Insert([]byte("aG"), []byte("Gv"))
+	tr.Insert([]byte("aD"), []byte("Dv"))
+	tr.Insert([]byte("aH"), []byte("Hv"))
+	tr.Insert([]byte("aI"), []byte("Iv"))
+	tr.Insert([]byte("aJ"), []byte("Jv"))
+	tr.Insert([]byte("aF"), []byte("Fv1"))
+	tr.Insert([]byte("aC"), []byte("Cv1"))
+	tr.Insert([]byte("aE"), []byte("Ev1"))
+	tr.Insert([]byte("aD"), []byte("Dv1"))
+	tr.Insert([]byte("aX"), []byte("xv"))
+	tr.Insert([]byte("aW"), []byte("wv"))
+	tr.Insert([]byte("aV"), []byte("vv"))
+	tr.Insert([]byte("aU"), []byte("uv"))
+	tr.Insert([]byte("aG"), []byte("1v"))
+	tr.Insert([]byte("aP"), []byte("2v"))
+	tr.Insert([]byte("aS"), []byte("3v"))
+	tr.Insert([]byte("aO"), []byte("4v"))
+	tr.Insert([]byte("aL"), []byte("5v"))
+	tr.Commit()
+	tr.Insert([]byte("aK"), []byte("6v"))
+	//tr.Insert([]byte("aM"), []byte("8v"))
+	//tr.Insert([]byte("aN"), []byte("7v"))
+	//tr.Insert([]byte("aW"), []byte("wv1"))
+	//tr.Insert([]byte("aJ"), []byte("6v"))
+	//tr.Commit()
+	//tr.Insert([]byte("aR"), []byte("8v"))
+	//tr.Insert([]byte("aT"), []byte("7v"))
+	//tr.Insert([]byte("aH"), []byte("Hv"))
+	//tr.Delete([]byte("aX"))
+	//tr.Delete([]byte("aF"))
+	//tr.Delete([]byte("aC"))
+	//tr.Delete([]byte("aE"))
+	err = avl.DotGraph("1", tr, f)
+	if err != nil {
+		panic(err)
+	}
+	err = f.Close()
+	if err != nil {
+		panic(err)
+	}
+	cmd := exec.Command("dot", "-Tpng", "-O", "avl1.dot")
+	err = cmd.Run()
+	if err != nil {
+		panic(err)
+	}
+}
+
+func main() {
+	flag.Parse()
+	//loadAll()
+	avltest()
 }

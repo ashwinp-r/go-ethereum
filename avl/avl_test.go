@@ -215,3 +215,52 @@ func TestInsertDeleteStage1(t *testing.T) {
 	}
 	tr2.Commit()
 }
+
+func TestInsertRandom2Commit(t *testing.T) {
+	source := rand.NewSource(67585947470305)
+	r := rand.New(source)
+	tr := NewAvl2()
+	var keys [][]byte
+	var values [][]byte
+	for i := 0; i < 100000; i++ {
+		key := randChars(r, 16)
+		value := randChars(r, 32)
+		tr.Insert(key, value)
+		keys = append(keys, key)
+		values = append(values, value)
+		// Redundant inserts
+		j := r.Int63n(int64(len(keys)))
+		tr.Insert(keys[j], values[j])
+		// Replaces
+		k := r.Int63n(int64(len(keys)))
+		value = randChars(r, 32)
+		tr.Insert(keys[k], value)
+		values[k] = value
+		if i < 10000 {
+			if _, ok := tr.buffer.heightsCorrect(""); !ok {
+				t.Errorf("height fields are incorrect after step %d", i)
+				break
+			}
+			if !tr.buffer.balanceCorrect() {
+				t.Errorf("tree is not balanced after step %d", i)
+				break
+			}
+		}
+	}
+	if _, ok := tr.buffer.heightsCorrect(""); !ok {
+		t.Errorf("height fields are incorrect")
+	}
+	if !tr.buffer.balanceCorrect() {
+		t.Errorf("tree is not balanced")
+	}
+	tr.Commit()
+	for i, key := range keys {
+		value := values[i]
+		v, found := tr.Get(key)
+		if !found {
+			t.Errorf("Did not find inserted value")
+		} else if !bytes.Equal(v, value) {
+			t.Errorf("Found wrong value %s, expected %s", v, value)
+		}
+	}
+}
