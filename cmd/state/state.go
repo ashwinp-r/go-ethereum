@@ -1858,7 +1858,7 @@ func accumulateRewards(config *params.ChainConfig, state *state.StateDB, header 
 	state.AddBalance(header.Coinbase, reward)
 }
 
-func tokenBalances() {
+func makeTokenBalances() {
 	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
 	ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb41/turbo-geth/geth/chaindata")
 	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
@@ -2004,66 +2004,79 @@ func tokenBalances() {
 	}
 }
 
-/*
-	state, header, err := s.b.StateAndHeaderByNumber(ctx, blockNr)
-	if state == nil || err != nil {
-		return nil, 0, false, err
+type TokenBalance struct {
+	token common.Address
+	holder common.Address
+	balance *big.Int
+}
+
+func tokenBalances() {
+	addrFile, err := os.Open("addresses.csv")
+	check(err)
+	defer addrFile.Close()
+	addrReader := csv.NewReader(bufio.NewReader(addrFile))
+	names := make(map[common.Address]string)
+	for records, _ := addrReader.Read(); records != nil; records, _ = addrReader.Read() {
+		names[common.HexToAddress(records[0])] = records[1]
 	}
-	// Set sender address or use a default if none specified
-	addr := args.From
-	if addr == (common.Address{}) {
-		if wallets := s.b.AccountManager().Wallets(); len(wallets) > 0 {
-			if accounts := wallets[0].Accounts(); len(accounts) > 0 {
-				addr = accounts[0].Address
-			}
+	var tokenBalances []TokenBalance
+	tbFile, err := os.Open("/Volumes/tb41/turbo-geth/token_balances.csv")
+	check(err)
+	tbReader := csv.NewReader(bufio.NewReader(tbFile))
+	for records, _ := tbReader.Read(); records != nil; records, _ = tbReader.Read() {
+		balance := big.NewInt(0)
+		if err := balance.UnmarshalText([]byte(records[2])); err != nil {
+			panic(err)
+		}
+		tokenBalances = append(tokenBalances, TokenBalance{
+			token: common.HexToAddress(records[0]),
+			holder: common.HexToAddress(records[1]),
+			balance: balance,
+			})
+	}
+	tbFile.Close()
+	fmt.Printf("(token, holder) pairs: %d\n", len(tokenBalances))
+	tokens := make(map[common.Address]int)
+	holders := make(map[common.Address]int)
+	for _, tb := range tokenBalances {
+		tokens[tb.token]++
+		holders[tb.holder]++
+	}
+	fmt.Printf("Tokens: %d\n", len(tokens))
+	fmt.Printf("Holders: %d\n", len(holders))
+	tokenSorter := NewIntSorterAddr(len(tokens))
+	idx := 0
+	for token, count := range tokens {
+		tokenSorter.ints[idx] = count
+		tokenSorter.values[idx] = token
+		idx++
+	}
+	sort.Sort(tokenSorter)
+	fmt.Printf("Top 100 tokens by number of holders:\n")
+	for i := 0; i < 100; i++ {
+		if name, ok := names[tokenSorter.values[i]]; ok {
+			fmt.Printf("%d,%s,%d\n", i+1, name, tokenSorter.ints[i])
+		} else {
+			fmt.Printf("%d,%x,%d\n", i+1, tokenSorter.values[i], tokenSorter.ints[i])
 		}
 	}
-	// Set default gas & gas price if none were set
-	gas, gasPrice := uint64(args.Gas), args.GasPrice.ToInt()
-	if gas == 0 {
-		gas = math.MaxUint64 / 2
+	holderSorter := NewIntSorterAddr(len(holders))
+	idx = 0
+	for holder, count := range holders {
+		holderSorter.ints[idx] = count
+		holderSorter.values[idx] = holder
+		idx++
 	}
-	if gasPrice.Sign() == 0 {
-		gasPrice = new(big.Int).SetUint64(defaultGasPrice)
+	sort.Sort(holderSorter)
+	fmt.Printf("Top 100 holder by number of tokens:\n")
+	for i := 0; i < 100; i++ {
+		if name, ok := names[holderSorter.values[i]]; ok {
+			fmt.Printf("%d,%s,%d\n", i+1, name, holderSorter.ints[i])
+		} else {
+			fmt.Printf("%d,%x,%d\n", i+1, holderSorter.values[i], holderSorter.ints[i])
+		}
 	}
-
-	// Create new call message
-	msg := types.NewMessage(addr, args.To, 0, args.Value.ToInt(), gas, gasPrice, args.Data, false)
-
-	// Setup context so it may be cancelled the call has completed
-	// or, in case of unmetered gas, setup a context with a timeout.
-	var cancel context.CancelFunc
-	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-	} else {
-		ctx, cancel = context.WithCancel(ctx)
-	}
-	// Make sure the context is cancelled when the call has completed
-	// this makes sure resources are cleaned up.
-	defer cancel()
-
-	// Get a new instance of the EVM.
-	evm, vmError, err := s.b.GetEVM(ctx, msg, state, header, vmCfg)
-	if err != nil {
-		return nil, 0, false, err
-	}
-	// Wait for the context to be done and cancel the evm. Even if the
-	// EVM has finished, cancelling may be done (repeatedly)
-	go func() {
-		<-ctx.Done()
-		evm.Cancel()
-	}()
-
-	// Setup the gas pool (also for unmetered requests)
-	// and apply the message.
-	gp := new(core.GasPool).AddGas(math.MaxUint64)
-	res, gas, failed, err := core.ApplyMessage(evm, msg, gp)
-	if err := vmError(); err != nil {
-		return nil, 0, false, err
-	}
-	return res, gas, failed, err	
 }
-*/
 
 func main() {
 	flag.Parse()
@@ -2093,5 +2106,6 @@ func main() {
 	//makeTokens()
 	//tokenUsage()
 	//nonTokenUsage()
+	//makeTokenBalances()
 	tokenBalances()
 }
