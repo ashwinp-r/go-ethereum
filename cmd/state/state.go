@@ -2184,6 +2184,9 @@ func makeTokenAllowances() {
 		}
 		if lenpi == 2 && foundBase2 {
 			for _, preimage := range pi {
+				if len(preimage) != 64 {
+					continue
+				}
 				if bytes.Equal(preimage[32:], base2[:]) {
 					foundBase = true
 				}
