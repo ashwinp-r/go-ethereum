@@ -1934,10 +1934,9 @@ func makeTokenBalances() {
 		}
 		pi := statedb.Preimages()
 		var base byte
-		if len(pi) != 1 {
-			fmt.Printf(" balanceOf preimages: %d\n", len(pi))
-		} else {
-			for _, preimage := range pi {
+		var plen int
+		for _, preimage := range pi {
+			if len(preimage) == 64 {
 				allZerosBase := true
 				for i := 32; i < 63; i++ {
 					if preimage[i] != byte(0) {
@@ -1950,7 +1949,11 @@ func makeTokenBalances() {
 					continue
 				}
 				base = preimage[63]
+				plen++
 			}
+		}
+		if plen != 1 {
+			fmt.Printf(" balanceOf preimages: %d\n", plen)
 		}
 		err = ethDb.Walk(state.StorageBucket, token[:], 160, func(k, v []byte) (bool, error) {
 			var key []byte
@@ -1987,7 +1990,7 @@ func makeTokenBalances() {
 						break
 					}
 				}
-				if allZerosKey && allZerosBase && len(pi) == 1 && preimage[63] == base {
+				if allZerosKey && allZerosBase && plen == 1 && preimage[63] == base {
 					balance := common.BytesToHash(v).Big()
 					fmt.Fprintf(w, "%x,%x,%d\n", token, preimage[12:32], balance)
 					addrCount++
