@@ -2078,6 +2078,180 @@ func tokenBalances() {
 	}
 }
 
+func makeTokenAllowances() {
+	//ethDb, err := ethdb.NewLDBDatabase("/home/akhounov/.ethereum/geth/chaindata")
+	ethDb, err := ethdb.NewLDBDatabase("/Volumes/tb41/turbo-geth/geth/chaindata")
+	//ethDb, err := ethdb.NewLDBDatabase("/Users/alexeyakhunov/Library/Ethereum/geth/chaindata")
+	check(err)
+	defer ethDb.Close()
+	bc, err := core.NewBlockChain(ethDb, nil, params.MainnetChainConfig, ethash.NewFaker(), vm.Config{}, nil)
+	check(err)
+	currentBlock := bc.CurrentBlock()
+	currentBlockNr := currentBlock.NumberU64()
+	fmt.Printf("Current block number: %d\n", currentBlockNr)
+
+	pdb, err := bolt.Open("/Volumes/tb41/turbo-geth/sha3preimages", 0600, &bolt.Options{})
+	check(err)
+	defer pdb.Close()
+	bucket := []byte("sha3")
+	pBucket := []byte("secure-key-")
+
+	var tokens []common.Address
+	tokenFile, err := os.Open("/Volumes/tb41/turbo-geth/tokens.csv")
+	check(err)
+	tokenReader := csv.NewReader(bufio.NewReader(tokenFile))
+	for records, _ := tokenReader.Read(); records != nil; records, _ = tokenReader.Read() {
+		tokens = append(tokens, common.HexToAddress(records[0]))
+	}
+	tokenFile.Close()
+	//tokens = append(tokens, common.HexToAddress("0xB8c77482e45F1F44dE1745F52C74426C631bDD52"))
+	caller := common.HexToAddress("0x742d35cc6634c0532925a3b844bc454e4438f44e")
+	f, err := os.Create("/Volumes/tb41/turbo-geth/token_allowances.csv")
+	check(err)
+	defer f.Close()
+	w := bufio.NewWriter(f)
+	defer w.Flush()
+	for _, token := range tokens {
+		// Exclude EOAs and removed accounts
+		enc, err := ethDb.Get(state.AccountsBucket, crypto.Keccak256(token[:]))
+		if enc == nil {
+			continue
+		}
+		a, err := encodingToAccount(enc)
+		if err != nil {
+			panic(err)
+		}
+		if bytes.Equal(a.CodeHash, emptyCodeHash) {
+			// Only processing contracts
+			continue
+		}
+		fmt.Printf("Analysing token %x...", token)
+		count := 0
+		addrCount := 0
+		dbstate := state.NewDbState(ethDb, currentBlockNr)
+		statedb := state.New(dbstate)
+		msg := types.NewMessage(
+			caller,
+			&token,
+			0,
+			big.NewInt(0), // value
+			math.MaxUint64 / 2, // gaslimit
+			big.NewInt(100000),
+			common.FromHex(fmt.Sprintf("0xdd62ed3e000000000000000000000000%x000000000000000000000000%x",
+				common.HexToAddress("0xe477292f1b3268687a29376116b0ed27a9c76170"),
+				common.HexToAddress("0xe477292f1b3268687a29376116b0ed25a9c76170"),
+				)),
+			false, // checkNonce
+		)
+		chainConfig := params.MainnetChainConfig
+		vmConfig := vm.Config{EnablePreimageRecording: true}
+		context := core.NewEVMContext(msg, currentBlock.Header(), bc, nil)
+		// Not yet the searched for transaction, execute on top of the current state
+		vmenv := vm.NewEVM(context, statedb, chainConfig, vmConfig)
+		_, _, failed, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(math.MaxUint64))
+		if err != nil {
+			fmt.Printf("Call failed with error: %v\n", err)
+		}
+		if failed {
+			fmt.Printf("Call failed\n")
+		}
+		pi := statedb.Preimages()
+		var base byte
+		var foundBase bool
+		var base2 common.Hash
+		var foundBase2 bool
+		lenpi := 0
+		for hash, preimage := range pi {
+			if len(preimage) != 64 {
+				continue
+			}
+			allZerosBase := true
+			for i := 32; i < 63; i++ {
+				if preimage[i] != byte(0) {
+					allZerosBase = false
+					break
+				}
+			}
+			if allZerosBase {
+				foundBase2 = true
+				base = preimage[63]
+				base2 = hash
+			}
+			lenpi++
+		}
+		if lenpi == 2 && foundBase2 {
+			for _, preimage := range pi {
+				if bytes.Equal(preimage[32:], base2[:]) {
+					foundBase = true
+				}
+			}
+		}
+		if !foundBase {
+			fmt.Printf("allowance base not found\n")
+			continue
+		}
+		err = ethDb.Walk(state.StorageBucket, token[:], 160, func(k, v []byte) (bool, error) {
+			var key []byte
+			key, err = ethDb.Get(pBucket, k[20:])
+			var index2 common.Hash
+			var preimage []byte
+			if key != nil {
+				err := pdb.View(func(tx *bolt.Tx) error {
+					b := tx.Bucket(bucket)
+					if b == nil {
+						return nil
+					}
+					preimage = b.Get(key)
+					if preimage != nil && len(preimage) == 64 {
+						copy(index2[:], preimage[:32])
+						preimage = b.Get(preimage[32:])
+					}
+					return nil
+				})
+				if err != nil {
+					return false, err
+				}
+			}
+			if preimage != nil && len(preimage) == 64 {
+				allZerosIndex2 := true
+				for i := 0; i < 12; i++ {
+					if index2[i] != byte(0) {
+						allZerosIndex2 = false
+						break
+					}
+				}
+				allZerosKey := true
+				for i := 0; i < 12; i++ {
+					if preimage[i] != byte(0) {
+						allZerosKey = false
+						break
+					}
+				}
+				allZerosBase := true
+				for i := 32; i < 63; i++ {
+					if preimage[i] != byte(0) {
+						allZerosBase = false
+						break
+					}
+				}
+				if allZerosIndex2 && allZerosKey && allZerosBase && foundBase && preimage[63] == base {
+					allowance := common.BytesToHash(v).Big()
+					fmt.Fprintf(w, "%x,%x,%x,%d\n", token, preimage[12:32], index2[12:], allowance)
+					addrCount++
+				}
+			}
+			count++
+			return true, nil
+		})
+		if err != nil {
+			fmt.Printf("Error walking: %v\n", err)
+			return
+		}
+		fmt.Printf(" %d storage items, allowances: %d, base: %d\n", count, addrCount, base)
+	}
+}
+
+
 func main() {
 	flag.Parse()
 	if *cpuprofile != "" {
@@ -2107,5 +2281,6 @@ func main() {
 	//tokenUsage()
 	//nonTokenUsage()
 	//makeTokenBalances()
-	tokenBalances()
+	//tokenBalances()
+	makeTokenAllowances()
 }
