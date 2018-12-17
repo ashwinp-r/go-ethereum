@@ -237,20 +237,20 @@ func TestInsertRandom2Commit(t *testing.T) {
 		tr.Insert(keys[k], value)
 		values[k] = value
 		if i < 10000 {
-			if _, ok := tr.buffer.heightsCorrect(""); !ok {
+			if _, ok := tr.root.heightsCorrect(""); !ok {
 				t.Errorf("height fields are incorrect after step %d", i)
 				break
 			}
-			if !tr.buffer.balanceCorrect() {
+			if !tr.root.balanceCorrect() {
 				t.Errorf("tree is not balanced after step %d", i)
 				break
 			}
 		}
 	}
-	if _, ok := tr.buffer.heightsCorrect(""); !ok {
+	if _, ok := tr.root.heightsCorrect(""); !ok {
 		t.Errorf("height fields are incorrect")
 	}
-	if !tr.buffer.balanceCorrect() {
+	if !tr.root.balanceCorrect() {
 		t.Errorf("tree is not balanced")
 	}
 	tr.Commit()
