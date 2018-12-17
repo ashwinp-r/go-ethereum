@@ -57,20 +57,20 @@ func (t *Avl2) SetCompare(c func([]byte, []byte) int) {
 	t.compare = c
 }
 
-func (t *Avl2) walkToArrowPoint(r Ref2, key []byte, height uint32) (point Ref2, parent *Fork2, parentC int) {
+func (t *Avl2) walkToArrowPoint(r Ref2, key []byte, height uint32) (point Ref2, parent *Fork2, parentC int, err error) {
 	current := r
 	for {
 		switch n := current.(type) {
 		case nil:
-			return nil, nil, 0
+			return nil, nil, 0, nil
 		case *Leaf2:
 			if height != 1 || !bytes.Equal(key, n.key) {
-				panic(fmt.Sprintf("Leaf2 with key %s, expected height %d key %s", n.key, height, key))
+				return nil, nil, 0, fmt.Errorf("Leaf2 with key %s, expected height %d key %s", n.key, height, key)
 			}
-			return n, nil, 0
+			return n, nil, 0, nil
 		case *Fork2:
 			if n.height < height {
-				panic(fmt.Sprintf("Fork2 with height %d max %s, expected height %d key %s", n.height, n.max, height, key))
+				return nil, nil, 0, fmt.Errorf("Fork2 with height %d max %s, expected height %d key %s", n.height, n.max, height, key)
 			} else if n.height > height {
 				parent = n
 				switch t.compare(key, n.left.getmax()) {
@@ -83,12 +83,12 @@ func (t *Avl2) walkToArrowPoint(r Ref2, key []byte, height uint32) (point Ref2, 
 				}
 			} else {
 				if !bytes.Equal(key, n.max) {
-					panic(fmt.Sprintf("Fork2 with height %d max %s, expected height %d key %s", n.height, n.max, height, key))
+					return nil, nil, 0, fmt.Errorf("Fork2 with height %d max %s, expected height %d key %s", n.height, n.max, height, key)
 				}
-				return n, parent, parentC
+				return n, parent, parentC, nil
 			}
 		case *Arrow2:
-			panic(fmt.Sprintf("Arrow2 with height %d max %s, expected height %d key %s", n.height, n.max, height, key))
+			return nil, nil, 0, fmt.Errorf("Arrow2 P.%d with height %d max %s, expected height %d key %s", n.pageId, n.height, n.max, height, key)
 		}
 	}
 }
@@ -239,7 +239,10 @@ func (t *Avl2) scan(r Ref2, m map[PageID]struct{}) int {
 				fmt.Printf("Read %d pages\n", len(m))
 			}
 		}
-		point, _, _ := t.walkToArrowPoint(root, r.max, r.height)
+		point, _, _, err := t.walkToArrowPoint(root, r.max, r.height)
+		if err != nil {
+			panic(err)
+		}
 		return 1 + t.scan(point, m)
 	}
 	return 0
@@ -270,6 +273,7 @@ type Fork2 struct {
 }
 
 type Arrow2 struct {
+	arrow *Arrow2
 	pageId PageID // Connection of this page to the page on the disk. Normally pageId corresponds to offset pageId*PageSize in the database file
 	height uint32 // Height of the entire subtree rooted at this page
 	max []byte
@@ -433,7 +437,10 @@ func (t *Avl2) Get(key []byte) ([]byte, bool) {
 			}
 		case *Arrow2:
 			pageRoot, _ := t.deserialisePage(n.pageId, false)
-			point, _, _ := t.walkToArrowPoint(pageRoot, n.max, n.height)
+			point, _, _, err := t.walkToArrowPoint(pageRoot, n.max, n.height)
+			if err != nil {
+				panic(err)
+			}
 			current = point
 		}
 	}
@@ -450,7 +457,25 @@ func (t *Avl2) Peel(r Ref2) Ref2 {
 			if releaseId {
 				t.pagesToRecycle[r.pageId] = struct{}{}
 			}
-			point, _, _ := t.walkToArrowPoint(pageRoot, r.max, r.height)
+			point, _, _, err := t.walkToArrowPoint(pageRoot, r.max, r.height)
+			if err != nil {
+				panic(err)
+			}
+			if r.arrow != nil {
+				if t.trace {
+					fmt.Printf("Moving arrow P.%d[%s %d] over the arrow P.%d[%s %d]\n", r.arrow.pageId, r.arrow.max, r.arrow.height, r.pageId, r.max, r.height)
+				}
+				r.arrow.pageId = r.pageId
+				switch n := point.(type) {
+				case *Leaf2:
+					n.arrow = r.arrow
+				case *Fork2:
+					n.arrow = r.arrow
+				case *Arrow2:
+					n.arrow = r.arrow
+				}
+				r.arrow = nil
+			}
 			current = point
 		case *Fork2:
 			return r
@@ -485,11 +510,15 @@ func (t *Avl2) moveArrowOverFork(a *Arrow2, f *Fork2) {
 		n.arrow = lArrow
 	case *Leaf2:
 		n.arrow = lArrow
+	case *Arrow2:
+		n.arrow = lArrow
 	}
 	switch n := f.right.(type) {
 	case *Fork2:
 		n.arrow = rArrow
 	case *Leaf2:
+		n.arrow = rArrow
+	case *Arrow2:
 		n.arrow = rArrow
 	}
 	if a.parent == nil {
@@ -555,7 +584,11 @@ func (t *Avl2) Insert(key, value []byte) bool {
 			}
 		case *Arrow2:
 			pageRoot, _ := t.deserialisePage(n.pageId, false)
-			current, _, _ = t.walkToArrowPoint(pageRoot, n.max, n.height)
+			var err error
+			current, _, _, err = t.walkToArrowPoint(pageRoot, n.max, n.height)
+			if err != nil {
+				panic(err)
+			}
 		}
 	}
 	t.root = t.insert(t.root, key, value)
@@ -726,7 +759,11 @@ func (t *Avl2) Delete(key []byte) bool {
 			}
 		case *Arrow2:
 			pageRoot, _ := t.deserialisePage(n.pageId, false)
-			current, _, _ = t.walkToArrowPoint(pageRoot, n.max, n.height)
+			var err error
+			current, _, _, err = t.walkToArrowPoint(pageRoot, n.max, n.height)
+			if err != nil {
+				panic(err)
+			}
 			if current.getheight() != n.height {
 				panic(fmt.Sprintf("deseailised size %d, arrow height %d", current.getheight(), n.height))
 			}
@@ -938,15 +975,19 @@ func (a *Arrow2) dot(t *Avl2, ctx *graphContext, path string) {
 
 	if a.pageId != PageID(0) {
 		root, _ := t.deserialisePage(a.pageId, path == "root")
-		point, _, _ := t.walkToArrowPoint(root, a.max, a.height)
-		pointPath := fmt.Sprintf("%p", point)
-		if point != nil {
-			point.dot(t, ctx, pointPath)
+		point, _, _, err := t.walkToArrowPoint(root, a.max, a.height)
+		if err != nil {
+			fmt.Printf("%v\n", err)
+		} else {
+			pointPath := fmt.Sprintf("%p", point)
+			if point != nil {
+				point.dot(t, ctx, pointPath)
+			}
+			ctx.Edges = append(ctx.Edges, &graphEdge{
+				From: path,
+				To: pointPath,
+			})
 		}
-		ctx.Edges = append(ctx.Edges, &graphEdge{
-			From: path,
-			To: pointPath,
-		})
 	}
 }
 
@@ -1245,7 +1286,7 @@ func (f *Fork2) serialisePass1(t *Avl2, maxPageId *PageID) (prefix []byte, keyCo
 	} else if pinnedPageId.id == 0 {
 		mergableR = true
 		mergePinR = pinnedPageR
-	} else if pinnedPageR.id == pinnedPageId.id {
+	} else if pinnedPageR.id == pinnedPageId.id && pinnedPageR.pinned == pinnedPageId.pinned {
 		mergableR = true
 		mergePinR = pinnedPageId
 	}
@@ -1262,9 +1303,14 @@ func (f *Fork2) serialisePass1(t *Avl2, maxPageId *PageID) (prefix []byte, keyCo
 		mergePinL = pinnedPageId
 	}
 	if sizeL > sizeR {
-		lid := t.commitPage(f.left, prefixL, keyCountL, pageCountL, keyBodySizeL, valBodySizeL, structBitsL, pinnedPageL)
-		lArrow := &Arrow2{pageId: lid, height: f.left.getheight(), max: f.left.getmax()}
-		f.left = lArrow
+		var lArrow *Arrow2
+		if la, ok := f.left.(*Arrow2); ok {
+			lArrow = la
+		} else {
+			lid := t.commitPage(f.left, prefixL, keyCountL, pageCountL, keyBodySizeL, valBodySizeL, structBitsL, pinnedPageL)
+			lArrow = &Arrow2{pageId: lid, height: f.left.getheight(), max: f.left.getmax()}
+			f.left = lArrow
+		}
 		// Check if the fork and the right child still fit into a page
 		pageCountFR := pageCountR+1 // 1 for the left arrow
 		keyBodySizeFR := keyBodySizeR+uint32(len(lArrow.max))
@@ -1275,15 +1321,25 @@ func (f *Fork2) serialisePass1(t *Avl2, maxPageId *PageID) (prefix []byte, keyCo
 			return prefixFR, keyCountR, pageCountFR, keyBodySizeFR, valBodySizeR, structBitsFR, mergePinR
 		} else {
 			// Have to commit right child too
-			rid := t.commitPage(f.right, prefixR, keyCountR, pageCountR, keyBodySizeR, valBodySizeR, structBitsR, pinnedPageR)
-			rArrow := &Arrow2{pageId: rid, height: f.right.getheight(), max: f.right.getmax()}
-			f.right = rArrow
+			var rArrow *Arrow2
+			if ra, ok := f.right.(*Arrow2); ok {
+				rArrow = ra
+			} else {
+				rid := t.commitPage(f.right, prefixR, keyCountR, pageCountR, keyBodySizeR, valBodySizeR, structBitsR, pinnedPageR)
+				rArrow = &Arrow2{pageId: rid, height: f.right.getheight(), max: f.right.getmax()}
+				f.right = rArrow
+			}
 			return commonPrefix(rArrow.max, lArrow.max), 0, 2, uint32(len(lArrow.max))+uint32(len(rArrow.max)), 0, 4 /* 2 bits for arrows, 2 for the fork */, pinnedPageId
 		}
 	} else {
-		rid := t.commitPage(f.right, prefixR, keyCountR, pageCountR, keyBodySizeR, valBodySizeR, structBitsR, pinnedPageR)
-		rArrow := &Arrow2{pageId: rid, height: f.right.getheight(), max: f.right.getmax()}
-		f.right = rArrow
+		var rArrow *Arrow2
+		if ra, ok := f.right.(*Arrow2); ok {
+			rArrow = ra
+		} else {
+			rid := t.commitPage(f.right, prefixR, keyCountR, pageCountR, keyBodySizeR, valBodySizeR, structBitsR, pinnedPageR)
+			rArrow = &Arrow2{pageId: rid, height: f.right.getheight(), max: f.right.getmax()}
+			f.right = rArrow
+		}
 		// Check if the fork and the let child still fit into a page
 		pageCountFL := pageCountL+1 // 1 for the left arrow
 		keyBodySizeFL := keyBodySizeL+uint32(len(rArrow.max))
@@ -1294,9 +1350,14 @@ func (f *Fork2) serialisePass1(t *Avl2, maxPageId *PageID) (prefix []byte, keyCo
 			return prefixFL, keyCountL, pageCountFL, keyBodySizeFL, valBodySizeL, structBitsFL, mergePinL
 		} else {
 			// Have to commit left child too
-			lid := t.commitPage(f.left, prefixL, keyCountL, pageCountL, keyBodySizeL, valBodySizeL, structBitsL, pinnedPageL)
-			lArrow := &Arrow2{pageId: lid, height: f.left.getheight(), max: f.left.getmax()}
-			f.left = lArrow
+			var lArrow *Arrow2
+			if la, ok := f.left.(*Arrow2); ok {
+				lArrow = la
+			} else {
+				lid := t.commitPage(f.left, prefixL, keyCountL, pageCountL, keyBodySizeL, valBodySizeL, structBitsL, pinnedPageL)
+				lArrow = &Arrow2{pageId: lid, height: f.left.getheight(), max: f.left.getmax()}
+				f.left = lArrow
+			}
 			return commonPrefix(rArrow.max, lArrow.max), 0, 2, uint32(len(lArrow.max))+uint32(len(rArrow.max)), 0, 4 /* 2 bits for arrows, 2 for the fork */, pinnedPageId
 		}
 	}
@@ -1635,7 +1696,10 @@ func equivalent22(t *Avl2, path string, r1 Ref2, r2 Ref2) bool {
 			return false
 		}
 		root, _ := t.deserialisePage(r2.pageId, false)
-		point, _, _ := t.walkToArrowPoint(root, r2.max, r2.height)
+		point, _, _, err := t.walkToArrowPoint(root, r2.max, r2.height)
+		if err != nil {
+			panic(err)
+		}
 		return equivalent22(t, path, r1, point)
 	}
 	return false
