@@ -2,7 +2,7 @@ package avl
 
 import (
 	"bytes"
-	//"fmt"
+	"fmt"
 	"math/rand"
 	"testing"
 
@@ -261,6 +261,172 @@ func TestInsertRandom2Commit(t *testing.T) {
 			t.Errorf("Did not find inserted value")
 		} else if !bytes.Equal(v, value) {
 			t.Errorf("Found wrong value %s, expected %s", v, value)
+		}
+	}
+}
+
+func TestInsertRandom2Commits(t *testing.T) {
+	source := rand.NewSource(67585947470305)
+	r := rand.New(source)
+	tr := NewAvl2()
+	var keys [][]byte
+	var values [][]byte
+	for i := 0; i < 100000; i++ {
+		key := randChars(r, 16)
+		value := randChars(r, 32)
+		tr.Insert(key, value)
+		keys = append(keys, key)
+		values = append(values, value)
+		// Redundant inserts
+		j := r.Int63n(int64(len(keys)))
+		tr.Insert(keys[j], values[j])
+		// Replaces
+		k := r.Int63n(int64(len(keys)))
+		value = randChars(r, 32)
+		tr.Insert(keys[k], value)
+		values[k] = value
+		if i % 103 == 0 {
+			tr.Commit()
+		}
+		if i < 10000 {
+			if _, ok := tr.root.heightsCorrect(""); !ok {
+				t.Errorf("height fields are incorrect after step %d", i)
+				break
+			}
+			if !tr.root.balanceCorrect() {
+				t.Errorf("tree is not balanced after step %d", i)
+				break
+			}
+		}
+	}
+	if _, ok := tr.root.heightsCorrect(""); !ok {
+		t.Errorf("height fields are incorrect")
+	}
+	if !tr.root.balanceCorrect() {
+		t.Errorf("tree is not balanced")
+	}
+	tr.Commit()
+	for i, key := range keys {
+		value := values[i]
+		v, found := tr.Get(key)
+		if !found {
+			t.Errorf("Did not find inserted value")
+		} else if !bytes.Equal(v, value) {
+			t.Errorf("Found wrong value %s, expected %s", v, value)
+		}
+	}
+}
+
+func TestInsertDeleteRandom2(t *testing.T) {
+	source := rand.NewSource(5869374758495600644)
+	r := rand.New(source)
+	tr := NewAvl2()
+	var keys [][]byte
+	var values [][]byte
+	deleted := make(map[string]struct{})
+	for i := 0; i < 100000; i++ {
+		key := randChars(r, 16)
+		value := randChars(r, 32)
+		tr.Insert(key, value)
+		keys = append(keys, key)
+		values = append(values, value)
+		// Deletes
+		if i % 10 == 0 {
+			k := r.Int63n(int64(len(keys)))
+			tr.Delete(keys[k])
+			deleted[string(keys[k])] = struct{}{}
+		}
+		if tr.root != nil && i < 10000 {
+			if _, ok := tr.root.heightsCorrect(""); !ok {
+				t.Errorf("height fields are incorrect after step %d", i)
+				break
+			}
+			if !tr.root.balanceCorrect() {
+				t.Errorf("tree is not balanced after step %d", i)
+				break
+			}
+		}
+	}
+	if _, ok := tr.root.heightsCorrect(""); !ok {
+		t.Errorf("height fields are incorrect")
+	}
+	if !tr.root.balanceCorrect() {
+		t.Errorf("tree is not balanced")
+	}
+	for i, key := range keys {
+		value := values[i]
+		v, found := tr.Get(key)
+		_, del := deleted[string(key)]
+		if del {
+			continue
+		}
+		if !found {
+			if !del {
+				t.Errorf("Did not find inserted value %s", key)
+				break
+			}
+		} else if !bytes.Equal(v, value) {
+			t.Errorf("Found wrong value")
+			break
+		}
+	}
+}
+
+func TestInsertDeleteRandom2Commits(t *testing.T) {
+	source := rand.NewSource(5869374758495600644)
+	r := rand.New(source)
+	tr := NewAvl2()
+	var keys [][]byte
+	var values [][]byte
+	deleted := make(map[string]struct{})
+	for i := 0; i < 100000; i++ {
+		key := randChars(r, 16)
+		value := randChars(r, 32)
+		tr.Insert(key, value)
+		keys = append(keys, key)
+		values = append(values, value)
+		// Deletes
+		if i % 10 == 0 {
+			k := r.Int63n(int64(len(keys)))
+			tr.Delete(keys[k])
+			deleted[string(keys[k])] = struct{}{}
+		}
+		if i % 1013 == 0 {
+			tr.Commit()
+		}
+		if tr.root != nil && i < 10000 {
+			if _, ok := tr.root.heightsCorrect(""); !ok {
+				t.Errorf("height fields are incorrect after step %d", i)
+				break
+			}
+			if !tr.root.balanceCorrect() {
+				t.Errorf("tree is not balanced after step %d", i)
+				break
+			}
+		}
+		fmt.Printf("Completed step %d\n", i)
+	}
+	if _, ok := tr.root.heightsCorrect(""); !ok {
+		t.Errorf("height fields are incorrect")
+	}
+	if !tr.root.balanceCorrect() {
+		t.Errorf("tree is not balanced")
+	}
+	for i, key := range keys {
+		value := values[i]
+		v, found := tr.Get(key)
+		_, del := deleted[string(key)]
+		if del {
+			continue
+		}
+		if !found {
+			if !del {
+				t.Errorf("Did not find inserted value %s", key)
+				break
+			}
+		} else if !bytes.Equal(v, value) {
+			t.Errorf("Found wrong value")
+			break
 		}
 	}
 }
