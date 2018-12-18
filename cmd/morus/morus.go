@@ -188,7 +188,7 @@ func (cc *ChainContext) Close() error {
 }
 
 type MorusDb struct {
-	db *avl.Avl1
+	db *avl.Avl2
 	codeDb *bolt.DB
 	preDb  *bolt.DB
 	addrDb *bolt.DB
@@ -201,7 +201,7 @@ type MorusDb struct {
 }
 
 func NewMorusDb(datadir string, hashlen int) *MorusDb {
-	db := avl.NewAvl1()
+	db := avl.NewAvl2()
 	db.SetHashLength(uint32(hashlen))
 	pagefile := filepath.Join(datadir, "pages")
 	valuefile := filepath.Join(datadir, "values")
@@ -253,7 +253,7 @@ func NewMorusDb(datadir string, hashlen int) *MorusDb {
 		a2iCache: a2i,
 		i2aCache: i2a,
 	}
-	db.SetCompare(morus.Compare)
+	//db.SetCompare(morus.Compare)
 	return morus
 }
 
@@ -478,6 +478,7 @@ const (
 )
 
 func (md *MorusDb) createAccountKey(address *common.Address, create bool) []byte {
+	/*
 	id := md.AddrToId(*address, create)
 	if id == nil {
 		return nil
@@ -486,9 +487,16 @@ func (md *MorusDb) createAccountKey(address *common.Address, create bool) []byte
 	k[0] = PREFIX_ACCOUNT
 	copy(k[1:], id[:])
 	return k
+	*/
+	k := *address
+	return k[:]
 }
 
 func (md *MorusDb) createStorageKey(address *common.Address, key *common.Hash) (full, comp []byte, compressed bool) {
+	full = make([]byte, 52)
+	copy(full[0:], (*address)[:])
+	copy(full[20:], (*key)[:])
+	/*
 	full = make([]byte, 53)
 	full[0] = PREFIX_STORAGE
 	copy(full[1:], (*address)[:])
@@ -532,6 +540,7 @@ func (md *MorusDb) createStorageKey(address *common.Address, key *common.Hash) (
 			return full, k, true
 		}
 	}
+	*/
 	return full, full, false
 }
 
@@ -630,6 +639,7 @@ func (md *MorusDb) ReadAccountStorage(address common.Address, key *common.Hash) 
 	} else {
 		enc, found = md.db.Get(comp)
 	}
+	enc, found = md.db.Get(full)
 	if !found || enc == nil || len(enc) == 0 {
 		return nil, nil
 	}
@@ -895,7 +905,7 @@ func avltest() {
 	if err != nil {
 		panic(err)
 	}
-	tr := avl.NewAvl2()
+	tr := avl.NewAvl3()
 	tr.SetTracing(true)
 	tr.Insert([]byte("aC"), []byte("Cv"))
 	tr.Insert([]byte("aB"), []byte("Bv"))
