@@ -27,7 +27,7 @@ type Avl2 struct {
 	root Ref2 // Root of the current update buffer
 	versions map[Version]PageID // root pageId for a version
 	pageCache *lru.Cache
-	//pagesToRecycle map[PageID]struct{}
+	pagesToRecycle map[PageID]struct{}
 	commitedCounter uint64
 	pageSpace uint64
 	pageFile, valueFile, verFile *os.File
@@ -42,7 +42,7 @@ func NewAvl2() *Avl2 {
 		valueHashes: make(map[uint64]Hash),
 		valueLens: make(map[uint64]uint32),
 		versions: make(map[Version]PageID),
-		//pagesToRecycle: make(map[PageID]struct{}),
+		pagesToRecycle: make(map[PageID]struct{}),
 	}
 	pageCache, err := lru.New(128*1024)
 	if err != nil {
@@ -305,12 +305,6 @@ type Ref2 interface {
 }
 
 func (t *Avl2) nextPageId() PageID {
-	if len(t.freelist) > 0 {
-		nextId := t.freelist[len(t.freelist)-1]
-		t.freelist = t.freelist[:len(t.freelist)-1]
-		return nextId
-	}
-	/*
 	var id PageID
 	// Take tha max for determinism
 	for pageId := range t.pagesToRecycle {
@@ -322,7 +316,11 @@ func (t *Avl2) nextPageId() PageID {
 		delete(t.pagesToRecycle, id)
 		return id
 	}
-	*/
+	if len(t.freelist) > 0 {
+		nextId := t.freelist[len(t.freelist)-1]
+		t.freelist = t.freelist[:len(t.freelist)-1]
+		return nextId
+	}
 	t.maxPageId++
 	return t.maxPageId
 }
@@ -489,8 +487,7 @@ func (t *Avl2) Peel(r Ref2, key []byte, ins int) Ref2 {
 		case *Arrow2:
 			pageRoot, releaseId := t.deserialisePage(r.pageId, true)
 			if releaseId {
-				//t.pagesToRecycle[r.pageId] = struct{}{}
-				t.freePageId(r.pageId)
+				t.pagesToRecycle[r.pageId] = struct{}{}
 			}
 			point, _, _, err := t.walkToArrowPoint(pageRoot, r.max, r.height)
 			if err != nil {
@@ -1138,10 +1135,10 @@ func (t *Avl2) Commit() uint64 {
 			t.verFile.WriteAt(verdata[:], int64(t.currentVersion)*int64(8))
 		}
 	}
-	//for pageId := range t.pagesToRecycle {
-	//	t.freePageId(pageId)
-	//}
-	//t.pagesToRecycle = make(map[PageID]struct{})
+	for pageId := range t.pagesToRecycle {
+		t.freePageId(pageId)
+	}
+	t.pagesToRecycle = make(map[PageID]struct{})
 	t.currentVersion++
 	t.versions[t.currentVersion] = currentId
 	if t.verFile != nil {

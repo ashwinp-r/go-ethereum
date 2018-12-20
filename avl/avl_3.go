@@ -27,6 +27,7 @@ type Avl3 struct {
 	root Ref3 // Root of the current update buffer
 	versions map[Version]PageID // root pageId for a version
 	pageCache *lru.Cache
+	pagesToRecycle map[PageID]struct{} // this is not strictly required, but allows to visualise prevRoot before commit
 	commitedCounter uint64
 	pageSpace uint64
 	pageFile, valueFile, verFile *os.File
@@ -41,6 +42,7 @@ func NewAvl3() *Avl3 {
 		valueHashes: make(map[uint64]Hash),
 		valueLens: make(map[uint64]uint32),
 		versions: make(map[Version]PageID),
+		pagesToRecycle: make(map[PageID]struct{}),
 	}
 	pageCache, err := lru.New(128*1024)
 	if err != nil {
@@ -298,6 +300,19 @@ type Ref3 interface {
 }
 
 func (t *Avl3) nextPageId() PageID {
+	/*
+	var id PageID
+	// Take tha max for determinism
+	for pageId := range t.pagesToRecycle {
+		if pageId > id {
+			id = pageId
+		}
+	}
+	if id != PageID(0) {
+		delete(t.pagesToRecycle, id)
+		return id
+	}
+	*/
 	if len(t.freelist) > 0 {
 		nextId := t.freelist[len(t.freelist)-1]
 		t.freelist = t.freelist[:len(t.freelist)-1]
@@ -469,8 +484,10 @@ func (t *Avl3) Peel(r Ref3, key []byte, ins int) Ref3 {
 		case *Arrow3:
 			pageRoot, releaseId := t.deserialisePage(r.pageId, true)
 			if releaseId {
-				//t.pagesToRecycle[r.pageId] = struct{}{}
-				t.freePageId(r.pageId)
+				if t.trace {
+					fmt.Printf("Peel releases page %d\n", r.pageId)
+				}
+				t.pagesToRecycle[r.pageId] = struct{}{}
 			}
 			point, _, _, err := t.walkToArrowPoint(pageRoot, r.max, r.height)
 			if err != nil {
@@ -521,6 +538,7 @@ func (t *Avl3) moveArrowOverFork(a *Arrow3, f *Fork3) {
 		n.arrow = lArrow
 	case *Arrow3:
 		n.arrow = lArrow
+		lArrow.pageId = n.pageId
 	}
 	switch n := f.right.(type) {
 	case *Fork3:
@@ -529,6 +547,7 @@ func (t *Avl3) moveArrowOverFork(a *Arrow3, f *Fork3) {
 		n.arrow = rArrow
 	case *Arrow3:
 		n.arrow = rArrow
+		rArrow.pageId = n.pageId
 	}
 	if a.parent == nil {
 		t.prevRoot = fork
@@ -932,7 +951,7 @@ func (t *Avl3) delete(current Ref3, key []byte) Ref3 {
 }
 
 func (t *Avl3) Dot() *graphContext {
-	fmt.Printf("Dotting the tree\n")
+	fmt.Printf("Dotting the root\n")
 	ctx := &graphContext{}
 	gn := &graphNode{
 		Attrs: map[string]string{},
@@ -949,6 +968,7 @@ func (t *Avl3) Dot() *graphContext {
 		To: "root",
 	})
 	if t.prevRoot != nil {
+		fmt.Printf("Dotting the prevRoot\n")
 		gn := &graphNode{
 			Attrs: map[string]string{},
 			Path: "prevRoot0",
@@ -1009,7 +1029,9 @@ func (l *Leaf3) dot(t *Avl3, ctx *graphContext, path string) {
 	}
 	gn.Label = mkLabel(string(l.nkey()), 16, "sans-serif")
 	gn.Label += mkLabel(string(l.nvalue(t)), 10, "sans-serif")
-	if l.arrow != nil {
+	if l.pinnedPageId != PageID(0) {
+		gn.Label += mkLabel(fmt.Sprintf("* %d", l.pinnedPageId), 10, "sans-serif")
+	} else if l.arrow != nil {
 		gn.Label += mkLabel("*", 10, "sans-serif")
 	}
 	ctx.Nodes = append(ctx.Nodes, gn)
@@ -1025,7 +1047,9 @@ func (f *Fork3) dot(t *Avl3, ctx *graphContext, path string) {
 	}
 	gn.Label = mkLabel(string(f.max), 16, "sans-serif")
 	gn.Label += mkLabel(fmt.Sprintf("%d", f.height), 10, "sans-serif")
-	if f.arrow != nil {
+	if f.pinnedPageId != PageID(0) {
+		gn.Label += mkLabel(fmt.Sprintf("* %d", f.pinnedPageId), 10, "sans-serif")
+	} else if f.arrow != nil {
 		gn.Label += mkLabel("*", 10, "sans-serif")
 	}
 	ctx.Nodes = append(ctx.Nodes, gn)
@@ -1086,7 +1110,6 @@ func (t *Avl3) pageSize(keyCount, pageCount, keyBodySize, valBodySize, structBit
 	prefixLen := uint32(len(prefix))
 
 	return 4 /* nodeCount */ +
-	    4 /* pinnedIndex */ +
 		4*((nodeCount+31)/32) /* pageBits */ +
 		4 /* prefixOffset */ +
 		4*nodeCount + 4 /* key header */ +
@@ -1105,12 +1128,16 @@ func (t *Avl3) Commit() uint64 {
 	}
 	startCounter := t.commitedCounter
 	var mpid PageID = PageID(0)
+	fmt.Printf("Committing root\n")
 	prefix, keyCount, pageCount, keyBodySize, valBodySize, structBits, pinnedPageId := t.root.serialisePass1(t, &mpid)
 	currentId := t.commitPage(t.root, prefix, keyCount, pageCount, keyBodySize, valBodySize, structBits, pinnedPageId)
+	fmt.Printf("Committed root %d\n", currentId)
 	if t.prevRoot != nil {
 		var mpid PageID = t.maxPageId
+		fmt.Printf("Committing prevRoot\n")
 		prefix, keyCount, pageCount, keyBodySize, valBodySize, structBits, pinnedPageId := t.prevRoot.serialisePass1(t, &mpid)
 		prevId := t.commitPage(t.prevRoot, prefix, keyCount, pageCount, keyBodySize, valBodySize, structBits, pinnedPageId)
+		fmt.Printf("Committed prevRoot %d\n", prevId)
 		t.versions[t.currentVersion] = prevId
 		if t.verFile != nil {
 			var verdata [8]byte
@@ -1118,10 +1145,10 @@ func (t *Avl3) Commit() uint64 {
 			t.verFile.WriteAt(verdata[:], int64(t.currentVersion)*int64(8))
 		}
 	}
-	//for pageId := range t.pagesToRecycle {
-	//	t.freePageId(pageId)
-	//}
-	//t.pagesToRecycle = make(map[PageID]struct{})
+	for pageId := range t.pagesToRecycle {
+		t.freePageId(pageId)
+	}
+	t.pagesToRecycle = make(map[PageID]struct{})
 	t.currentVersion++
 	t.versions[t.currentVersion] = currentId
 	if t.verFile != nil {
@@ -1151,8 +1178,6 @@ func (t *Avl3) commitPage(r Ref3, prefix []byte, keyCount, pageCount, keyBodySiz
 	data := make([]byte, size)
 	offset := uint32(0)
 	binary.BigEndian.PutUint32(data[offset:], nodeCount)
-	offset += 4
-	pinnedIndexOffset := offset
 	offset += 4
 	pageBitsOffset := offset
 	offset += 4*((nodeCount+31)/32)
@@ -1188,10 +1213,12 @@ func (t *Avl3) commitPage(r Ref3, prefix []byte, keyCount, pageCount, keyBodySiz
 	var id PageID
 	if pinnedPageId.pinned {
 		id = pinnedPageId.id
+		fmt.Printf("Page id %d is chosed because of pinnedPageId\n", id)
 	} else {
 		id = t.nextPageId()
+		fmt.Printf("Page id %d is chosed because of nextPageId()\n", id)
 	}
-	t.serialisePass2(r, id, data, len(prefix), pinnedIndexOffset, pageBitsOffset, structBitsOffset,
+	t.serialisePass2(r, id, data, len(prefix), false, pageBitsOffset, structBitsOffset,
 		&nodeIndex, &structBit, &keyHeaderOffset, &arrowHeaderOffset, &valueHeaderOffset, &keyBodyOffset, &valBodyOffset)
 	// end key offset
 	if trace {
@@ -1410,7 +1437,7 @@ func (t *Avl3) serialiseVal(value []byte, valueId uint64, valueLen uint32, data 
 	return valueId
 }
 
-func (t *Avl3) serialisePass2(r Ref3, pageId PageID, data []byte, prefixLen int, pinnedIndexOffset, pageBitsOffset, structBitsOffset uint32,
+func (t *Avl3) serialisePass2(r Ref3, pageId PageID, data []byte, prefixLen int, subtreePinned bool, pageBitsOffset, structBitsOffset uint32,
 	nodeIndex, structBit, keyHeaderOffset, arrowHeaderOffset, valueHeaderOffset, keyBodyOffset, valBodyOffset *uint32) {
 	switch r := r.(type) {
 	case *Leaf3:
@@ -1419,43 +1446,30 @@ func (t *Avl3) serialisePass2(r Ref3, pageId PageID, data []byte, prefixLen int,
 		// Update page bits
 		*nodeIndex++
 		// Update struct bits
-		data[structBitsOffset+(*structBit>>3)] |= (uint8(1)<<(*structBit&7))
+		pinned := subtreePinned || r.pinnedPageId == pageId || r.arrow != nil
+		if !pinned {
+			// If the subtree containing this leaf of the leaf itself is pinned, we write "0" structural bit
+			data[structBitsOffset+(*structBit>>3)] |= (uint8(1)<<(*structBit&7))
+		} else {
+			if t.trace {
+				//fmt.Printf("Pinned leaf %s in page %d\n", r.key, pageId)
+			}
+		}
 		*structBit++
-		// Pinned index
-		if r.pinnedPageId != PageID(0) {
-			if r.pinnedPageId != pageId {
-				panic(fmt.Sprintf("%d != %d", r.pinnedPageId, pageId))
-			}
-			// Old pin
-			if r.arrow != nil {
-				r.arrow.pageId = pageId
-			}
-			binary.BigEndian.PutUint32(data[pinnedIndexOffset:], *structBit)
-		} else if r.arrow != nil {
-			// New pin
+		if r.arrow != nil {
 			r.arrow.pageId = pageId
-			binary.BigEndian.PutUint32(data[pinnedIndexOffset:], *structBit)
 		}
 	case *Fork3:
+		pinned := subtreePinned || r.pinnedPageId == pageId || r.arrow != nil
 		// Write opening parenthesis "0" (noop)
-		t.serialisePass2(r.left, pageId, data, prefixLen, pinnedIndexOffset, pageBitsOffset, structBitsOffset,
+		t.serialisePass2(r.left, pageId, data, prefixLen, pinned, pageBitsOffset, structBitsOffset,
 			nodeIndex, structBit, keyHeaderOffset, arrowHeaderOffset, valueHeaderOffset, keyBodyOffset, valBodyOffset)
 		// Update struct bit
 		*structBit++
-		// Pinned index
-		if r.pinnedPageId != PageID(0) {
-			if r.pinnedPageId != pageId {
-				panic(fmt.Sprintf("%d != %d", r.pinnedPageId, pageId))
-			}
-			if r.arrow != nil {
-				r.arrow.pageId = pageId
-			}
-			binary.BigEndian.PutUint32(data[pinnedIndexOffset:], *structBit)
-		} else if r.arrow != nil {
+		if r.arrow != nil {
 			r.arrow.pageId = pageId
-			binary.BigEndian.PutUint32(data[pinnedIndexOffset:], *structBit)
 		}
-		t.serialisePass2(r.right, pageId, data, prefixLen, pinnedIndexOffset, pageBitsOffset, structBitsOffset,
+		t.serialisePass2(r.right, pageId, data, prefixLen, pinned, pageBitsOffset, structBitsOffset,
 			nodeIndex, structBit, keyHeaderOffset, arrowHeaderOffset, valueHeaderOffset, keyBodyOffset, valBodyOffset)
 		// Write closing parenthesis "1"
 		data[structBitsOffset+(*structBit>>3)] |= (uint8(1)<<(*structBit&7))
@@ -1472,7 +1486,13 @@ func (t *Avl3) serialisePass2(r Ref3, pageId PageID, data []byte, prefixLen int,
 		data[pageBitsOffset+(*nodeIndex>>3)] |= (uint8(1)<<(*nodeIndex&7))
 		*nodeIndex++
 		// Write closing parenthesis "1"
-		data[structBitsOffset+(*structBit>>3)] |= (uint8(1)<<(*structBit&7))
+		if !subtreePinned {
+			data[structBitsOffset+(*structBit>>3)] |= (uint8(1)<<(*structBit&7))
+		} else {
+			if t.trace {
+				//fmt.Printf("Pinned arrow %s in page %d\n", r.max, pageId)
+			}
+		}
 		*structBit++
 	}
 }
@@ -1527,8 +1547,6 @@ func (t *Avl3) deserialisePage(pageId PageID, currentRoot bool) (root Ref3, rele
 		return nil, false
 	}
 	offset += 4
-	pinnedStructIndex := binary.BigEndian.Uint32(data[offset:])
-	offset += 4
 	pageBitsOffset := offset
 	// Calculate number of pages
 	var pageCount uint32
@@ -1562,36 +1580,72 @@ func (t *Avl3) deserialisePage(pageId PageID, currentRoot bool) (root Ref3, rele
 		//fmt.Printf("valueHeaderOffset %d\n", valueHeaderOffset)
 	}
 	var forkStack []Ref3
+	var pinnedStack []bool
 	var forkStackTop int
 	var nodeIndex uint32
 	var structBit uint32
 	var noLeaf bool
 	releaseId = true
-	for nodeIndex < nodeCount {
-		isPage := (data[pageBitsOffset+(nodeIndex>>3)] & (uint8(1)<<(nodeIndex&7))) != 0
+	var maxStructBits uint32 = (prefixOffset - structBitsOffset) << 3
+	for nodeIndex < nodeCount || structBit < maxStructBits  {
 		sbit := (data[structBitsOffset+(structBit>>3)] & (uint8(1)<<(structBit&7))) != 0
+		if trace {
+			//fmt.Printf("nodeIndex %d, nodeCount %d, structBit %d, maxStructBits %d, sbit %t, noLeaf %t\n", nodeIndex, nodeCount, structBit, maxStructBits, sbit, noLeaf)
+		}
+		if !sbit && nodeIndex == nodeCount {
+			// We got to the padding "0" bits of the structure
+			break
+		}
 		// Interpret the structural bit
 		var r Ref3
 		if noLeaf {
 			if sbit {
 				forkStackTop--
 				x := forkStack[forkStackTop]
+				xPinned := pinnedStack[forkStackTop]
 				y := forkStack[forkStackTop-1].(*Fork3)
+				yPinned := pinnedStack[forkStackTop-1]
 				y.right = x
 				y.height = maxu32(y.height, 1+x.getheight())
 				y.max = x.getmax()
+				if xPinned {
+					if yPinned {
+						// pinned flag of y stays the same
+					} else {
+						switch xt := x.(type) {
+						case *Leaf3:
+							xt.pinnedPageId = pageId
+						case *Fork3:
+							xt.pinnedPageId = pageId
+						}
+						// y stays unpinned
+					}
+				} else if yPinned {
+					switch ylt := y.left.(type) {
+					case *Leaf3:
+						ylt.pinnedPageId = pageId
+					case *Fork3:
+						ylt.pinnedPageId = pageId
+					}
+					// unpin y
+					pinnedStack[forkStackTop-1] = false
+				}
 				noLeaf = true
+				if trace {
+					//fmt.Printf("Fork finishing %s %d\n", y.max, y.height)
+				}
 			} else {
 				x := forkStack[forkStackTop-1]
 				y := &Fork3{left: x, height: 1+x.getheight()}
-				if structBit + 1 == pinnedStructIndex {
-					y.pinnedPageId = pageId
-					releaseId = false
-				}
 				forkStack[forkStackTop-1] = y
+				// Pinned flags on top of the stack just transfers from x to y
 				noLeaf = false
+				if trace {
+					//fmt.Printf("Fork starting %d\n", y.height)
+				}
 			}
-		} else if sbit {
+		} else {
+			isPage := (data[pageBitsOffset+(nodeIndex>>3)] & (uint8(1)<<(nodeIndex&7))) != 0
 			if isPage {
 				id := PageID(binary.BigEndian.Uint64(data[arrowHeaderOffset:]))
 				arrowHeaderOffset += 8
@@ -1603,44 +1657,49 @@ func (t *Avl3) deserialisePage(pageId PageID, currentRoot bool) (root Ref3, rele
 				arrow := &Arrow3{pageId: id, height: height, max: max}
 				r = arrow
 				if trace {
-					//fmt.Printf("Deserialised arrow max %s, height %d\n", arrow.max, arrow.height)
+					if !sbit {
+						//fmt.Printf("Deserialised PIN arrow max %s, pageId %d\n", arrow.max, pageId)
+					}
 				}
 			} else {
 				l := &Leaf3{}
-				if structBit + 1 == pinnedStructIndex {
-					l.pinnedPageId = pageId
-					releaseId = false
-				}
 				l.key = t.deserialiseKey(data, &keyHeaderOffset, prefix)
 				l.value, l.valueId, l.valueLen = t.deserialiseVal(data, &valueHeaderOffset, &valBodyOffset)
 				if trace {
-					//fmt.Printf("Deserialised leaf key %s, value %s, valueId %d, valueLen %d\n", l.key, l.nvalue(t), l.valueId, l.valueLen)
+					if !sbit {
+						//fmt.Printf("Deserialised PIN leaf key %s, pageId %d\n", l.key, pageId)
+					}
 				}
 				r = l
 			}
 			nodeIndex++
 			noLeaf = true
-		} else {
-			panic("Lobed leaf encoding")
 		}
 		if r != nil {
+			if !sbit {
+				releaseId = false
+			}
 			// Push onto the stack
 			if forkStackTop >= len(forkStack) {
 				forkStack = append(forkStack, r)
+				pinnedStack = append(pinnedStack, !sbit)
 			} else {
 				forkStack[forkStackTop] = r
+				pinnedStack[forkStackTop] = !sbit
 			}
 			forkStackTop++
 		}
 		structBit++
 	}
-	for forkStackTop > 1 {
-		forkStackTop--
-		x := forkStack[forkStackTop]
-		y := forkStack[forkStackTop-1].(*Fork3)
-		y.right = x
-		y.height = maxu32(y.height, 1+x.getheight())
-		y.max = x.getmax()
+	for i := 0; i < forkStackTop; i++ {
+		if pinnedStack[i] {
+			switch rt := forkStack[i].(type) {
+				case *Leaf3:
+					rt.pinnedPageId = pageId
+				case *Fork3:
+					rt.pinnedPageId = pageId
+			}
+		}
 	}
 	root = forkStack[0]
 	if currentRoot {
