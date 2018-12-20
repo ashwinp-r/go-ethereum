@@ -138,15 +138,9 @@ func (t *Avl3) UseFiles(pageFileName, valueFileName, verFileName string, read bo
 	if t.currentVersion > 0 {
 		t.maxPageId = lastPageID
 		fmt.Printf("Deserialising page %d\n", lastPageID)
-		root, _ := t.deserialisePage(lastPageID, true)
+		root, _ := t.deserialisePage(lastPageID, nil, 0)
 		prevRootArrow := &Arrow3{height: root.getheight(), max: root.getmax()}
-		switch n := root.(type) {
-		case *Fork3:
-			n.arrow = prevRootArrow
-		case *Leaf3:
-			n.arrow = prevRootArrow
-		}
-		t.root = &Arrow3{pageId: lastPageID, height: root.getheight(), max: root.getmax()}
+		t.root = &Arrow3{pageId: lastPageID, height: root.getheight(), max: root.getmax(), arrow: prevRootArrow}
 		t.prevRoot = prevRootArrow
 	}
 }
@@ -173,7 +167,7 @@ func (t *Avl3) Scan() {
 	} else {
 		t.maxPageId = PageID(info.Size()/int64(PageSize))
 	}
-	current, _ := t.deserialisePage(t.maxPageId-1, true)
+	current, _ := t.deserialisePage(t.maxPageId-1, nil, 0)
 	m := make(map[PageID]struct{})
 	fmt.Printf("Max page depth: %d\n", t.scan(current, m))
 	fmt.Printf("Pages in current state: %d\n", len(m))
@@ -188,7 +182,7 @@ func (t *Avl3) SpaceScan() {
 	var pCount, arrows, leaves, totalArrowBits, totalStructBits, totalPrefixLen, totalKeyBodies, totalValBodies uint64
 	maxPageId := t.maxPageId
 	for pageId := PageID(1); pageId < maxPageId; pageId++ {
-		p, _ := t.deserialisePage(pageId, false)
+		p, _ := t.deserialisePage(pageId, nil, 0)
 		if p == nil {
 			continue
 		}
@@ -239,16 +233,15 @@ func (t *Avl3) scan(r Ref3, m map[PageID]struct{}) int {
 			return rd
 		}
 	case *Arrow3:
-		root, _ := t.deserialisePage(r.pageId, false)
+		point, _ := t.deserialisePage(r.pageId, r.max, r.height)
+		if point == nil {
+			panic("")
+		}
 		if _, ok := m[r.pageId]; !ok {
 			m[r.pageId] = struct{}{}
 			if len(m) % 10000 == 0 {
 				fmt.Printf("Read %d pages\n", len(m))
 			}
-		}
-		point, _, _, err := t.walkToArrowPoint(root, r.max, r.height)
-		if err != nil {
-			panic(err)
 		}
 		return 1 + t.scan(point, m)
 	}
@@ -300,7 +293,6 @@ type Ref3 interface {
 }
 
 func (t *Avl3) nextPageId() PageID {
-	/*
 	var id PageID
 	// Take tha max for determinism
 	for pageId := range t.pagesToRecycle {
@@ -312,7 +304,6 @@ func (t *Avl3) nextPageId() PageID {
 		delete(t.pagesToRecycle, id)
 		return id
 	}
-	*/
 	if len(t.freelist) > 0 {
 		nextId := t.freelist[len(t.freelist)-1]
 		t.freelist = t.freelist[:len(t.freelist)-1]
@@ -443,12 +434,10 @@ func (t *Avl3) Get(key []byte) ([]byte, bool) {
 				current = n.right
 			}
 		case *Arrow3:
-			pageRoot, _ := t.deserialisePage(n.pageId, false)
-			point, _, _, err := t.walkToArrowPoint(pageRoot, n.max, n.height)
-			if err != nil {
-				panic(err)
+			current, _ = t.deserialisePage(n.pageId, n.max, n.height)
+			if current == nil {
+				panic("")
 			}
-			current = point
 		}
 	}
 }
@@ -460,12 +449,10 @@ func (t *Avl3) IsLeaf(r Ref3) bool {
 		case nil:
 			panic("nil")
 		case *Arrow3:
-			pageRoot, _ := t.deserialisePage(r.pageId, true)
-			point, _, _, err := t.walkToArrowPoint(pageRoot, r.max, r.height)
-			if err != nil {
-				panic(err)
+			current, _ = t.deserialisePage(r.pageId, r.max, r.height)
+			if current == nil {
+				panic("")
 			}
-			current = point
 		case *Fork3:
 			return false
 		case *Leaf3:
@@ -482,16 +469,15 @@ func (t *Avl3) Peel(r Ref3, key []byte, ins int) Ref3 {
 		case nil:
 			panic("nil")
 		case *Arrow3:
-			pageRoot, releaseId := t.deserialisePage(r.pageId, true)
+			point, releaseId := t.deserialisePage(r.pageId, r.max, r.height)
+			if point == nil {
+				panic("")
+			}
 			if releaseId {
 				if t.trace {
 					fmt.Printf("Peel releases page %d\n", r.pageId)
 				}
 				t.pagesToRecycle[r.pageId] = struct{}{}
-			}
-			point, _, _, err := t.walkToArrowPoint(pageRoot, r.max, r.height)
-			if err != nil {
-				panic(err)
 			}
 			if r.arrow != nil {
 				if t.trace {
@@ -611,12 +597,9 @@ func (t *Avl3) Insert(key, value []byte) bool {
 				current = n.right
 			}
 		case *Arrow3:
-			pageRoot, _ := t.deserialisePage(n.pageId, false)
-			var err error
-			current, _, _, err = t.walkToArrowPoint(pageRoot, n.max, n.height)
-			if err != nil {
-				fmt.Printf("Insert %s %s\n", key, value)
-				panic(err)
+			current, _ = t.deserialisePage(n.pageId, n.max, n.height)
+			if current == nil {
+				panic("")
 			}
 		}
 	}
@@ -787,11 +770,9 @@ func (t *Avl3) Delete(key []byte) bool {
 				current = n.right
 			}
 		case *Arrow3:
-			pageRoot, _ := t.deserialisePage(n.pageId, false)
-			var err error
-			current, _, _, err = t.walkToArrowPoint(pageRoot, n.max, n.height)
-			if err != nil {
-				panic(err)
+			current, _ = t.deserialisePage(n.pageId, n.max, n.height)
+			if current == nil {
+				panic("")
 			}
 			if current.getheight() != n.height {
 				panic(fmt.Sprintf("deseailised size %d, arrow height %d", current.getheight(), n.height))
@@ -1002,10 +983,9 @@ func (a *Arrow3) dot(t *Avl3, ctx *graphContext, path string) {
 	ctx.Nodes = append(ctx.Nodes, gn)
 
 	if a.pageId != PageID(0) {
-		root, _ := t.deserialisePage(a.pageId, path == "root")
-		point, _, _, err := t.walkToArrowPoint(root, a.max, a.height)
-		if err != nil {
-			fmt.Printf("%v\n", err)
+		point, _ := t.deserialisePage(a.pageId, a.max, a.height)
+		if point == nil {
+			panic("")
 		} else {
 			pointPath := fmt.Sprintf("%p", point)
 			if point != nil {
@@ -1128,16 +1108,12 @@ func (t *Avl3) Commit() uint64 {
 	}
 	startCounter := t.commitedCounter
 	var mpid PageID = PageID(0)
-	fmt.Printf("Committing root\n")
 	prefix, keyCount, pageCount, keyBodySize, valBodySize, structBits, pinnedPageId := t.root.serialisePass1(t, &mpid)
 	currentId := t.commitPage(t.root, prefix, keyCount, pageCount, keyBodySize, valBodySize, structBits, pinnedPageId)
-	fmt.Printf("Committed root %d\n", currentId)
 	if t.prevRoot != nil {
 		var mpid PageID = t.maxPageId
-		fmt.Printf("Committing prevRoot\n")
 		prefix, keyCount, pageCount, keyBodySize, valBodySize, structBits, pinnedPageId := t.prevRoot.serialisePass1(t, &mpid)
 		prevId := t.commitPage(t.prevRoot, prefix, keyCount, pageCount, keyBodySize, valBodySize, structBits, pinnedPageId)
-		fmt.Printf("Committed prevRoot %d\n", prevId)
 		t.versions[t.currentVersion] = prevId
 		if t.verFile != nil {
 			var verdata [8]byte
@@ -1157,13 +1133,7 @@ func (t *Avl3) Commit() uint64 {
 		t.verFile.WriteAt(verdata[:], int64(t.currentVersion)*int64(8))
 	}
 	prevRootArrow := &Arrow3{pageId: currentId, height: t.root.getheight(), max: t.root.getmax()}
-	switch n := t.root.(type) {
-	case *Fork3:
-		n.arrow = prevRootArrow
-	case *Leaf3:
-		n.arrow = prevRootArrow
-	}
-	t.root = &Arrow3{pageId: currentId, height: t.root.getheight(), max: t.root.getmax()}
+	t.root = &Arrow3{pageId: currentId, height: t.root.getheight(), max: t.root.getmax(), arrow: prevRootArrow}
 	t.prevRoot = prevRootArrow
 	return t.commitedCounter - startCounter
 }
@@ -1213,10 +1183,8 @@ func (t *Avl3) commitPage(r Ref3, prefix []byte, keyCount, pageCount, keyBodySiz
 	var id PageID
 	if pinnedPageId.pinned {
 		id = pinnedPageId.id
-		fmt.Printf("Page id %d is chosed because of pinnedPageId\n", id)
 	} else {
 		id = t.nextPageId()
-		fmt.Printf("Page id %d is chosed because of nextPageId()\n", id)
 	}
 	t.serialisePass2(r, id, data, len(prefix), false, pageBitsOffset, structBitsOffset,
 		&nodeIndex, &structBit, &keyHeaderOffset, &arrowHeaderOffset, &valueHeaderOffset, &keyBodyOffset, &valBodyOffset)
@@ -1520,13 +1488,13 @@ func (t *Avl3) deserialiseVal(data []byte, valueHeaderOffset, valBodyOffset *uin
 	return
 }
 
-func (t *Avl3) deserialisePage(pageId PageID, currentRoot bool) (root Ref3, releaseId bool) {
+func (t *Avl3) deserialisePage(pageId PageID, key []byte, height uint32) (point Ref3, releaseId bool) {
 	trace := t.trace
 	//if root, ok := t.pageCache.Get(pageId); ok {
 	//	return root.(Ref3), false
 	//}
 	if trace {
-		fmt.Printf("Deserialising page %d\n", pageId)
+		fmt.Printf("Deserialising page %d %s %d\n", pageId, key, height)
 	}
 	var data []byte
 	if t.pageFile != nil {
@@ -1608,6 +1576,9 @@ func (t *Avl3) deserialisePage(pageId PageID, currentRoot bool) (root Ref3, rele
 				y.right = x
 				y.height = maxu32(y.height, 1+x.getheight())
 				y.max = x.getmax()
+				if y.height == height && bytes.Equal(y.max, key) {
+					point = y
+				}
 				if xPinned {
 					if yPinned {
 						// pinned flag of y stays the same
@@ -1665,6 +1636,9 @@ func (t *Avl3) deserialisePage(pageId PageID, currentRoot bool) (root Ref3, rele
 				l := &Leaf3{}
 				l.key = t.deserialiseKey(data, &keyHeaderOffset, prefix)
 				l.value, l.valueId, l.valueLen = t.deserialiseVal(data, &valueHeaderOffset, &valBodyOffset)
+				if height == 1 && bytes.Equal(l.key, key) {
+					point = l
+				}
 				if trace {
 					if !sbit {
 						//fmt.Printf("Deserialised PIN leaf key %s, pageId %d\n", l.key, pageId)
@@ -1701,21 +1675,11 @@ func (t *Avl3) deserialisePage(pageId PageID, currentRoot bool) (root Ref3, rele
 			}
 		}
 	}
-	root = forkStack[0]
-	if currentRoot {
-		if prevRootArrow, ok := t.prevRoot.(*Arrow3); ok {
-			if prevRootArrow.pageId == pageId {
-				switch n := root.(type) {
-				case *Fork3:
-					n.arrow = prevRootArrow
-				case *Leaf3:
-					n.arrow = prevRootArrow
-				}
-			}
-		}
+	if key == nil && height == 0 && point == nil {
+		point = forkStack[0]
 	}
 	//t.pageCache.Add(pageId, root)
-	return root, releaseId
+	return point, releaseId
 }
 
 // Checks whether WBT without pages is equivalent to one with pages
@@ -1771,10 +1735,9 @@ func equivalent33(t *Avl3, path string, r1 Ref3, r2 Ref3) bool {
 			fmt.Printf("At path %s, r1.height %d, r2(arrow).height %d\n", path, r1.getheight(), r2.height)
 			return false
 		}
-		root, _ := t.deserialisePage(r2.pageId, false)
-		point, _, _, err := t.walkToArrowPoint(root, r2.max, r2.height)
-		if err != nil {
-			panic(err)
+		point, _ := t.deserialisePage(r2.pageId, r2.max, r2.height)
+		if point == nil {
+			panic("")
 		}
 		return equivalent33(t, path, r1, point)
 	}
