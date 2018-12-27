@@ -450,8 +450,14 @@ func TestInsertDeleteRandom3Commits(t *testing.T) {
 			tr.Delete(keys[k])
 			deleted[string(keys[k])] = struct{}{}
 		}
+		if i == 3039 {
+			tr.SetTracing(true)
+		}
 		if i % 1013 == 0 {
 			tr.Commit()
+		}
+		if i == 3039 {
+			tr.SetTracing(false)
 		}
 		if tr.root != nil && i < 10000 {
 			if _, ok := tr.root.heightsCorrect(""); !ok {
