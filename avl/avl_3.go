@@ -201,7 +201,7 @@ type Ref3 interface {
 	dot(*Avl3, *graphContext, string)
 	heightsCorrect(path string) (uint32, bool)
 	balanceCorrect() bool
-	prepare(t *Avl3, buffer *CommitBuffer) (prefix []byte, keyCount, pageCount, keyBodySize, valBodySize, structBits uint32, pinnedPageId PinnedPageID)
+	prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3, pinnedPageId PinnedPageID)
 }
 
 func (t *Avl3) nextPageId() PageID {
@@ -1243,13 +1243,13 @@ func (t *Avl3) Commit() uint64 {
 		var cPrefix []byte
 		var cLeafCount, cArrowCount, cKeyBodySize, cValBodySize, cStructBits uint32
 		for i, r := range modRefs {
-			prefix, leafCount, arrowCount, keyBodySize, valBodySize, structBits, _ := r.prepare(t, &buffer)
-			cPrefix = commonPrefix(prefix, cPrefix)
-			cLeafCount += leafCount
-			cArrowCount += arrowCount
-			cKeyBodySize += keyBodySize
-			cValBodySize += valBodySize
-			cStructBits += structBits
+			tree, _ := r.prepare(t, &buffer)
+			cPrefix = commonPrefix(tree.prefix, cPrefix)
+			cLeafCount += tree.leafCount
+			cArrowCount += tree.arrowCount
+			cKeyBodySize += tree.keyBodySize
+			cValBodySize += tree.valBodySize
+			cStructBits += tree.structBits
 			if i > 0 {
 				cStructBits++
 			}
@@ -1268,17 +1268,8 @@ func (t *Avl3) Commit() uint64 {
 		}
 	}
 	t.modifiedPages = make(map[PageID][]Ref3)
-	prefix, leafCount, arrowCount, keyBodySize, valBodySize, structBits, pinnedPageId := t.root.prepare(t, &buffer)
-	tree := Tree3 {
-		ref: t.root,
-		arrow: nil,
-		prefix: prefix,
-		leafCount: leafCount,
-		arrowCount: arrowCount,
-		keyBodySize: keyBodySize,
-		valBodySize: valBodySize,
-		structBits: structBits,
-	}
+	tree, pinnedPageId := t.root.prepare(t, &buffer)
+	tree.ref = t.root
 	if pinnedPageId.pinned {
 		buffer.AddPinnedForest(pinnedPageId.id, tree.ToForest())
 	} else if pinnedPageId.id == 0 {
@@ -1316,17 +1307,8 @@ func (t *Avl3) Commit() uint64 {
 	if t.prevRoot != nil {
 		var buffer CommitBuffer
 		buffer.pinned = make(map[PageID]Forest3)
-		prefix, leafCount, arrowCount, keyBodySize, valBodySize, structBits, pinnedPageId := t.prevRoot.prepare(t, &buffer)
-		tree := Tree3{
-			ref: t.prevRoot,
-			arrow: nil,
-			prefix: prefix,
-			leafCount: leafCount,
-			arrowCount: arrowCount,
-			keyBodySize: keyBodySize,
-			valBodySize: valBodySize,
-			structBits: structBits,
-		}
+		tree, pinnedPageId := t.prevRoot.prepare(t, &buffer)
+		tree.ref = t.prevRoot
 		if pinnedPageId.pinned {
 			if pinnedPageId.id == PageID(1645) {
 				fmt.Printf("t.prevRoot pinned to %d\n", pinnedPageId.id)
@@ -1457,16 +1439,16 @@ func (t *Avl3) commitPage(c *PageContainer) {
 }
 
 // Computes all the dynamic parameters that allow calculation of the page length and pre-allocation of all buffers
-func (l *Leaf3) prepare(t *Avl3, buffer *CommitBuffer) (prefix []byte, keyCount, pageCount, keyBodySize, valBodySize, structBits uint32, pinnedPageId PinnedPageID) {
-	keyCount = 1
-	keyBodySize = uint32(len(l.key))
+func (l *Leaf3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3, pinnedPageId PinnedPageID) {
+	tree.leafCount = 1
+	tree.keyBodySize = uint32(len(l.key))
 	if l.valueLen > InlineValueMax {
-		valBodySize = 8 + HashLength // Size of value id + valueHash
+		tree.valBodySize = 8 + HashLength // Size of value id + valueHash
 	} else {
-		valBodySize = l.valueLen
+		tree.valBodySize = l.valueLen
 	}
-	structBits = 1 // one bit per leaf
-	prefix = l.key
+	tree.structBits = 1 // one bit per leaf
+	tree.prefix = l.key
 	if l.pinnedPageId != PageID(0) {
 		// Old pin
 		pinnedPageId = PinnedPageID{id: l.pinnedPageId, pinned: true}
@@ -1478,7 +1460,7 @@ func (l *Leaf3) prepare(t *Avl3, buffer *CommitBuffer) (prefix []byte, keyCount,
 	return
 }
 
-func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (prefix []byte, keyCount, pageCount, keyBodySize, valBodySize, structBits uint32, pinnedPageId PinnedPageID) {
+func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3, pinnedPageId PinnedPageID) {
 	if f.pinnedPageId != PageID(0) {
 		// Old pin
 		pinnedPageId = PinnedPageID{id: f.pinnedPageId, pinned: true}
@@ -1491,8 +1473,8 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (prefix []byte, keyCount,
 		pinnedPageId = PinnedPageID{id: buffer.nextDistinctId, pinned: false}
 	}
 
-	prefixL, keyCountL, pageCountL, keyBodySizeL, valBodySizeL, structBitsL, pinnedPageL := f.left.prepare(t, buffer)
-	prefixR, keyCountR, pageCountR, keyBodySizeR, valBodySizeR, structBitsR, pinnedPageR := f.right.prepare(t, buffer)
+	treeL, pinnedPageL := f.left.prepare(t, buffer)
+	treeR, pinnedPageR := f.right.prepare(t, buffer)
 	// Fork and both children fit in the page
 	var mergable3 bool
 	var mergePin3 PinnedPageID
@@ -1510,20 +1492,27 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (prefix []byte, keyCount,
 		mergePin3 = pinnedPageId
 	}
 	if mergable3 {
-		keyCountLFR := keyCountL+keyCountR
-		pageCountLFR := pageCountL+pageCountR
-		keyBodySizeLFR := keyBodySizeL+keyBodySizeR
-		valBodySizeLFR := valBodySizeL+valBodySizeR
-		structBitsLFR := structBitsL+structBitsR+2 // 2 bits for the fork
-		prefixLFR := commonPrefix(prefixL, prefixR)
-		sizeLFR := t.pageSize3(keyCountLFR, pageCountLFR, keyBodySizeLFR, valBodySizeLFR, structBitsLFR, prefixLFR)
+		leafCountLFR := treeL.leafCount+treeR.leafCount
+		arrowCountLFR := treeL.arrowCount+treeR.arrowCount
+		keyBodySizeLFR := treeL.keyBodySize+treeR.keyBodySize
+		valBodySizeLFR := treeL.valBodySize+treeR.valBodySize
+		structBitsLFR := treeL.structBits+treeR.structBits+2 // 2 bits for the fork
+		prefixLFR := commonPrefix(treeL.prefix, treeR.prefix)
+		sizeLFR := t.pageSize3(leafCountLFR, arrowCountLFR, keyBodySizeLFR, valBodySizeLFR, structBitsLFR, prefixLFR)
 		if sizeLFR < PageSize {
-			return prefixLFR, keyCountLFR, pageCountLFR, keyBodySizeLFR, valBodySizeLFR, structBitsLFR, mergePin3
+			return Tree3{
+				prefix: prefixLFR,
+				leafCount: leafCountLFR,
+				arrowCount: arrowCountLFR,
+				keyBodySize: keyBodySizeLFR,
+				valBodySize: valBodySizeLFR,
+				structBits: structBitsLFR,
+			}, mergePin3
 		}
 	}
 	// Choose the biggest child and make a page out of it
-	sizeL := t.pageSize3(keyCountL, pageCountL, keyBodySizeL, valBodySizeL, structBitsL, prefixL)
-	sizeR := t.pageSize3(keyCountR, pageCountR, keyBodySizeR, valBodySizeR, structBitsR, prefixR)
+	sizeL := t.pageSize3(treeL.leafCount, treeL.arrowCount, treeL.keyBodySize, treeL.valBodySize, treeL.structBits, treeL.prefix)
+	sizeR := t.pageSize3(treeR.leafCount, treeR.arrowCount, treeR.keyBodySize, treeR.valBodySize, treeR.structBits, treeR.prefix)
 	var mergableR bool
 	var mergePinR PinnedPageID
 	if pinnedPageR.id == 0 {
@@ -1554,36 +1543,35 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (prefix []byte, keyCount,
 			lArrow = la
 		} else {
 			lArrow = &Arrow3{height: f.left.getheight(), max: f.left.getmax()}
-			lTree := Tree3 {
-				ref: f.left,
-				arrow: lArrow,
-				prefix: prefixL,
-				leafCount: keyCountL,
-				arrowCount: pageCountL,
-				keyBodySize: keyBodySizeL,
-				valBodySize: valBodySizeL,
-				structBits: structBitsL,
-			}
+			treeL.ref = f.left
+			treeL.arrow = lArrow
 			if pinnedPageL.pinned {
 				if pinnedPageL.id == 1645 {
 					fmt.Printf("Pinned %d from %s\n", pinnedPageL.id, debug.Stack())
 				}
-				buffer.AddPinnedForest(pinnedPageL.id, lTree.ToForest())
+				buffer.AddPinnedForest(pinnedPageL.id, treeL.ToForest())
 			} else if pinnedPageL.id == 0 {
-				buffer.free = append(buffer.free, lTree)
+				buffer.free = append(buffer.free, treeL)
 			} else {
-				buffer.distinct = append(buffer.distinct, lTree)
+				buffer.distinct = append(buffer.distinct, treeL)
 			}
 			f.left = lArrow
 		}
 		// Check if the fork and the right child still fit into a page
-		pageCountFR := pageCountR+1 // 1 for the left arrow
-		keyBodySizeFR := keyBodySizeR+uint32(len(lArrow.max))
-		structBitsFR := structBitsR+3 // 2 for the fork and 1 for the left arrow
-		prefixFR := commonPrefix(prefixR, lArrow.max)
-		sizeFR := t.pageSize3(keyCountR, pageCountFR, keyBodySizeFR, valBodySizeR, structBitsFR, prefixFR)
+		arrowCountFR := treeR.arrowCount+1 // 1 for the left arrow
+		keyBodySizeFR := treeR.keyBodySize+uint32(len(lArrow.max))
+		structBitsFR := treeR.structBits+3 // 2 for the fork and 1 for the left arrow
+		prefixFR := commonPrefix(treeR.prefix, lArrow.max)
+		sizeFR := t.pageSize3(treeR.leafCount, arrowCountFR, keyBodySizeFR, treeR.valBodySize, structBitsFR, prefixFR)
 		if mergableR && sizeFR < PageSize {
-			return prefixFR, keyCountR, pageCountFR, keyBodySizeFR, valBodySizeR, structBitsFR, mergePinR
+			return Tree3{
+				prefix: prefixFR,
+				leafCount: treeR.leafCount,
+				arrowCount: arrowCountFR,
+				keyBodySize: keyBodySizeFR,
+				valBodySize: treeR.valBodySize,
+				structBits: structBitsFR,
+			}, mergePinR
 		} else {
 			// Have to commit right child too
 			var rArrow *Arrow3
@@ -1592,29 +1580,28 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (prefix []byte, keyCount,
 			} else {
 				//rid := t.commitPage(f.right, buffer, prefixR, keyCountR, pageCountR, keyBodySizeR, valBodySizeR, structBitsR, pinnedPageR)
 				rArrow = &Arrow3{height: f.right.getheight(), max: f.right.getmax()}
-				rTree := Tree3{
-					ref: f.right,
-					arrow: rArrow,
-					prefix: prefixR,
-					leafCount: keyCountR,
-					arrowCount: pageCountR,
-					keyBodySize: keyBodySizeR,
-					valBodySize: valBodySizeR,
-					structBits: structBitsR,
-				}
+				treeR.ref = f.right
+				treeR.arrow = rArrow
 				if pinnedPageR.pinned {
 					if pinnedPageR.id == 1645 {
 						fmt.Printf("Pinned %d from %s\n", pinnedPageR.id, debug.Stack())
 					}
-					buffer.AddPinnedForest(pinnedPageR.id, rTree.ToForest())
+					buffer.AddPinnedForest(pinnedPageR.id, treeR.ToForest())
 				} else if pinnedPageR.id == 0 {
-					buffer.free = append(buffer.free, rTree)
+					buffer.free = append(buffer.free, treeR)
 				} else {
-					buffer.distinct = append(buffer.distinct, rTree)
+					buffer.distinct = append(buffer.distinct, treeR)
 				}
 				f.right = rArrow
 			}
-			return commonPrefix(rArrow.max, lArrow.max), 0, 2, uint32(len(lArrow.max))+uint32(len(rArrow.max)), 0, 4 /* 2 bits for arrows, 2 for the fork */, pinnedPageId
+			return Tree3{
+				prefix: commonPrefix(rArrow.max, lArrow.max),
+				leafCount: 0,
+				arrowCount: 2,
+				keyBodySize: uint32(len(lArrow.max))+uint32(len(rArrow.max)),
+				valBodySize: 0,
+				structBits: 4 /* 2 bits for arrows, 2 for the fork */,
+			}, pinnedPageId
 		}
 	} else {
 		var rArrow *Arrow3
@@ -1623,36 +1610,35 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (prefix []byte, keyCount,
 		} else {
 			//rid := t.commitPage(f.right, buffer, prefixR, keyCountR, pageCountR, keyBodySizeR, valBodySizeR, structBitsR, pinnedPageR)
 			rArrow = &Arrow3{height: f.right.getheight(), max: f.right.getmax()}
-			rTree := Tree3 {
-				ref: f.right,
-				arrow: rArrow,
-				prefix: prefixR,
-				leafCount: keyCountR,
-				arrowCount: pageCountR,
-				keyBodySize: keyBodySizeR,
-				valBodySize: valBodySizeR,
-				structBits: structBitsR,
-			}
+			treeR.ref = f.right
+			treeR.arrow = rArrow
 			if pinnedPageR.pinned {
 				if pinnedPageR.id == 1645 {
 					fmt.Printf("Pinned %d from %s\n", pinnedPageR.id, debug.Stack())
 				}
-				buffer.AddPinnedForest(pinnedPageR.id, rTree.ToForest())
+				buffer.AddPinnedForest(pinnedPageR.id, treeR.ToForest())
 			} else if pinnedPageR.id == 0 {
-				buffer.free = append(buffer.free, rTree)
+				buffer.free = append(buffer.free, treeR)
 			} else {
-				buffer.distinct = append(buffer.distinct, rTree)
+				buffer.distinct = append(buffer.distinct, treeR)
 			}
 			f.right = rArrow
 		}
 		// Check if the fork and the let child still fit into a page
-		pageCountFL := pageCountL+1 // 1 for the left arrow
-		keyBodySizeFL := keyBodySizeL+uint32(len(rArrow.max))
-		structBitsFL := structBitsL+3 // 2 for the fork and 1 for the left arrow
-		prefixFL := commonPrefix(prefixL, rArrow.max)
-		sizeFL := t.pageSize3(keyCountL, pageCountFL, keyBodySizeFL, valBodySizeL, structBitsFL, prefixFL)
+		arrowCountFL := treeL.arrowCount+1 // 1 for the left arrow
+		keyBodySizeFL := treeL.keyBodySize+uint32(len(rArrow.max))
+		structBitsFL := treeL.structBits+3 // 2 for the fork and 1 for the left arrow
+		prefixFL := commonPrefix(treeL.prefix, rArrow.max)
+		sizeFL := t.pageSize3(treeL.leafCount, arrowCountFL, keyBodySizeFL, treeL.valBodySize, structBitsFL, prefixFL)
 		if mergableL && sizeFL < PageSize {
-			return prefixFL, keyCountL, pageCountFL, keyBodySizeFL, valBodySizeL, structBitsFL, mergePinL
+			return Tree3{
+				prefix: prefixFL,
+				leafCount: treeL.leafCount,
+				arrowCount: arrowCountFL,
+				keyBodySize: keyBodySizeFL,
+				valBodySize: treeL.valBodySize,
+				structBits: structBitsFL,
+			}, mergePinL
 		} else {
 			// Have to commit left child too
 			var lArrow *Arrow3
@@ -1661,39 +1647,37 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (prefix []byte, keyCount,
 			} else {
 				//lid := t.commitPage(f.left, buffer, prefixL, keyCountL, pageCountL, keyBodySizeL, valBodySizeL, structBitsL, pinnedPageL)
 				lArrow = &Arrow3{height: f.left.getheight(), max: f.left.getmax()}
-				lArrow = &Arrow3{height: f.left.getheight(), max: f.left.getmax()}
-				lTree := Tree3 {
-					ref: f.left,
-					arrow: lArrow,
-					prefix: prefixL,
-					leafCount: keyCountL,
-					arrowCount: pageCountL,
-					keyBodySize: keyBodySizeL,
-					valBodySize: valBodySizeL,
-					structBits: structBitsL,
-				}
+				treeL.ref = f.left
+				treeL.arrow = lArrow
 				if pinnedPageL.pinned {
 					if pinnedPageL.id == 1645 {
 						fmt.Printf("Pinned %d from %s\n", pinnedPageL.id, debug.Stack())
 					}
-					buffer.AddPinnedForest(pinnedPageL.id, lTree.ToForest())
+					buffer.AddPinnedForest(pinnedPageL.id, treeL.ToForest())
 				} else if pinnedPageL.id == 0 {
-					buffer.free = append(buffer.free, lTree)
+					buffer.free = append(buffer.free, treeL)
 				} else {
-					buffer.distinct = append(buffer.distinct, lTree)
+					buffer.distinct = append(buffer.distinct, treeL)
 				}
 				f.left = lArrow
 			}
-			return commonPrefix(rArrow.max, lArrow.max), 0, 2, uint32(len(lArrow.max))+uint32(len(rArrow.max)), 0, 4 /* 2 bits for arrows, 2 for the fork */, pinnedPageId
+			return Tree3{
+				prefix: commonPrefix(rArrow.max, lArrow.max),
+				leafCount: 0,
+				arrowCount: 2,
+				keyBodySize: uint32(len(lArrow.max))+uint32(len(rArrow.max)),
+				valBodySize: 0,
+				structBits: 4 /* 2 bits for arrows, 2 for the fork */,
+			}, pinnedPageId
 		}
 	}
 }
 
-func (a *Arrow3) prepare(t *Avl3, buffer *CommitBuffer) (prefix []byte, keyCount, pageCount, keyBodySize, valBodySize, structBits uint32, pinnedPageId PinnedPageID) {
-	pageCount = 1
-	structBits = 1 // one bit for page reference
-	keyBodySize = uint32(len(a.max))
-	prefix = a.max
+func (a *Arrow3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3, pinnedPageId PinnedPageID) {
+	tree.arrowCount = 1
+	tree.structBits = 1 // one bit for page reference
+	tree.keyBodySize = uint32(len(a.max))
+	tree.prefix = a.max
 	return
 }
 
