@@ -10,7 +10,6 @@ import (
 	"os"
 	"sort"
 	"github.com/petar/GoLLRB/llrb"
-	"runtime/debug"
 )
 
 // AVL+ organised into pages, with history
@@ -447,9 +446,6 @@ func (t *Avl3) moveArrowOverFork(a *Arrow3, f *Fork3) {
 	if f.pinnedPageId != 0 {
 		fork.pinnedPageId = f.pinnedPageId
 		t.repinnedPages[f.pinnedPageId] = struct{}{}
-		if f.pinnedPageId == 6 {
-			fmt.Printf("fork repinned %d\n", f.pinnedPageId)
-		}
 		f.pinnedPageId = 0
 	}
 }
@@ -1123,9 +1119,6 @@ func (buffer *CommitBuffer) Pack(t *Avl3, mutating bool) []*PageContainer {
 			oldPin: true,
 			space: PageSize - t.pageSize3(forest.leafCount, forest.arrowCount, forest.keyBodySize, forest.valBodySize, forest.structBits, forest.prefix),
 		}
-		if id == 6 {
-			fmt.Printf("Container %d, refs %d, Stack %s\n", id, len(container.f.refs), debug.Stack())
-		}
 		nextTieBreaker++
 		pageContainers.InsertNoReplace(container)
 	}
@@ -1244,7 +1237,6 @@ func (t *Avl3) Commit() uint64 {
 	if t.root == nil {
 		return 0
 	}
-	trace := t.trace
 	startCounter := t.commitedCounter
 	var buffer CommitBuffer
 	buffer.pinned = make(map[PageID]Forest3)
@@ -1257,9 +1249,6 @@ func (t *Avl3) Commit() uint64 {
 		buffer.free = append(buffer.free, tree)
 	} else {
 		buffer.distinct = append(buffer.distinct, tree)
-	}
-	if trace {
-		fmt.Printf("len(t.modifiedPages) = %d\n", len(t.modifiedPages))
 	}
 	pageIds := make(PageIDs, len(t.modifiedPages))
 	idx := 0
@@ -1277,9 +1266,6 @@ func (t *Avl3) Commit() uint64 {
 			if !pinned && !repinned {
 				// Only release the page it if has not been repinned
 				t.freePageId(pageId)
-				if pageId == 6 {
-					fmt.Printf("Released page %d\n", pageId)
-				}
 			}
 		}
 	}
@@ -1292,9 +1278,6 @@ func (t *Avl3) Commit() uint64 {
 	sort.Sort(pageIds)
 	for _, pageId := range pageIds {
 		modRefs := t.modifiedPages[pageId]
-		if pageId == 6 {
-			fmt.Printf("pageId = %d, len(modRefs) = %d\n", pageId, len(modRefs))
-		}
 		var cPrefix []byte
 		var cLeafCount, cArrowCount, cKeyBodySize, cValBodySize, cStructBits uint32
 		for i, r := range modRefs {
@@ -1358,9 +1341,6 @@ func (t *Avl3) Commit() uint64 {
 		tree := t.prevRoot.prepare(t, &buffer)
 		tree.ref = t.prevRoot
 		if tree.pinned {
-			if tree.pageId == 6 {
-				fmt.Printf("t.prevRoot pinned to %d\n", tree.pageId)
-			}
 			buffer.AddPinnedForest(tree.pageId, tree.ToForest())
 		} else if tree.pageId == 0 {
 			buffer.free = append(buffer.free, tree)
@@ -1404,7 +1384,7 @@ func (t *Avl3) Commit() uint64 {
 	t.currentVersion++
 	t.versions[t.currentVersion] = Version3{pageId: rootPageId, treeIndex: rootTree}
 	if t.verFile != nil {
-		var verdata [8]byte
+		var verdata [12]byte
 		binary.BigEndian.PutUint64(verdata[:], uint64(rootPageId))
 		binary.BigEndian.PutUint32(verdata[8:], rootTree)
 		t.verFile.WriteAt(verdata[:], int64(t.currentVersion)*int64(12))
@@ -1473,7 +1453,6 @@ func (t *Avl3) commitPage(c *PageContainer) {
 	if structBit != c.f.structBits {
 		panic("sb != structBits")
 	}
-	fmt.Printf("commitPage %d, len(refs) %d, nodeCount %d, structBits %d\n", c.pageId, len(c.f.refs), nodeCount, c.f.structBits)
 	if t.trace {
 		fmt.Printf("Committed page %d, nodeCount %d, prefix %s\n", c.pageId, nodeCount, c.f.prefix)
 	}
@@ -1519,9 +1498,6 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 		// Old pin
 		tree.pageId = f.pinnedPageId
 		tree.pinned = true
-		if f.pinnedPageId == 6 {
-			fmt.Printf("Returning pinned fork to page %d: %s %d\n", f.pinnedPageId, f.max, f.height)
-		}
 	} else if f.arrow != nil {
 		// New pin
 		buffer.nextDistinctId++
@@ -1601,9 +1577,6 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 			treeL.ref = f.left
 			treeL.arrow = lArrow
 			if treeL.pinned {
-				if treeL.pageId == 6 {
-					fmt.Printf("Pinned %d from %s\n", treeL.pageId, debug.Stack())
-				}
 				buffer.AddPinnedForest(treeL.pageId, treeL.ToForest())
 			} else if treeL.pageId == 0 {
 				buffer.free = append(buffer.free, treeL)
@@ -1637,9 +1610,6 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 				treeR.ref = f.right
 				treeR.arrow = rArrow
 				if treeR.pinned {
-					if treeR.pageId == 6 {
-						fmt.Printf("Pinned %d from %s\n", treeR.pageId, debug.Stack())
-					}
 					buffer.AddPinnedForest(treeR.pageId, treeR.ToForest())
 				} else if treeR.pageId == 0 {
 					buffer.free = append(buffer.free, treeR)
@@ -1683,9 +1653,6 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 			treeR.ref = f.right
 			treeR.arrow = rArrow
 			if treeR.pinned {
-				if treeR.pageId == 6 {
-					fmt.Printf("Pinned %d from %s\n", treeR.pageId, debug.Stack())
-				}
 				buffer.AddPinnedForest(treeR.pageId, treeR.ToForest())
 			} else if treeR.pageId == 0 {
 				buffer.free = append(buffer.free, treeR)
@@ -1720,9 +1687,6 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 				treeL.ref = f.left
 				treeL.arrow = lArrow
 				if treeL.pinned {
-					if treeL.pageId == 6 {
-						fmt.Printf("Pinned %d from %s\n", treeL.pageId, debug.Stack())
-					}
 					buffer.AddPinnedForest(treeL.pageId, treeL.ToForest())
 				} else if treeL.pageId == 0 {
 					buffer.free = append(buffer.free, treeL)
@@ -1874,9 +1838,6 @@ func (t *Avl3) returnModPage(pageId PageID, modRefs []Ref3, key []byte, height u
 			// Release reference if requested
 			modRefs = append(modRefs[:i], modRefs[i+1:]...)
 			t.modifiedPages[pageId] = modRefs
-			if pageId == 6 {
-				fmt.Printf("Released reference %s %d for %d, left %d\n", key, height, pageId, len(t.modifiedPages[pageId]))
-			}
 			return point
 		}
 	}
@@ -1956,10 +1917,6 @@ func (t *Avl3) deserialisePage(pageId PageID, key []byte, height uint32, treeInd
 	var maxStructBits uint32 = (prefixOffset - structBitsOffset) << 3
 	for nodeIndex < nodeCount || structBit < maxStructBits  {
 		sbit := (data[structBitsOffset+(structBit>>3)] & (uint8(1)<<(structBit&7))) != 0
-		if pageId == 6 {
-			fmt.Printf("nodeIndex %d, nodeCount %d, structBit %d, maxStructBits %d, sbit %t, noLeaf %t, stackTop %d\n",
-				nodeIndex, nodeCount, structBit, maxStructBits, sbit, noLeaf, stackTop)
-		}
 		if !sbit && nodeIndex == nodeCount {
 			// We got to the padding "0" bits of the structure
 			break
@@ -1998,9 +1955,6 @@ func (t *Avl3) deserialisePage(pageId PageID, key []byte, height uint32, treeInd
 				freeStack[stackTop-1] = lFree && rFree
 				pinnedStack[stackTop-1] = lPinned && rPinned
 				noLeaf = true
-				if pageId == 6 {
-					fmt.Printf("Fork finishing %s %d\n", y.max, y.height)
-				}
 			} else {
 				noLeaf = false
 			}
@@ -2016,26 +1970,12 @@ func (t *Avl3) deserialisePage(pageId PageID, key []byte, height uint32, treeInd
 				max := t.deserialiseKey(data, &keyHeaderOffset, prefix)
 				arrow := &Arrow3{pageId: id, height: height, max: max}
 				r = arrow
-				if pageId == 6 {
-					if !sbit {
-						fmt.Printf("Deserialised PIN arrow max %s, pageId %d\n", arrow.max, pageId)
-					} else {
-						fmt.Printf("Deserialised arrow max %s, pageId %d\n", arrow.max, pageId)
-					}
-				}
 			} else {
 				l := &Leaf3{}
 				l.key = t.deserialiseKey(data, &keyHeaderOffset, prefix)
 				l.value, l.valueId, l.valueLen = t.deserialiseVal(data, &valueHeaderOffset, &valBodyOffset)
 				if height == 1 && bytes.Equal(l.key, key) {
 					point = l
-				}
-				if pageId == 6 {
-					if !sbit {
-						fmt.Printf("Deserialised PIN leaf key %s, pageId %d\n", l.key, pageId)
-					} else {
-						fmt.Printf("Deserialised leaf key %s, pageId %d\n", l.key, pageId)
-					}
 				}
 				r = l
 			}
@@ -2072,7 +2012,6 @@ func (t *Avl3) deserialisePage(pageId PageID, key []byte, height uint32, treeInd
 		for i := 0; i < stackTop; i++ {
 			modRefs = append(modRefs, forkStack[i])
 		}
-		fmt.Printf("Deserialised page %d, got %d refs\n", pageId, len(modRefs))
 		if len(modRefs) > 0 {
 			t.modifiedPages[pageId] = modRefs
 		}

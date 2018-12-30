@@ -188,7 +188,7 @@ func (cc *ChainContext) Close() error {
 }
 
 type MorusDb struct {
-	db *avl.Avl2
+	db *avl.Avl3
 	codeDb *bolt.DB
 	preDb  *bolt.DB
 	addrDb *bolt.DB
@@ -201,7 +201,7 @@ type MorusDb struct {
 }
 
 func NewMorusDb(datadir string, hashlen int) *MorusDb {
-	db := avl.NewAvl2()
+	db := avl.NewAvl3()
 	db.SetHashLength(uint32(hashlen))
 	pagefile := filepath.Join(datadir, "pages")
 	valuefile := filepath.Join(datadir, "values")
@@ -962,6 +962,6 @@ func avltest() {
 
 func main() {
 	flag.Parse()
-	//loadAll()
-	avltest()
+	loadAll()
+	//avltest()
 }
