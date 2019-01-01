@@ -432,13 +432,13 @@ func TestInsertDeleteRandom2Commits(t *testing.T) {
 }
 
 func TestInsertDeleteRandom3Commits(t *testing.T) {
-	source := rand.NewSource(5869374758495600644)
+	source := rand.NewSource(5693747584943356006)
 	r := rand.New(source)
 	tr := NewAvl3()
 	var keys [][]byte
 	var values [][]byte
 	deleted := make(map[string]struct{})
-	for i := 0; i < 100000; i++ {
+	for i := 0; i < 1000000; i++ {
 		if i == 2040 {
 			tr.SetTracing(true)
 		}

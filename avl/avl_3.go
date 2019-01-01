@@ -60,7 +60,7 @@ func (t *Avl3) SetCompare(c func([]byte, []byte) int) {
 	t.compare = c
 }
 
-func (t *Avl3) walkToArrowPoint(r Ref3, key []byte, height uint32) (point Ref3, found bool) {
+func (t *Avl3) walkToArrowPoint(r Ref3, key []byte, height uint32) (point Ref3, found bool, err error) {
 	if t.trace {
 		fmt.Printf("walkToArrowPoint arrow: %s %d, key: %s %d\n", r.getmax(), r.getheight(), key, height)
 	}
@@ -68,18 +68,18 @@ func (t *Avl3) walkToArrowPoint(r Ref3, key []byte, height uint32) (point Ref3, 
 	for {
 		switch n := current.(type) {
 		case nil:
-			return nil, false
+			return nil, false, nil
 		case *Leaf3:
 			if height != 1 || !bytes.Equal(key, n.key) {
-				return nil, false
+				return nil, false, nil
 			}
-			return n, true
+			return n, true, nil
 		case *Fork3:
 			if t.trace {
 				fmt.Printf("walkToArrowPoint(Fork3) %s %d, key %s %d\n", n.max, n.height, key, height)
 			}
 			if n.height < height {
-				return nil, false
+				return nil, false, nil
 			} else if n.height > height {
 				switch t.compare(key, n.left.getmax()) {
 				case -1, 0:
@@ -89,12 +89,12 @@ func (t *Avl3) walkToArrowPoint(r Ref3, key []byte, height uint32) (point Ref3, 
 				}
 			} else {
 				if !bytes.Equal(key, n.max) {
-					return nil, false
+					return nil, false, nil
 				}
-				return n, true
+				return n, true, nil
 			}
 		case *Arrow3:
-			panic(fmt.Errorf("Arrow3 P.%d with height %d max %s, expected height %d key %s", n.pageId, n.height, n.max, height, key))
+			return nil, false, fmt.Errorf("Arrow3 P.%d with height %d max %x, expected height %d key %x", n.pageId, n.height, n.max, height, key)
 		}
 	}
 }
@@ -1265,6 +1265,9 @@ func (t *Avl3) Commit() uint64 {
 			_, repinned := t.repinnedPages[pageId]
 			if !pinned && !repinned {
 				// Only release the page it if has not been repinned
+				if pageId == 2050161 {
+					fmt.Printf("Commit relesed page %d\n", pageId)
+				}
 				t.freePageId(pageId)
 			}
 		}
@@ -1437,6 +1440,9 @@ func (t *Avl3) commitPage(c *PageContainer) {
 		}
 		t.serialisePass2(r, c.pageId, data, len(c.f.prefix), false, pageBitsOffset, structBitsOffset,
 			&nodeIndex, &structBit, &keyHeaderOffset, &arrowHeaderOffset, &valueHeaderOffset, &keyBodyOffset, &valBodyOffset)
+	}
+	if c.pageId == 2050161 {
+		fmt.Printf("Commited page %d with %d refs\n", c.pageId, len(c.f.refs))
 	}
 	// end key offset
 	if trace {
@@ -1832,13 +1838,21 @@ func (t *Avl3) deserialiseVal(data []byte, valueHeaderOffset, valBodyOffset *uin
 	return
 }
 
-func (t *Avl3) returnModPage(pageId PageID, modRefs []Ref3, key []byte, height uint32) Ref3 {
+func (t *Avl3) returnModPage(pageId PageID, modRefs []Ref3, key []byte, height uint32, releaseRef bool) Ref3 {
 	for i, r := range modRefs {
-		if point, found := t.walkToArrowPoint(r, key, height); found {
+		if point, found, err := t.walkToArrowPoint(r, key, height); found {
 			// Release reference if requested
-			modRefs = append(modRefs[:i], modRefs[i+1:]...)
-			t.modifiedPages[pageId] = modRefs
+			if releaseRef {
+				modRefs = append(modRefs[:i], modRefs[i+1:]...)
+				t.modifiedPages[pageId] = modRefs
+				if pageId == 2050161 {
+					fmt.Printf("returnModPage, released ref on page %d, left refs: %d\n", pageId, len(modRefs))
+				}
+			}
 			return point
+		} else if err != nil {
+			//fmt.Printf("pageId: %d\n", pageId)
+			//panic(err)
 		}
 	}
 	return nil
@@ -1849,11 +1863,12 @@ func (t *Avl3) deserialisePage(pageId PageID, key []byte, height uint32, treeInd
 	if trace {
 		fmt.Printf("Deserialising page %d %s %d\n", pageId, key, height)
 	}
-	if releaseRef {
-		modRefs, modPageFound := t.modifiedPages[pageId]
-		if modPageFound {
-			return t.returnModPage(pageId, modRefs, key, height)
-		}
+	if pageId == 2050161 {
+		fmt.Printf("deserialisePage on page %d, key %x, height %d, releaseRef %t\n", pageId, key, height, releaseRef)
+	}
+	modRefs, modPageFound := t.modifiedPages[pageId]
+	if modPageFound {
+		return t.returnModPage(pageId, modRefs, key, height, releaseRef)
 	}
 	var data []byte
 	if t.pageFile != nil {
@@ -2015,7 +2030,7 @@ func (t *Avl3) deserialisePage(pageId PageID, key []byte, height uint32, treeInd
 		if len(modRefs) > 0 {
 			t.modifiedPages[pageId] = modRefs
 		}
-		return t.returnModPage(pageId, modRefs, key, height)
+		return t.returnModPage(pageId, modRefs, key, height, releaseRef)
 	}
 	if key == nil && height == 0 && point == nil {
 		point = forkStack[treeIndex]
