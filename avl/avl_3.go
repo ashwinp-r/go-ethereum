@@ -31,6 +31,13 @@ type Avl3 struct {
 	repinnedPages map[PageID]struct{} // set of pages that have been repinned to prevRoot, and cannot be released
 	commitedCounter uint64
 	pageSpace uint64
+	solidAlloc uint64
+	solidUsed uint64
+	solidRefs map[int]int // Number of pages with certain number of refs
+	solidTreeSizes map[uint32]int // Number of trees of certain size
+	solidPinned int
+	solidDistinct int
+	solidFree int
 	pageFile, valueFile, verFile *os.File
 	hashLength uint32
 	compare func([]byte, []byte) int
@@ -50,6 +57,8 @@ func NewAvl3() *Avl3 {
 		versions: make(map[Version]Version3),
 		modifiedPages: make(map[PageID][]Ref3),
 		repinnedPages: make(map[PageID]struct{}),
+		solidRefs: make(map[int]int),
+		solidTreeSizes: make(map[uint32]int),
 	}
 	t.hashLength = 32
 	t.compare = bytes.Compare
@@ -1151,10 +1160,10 @@ func (buffer *CommitBuffer) Pack(t *Avl3, mutating bool) []*PageContainer {
 		pageContainers.AscendGreaterOrEqual(&PageContainer{space: i.size - 12}, func(y llrb.Item) bool {
 			c := y.(*PageContainer)
 			if mutating {
-				if c.pageId != PageID(0) {
+				if c.pageId != 0 {
 					if _, ok := i.tree.pinnedChildren[c.pageId]; !ok {
 						// Item is not predecessor of the pageId, so they cannot be combined in the same page
-						return false
+						return true
 					}
 				}
 			}
@@ -1333,7 +1342,7 @@ func (t *Avl3) Commit() uint64 {
 	}
 	// Commit
 	for _, c := range containers {
-		t.commitPage(c)
+		t.commitPage(c, false)
 	}
 
 	//currentId := t.commitPage(t.root, &buffer, prefix, keyCount, pageCount, keyBodySize, valBodySize, structBits, pinnedPageId)
@@ -1350,6 +1359,9 @@ func (t *Avl3) Commit() uint64 {
 		} else {
 			buffer.distinct = append(buffer.distinct, tree)
 		}
+		t.solidPinned += len(buffer.pinned)
+		t.solidDistinct += len(buffer.distinct)
+		t.solidFree += len(buffer.free)
 		containers := buffer.Pack(t, false /*mutating*/)
 		var prevRootPageId PageID
 		var prevRootTree uint32
@@ -1373,7 +1385,7 @@ func (t *Avl3) Commit() uint64 {
 		}
 		// Commit
 		for _, c := range containers {
-			t.commitPage(c)
+			t.commitPage(c, true)
 		}
 		//prevId := t.commitPage(t.prevRoot, &buffer, prefix, keyCount, pageCount, keyBodySize, valBodySize, structBits, pinnedPageId)
 		t.versions[t.currentVersion] = Version3{pageId: prevRootPageId, treeIndex: prevRootTree}
@@ -1398,7 +1410,7 @@ func (t *Avl3) Commit() uint64 {
 	return t.commitedCounter - startCounter
 }
 
-func (t *Avl3) commitPage(c *PageContainer) {
+func (t *Avl3) commitPage(c *PageContainer, solid bool) {
 	trace := t.trace
 	nodeCount := c.f.leafCount + c.f.arrowCount
 	size := PageSize - c.space
@@ -1469,6 +1481,14 @@ func (t *Avl3) commitPage(c *PageContainer) {
 	}
 	t.commitedCounter++
 	t.pageSpace += uint64(size)
+	if solid {
+		t.solidUsed += uint64(size)
+		t.solidAlloc += uint64(PageSize)
+		t.solidRefs[len(c.f.refs)]++
+		if len(c.f.refs) == 1 {
+			t.solidTreeSizes[256*(size/256)]++
+		}
+	}
 }
 
 // Computes all the dynamic parameters that allow calculation of the page length and pre-allocation of all buffers
@@ -1483,7 +1503,7 @@ func (l *Leaf3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 	}
 	tree.structBits = 1 // one bit per leaf
 	tree.prefix = l.key
-	if l.pinnedPageId != PageID(0) {
+	if l.pinnedPageId != 0 {
 		// Old pin
 		tree.pageId = l.pinnedPageId
 		tree.pinned = true
@@ -1504,11 +1524,13 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 		// Old pin
 		tree.pageId = f.pinnedPageId
 		tree.pinned = true
+		tree.pinnedChildren[tree.pageId] = struct{}{}
 	} else if f.arrow != nil {
 		// New pin
 		buffer.nextDistinctId++
 		tree.pageId = buffer.nextDistinctId
 		tree.pinned = false
+		tree.pinnedChildren[tree.pageId] = struct{}{}
 	}
 
 	treeL := f.left.prepare(t, buffer)
@@ -1551,9 +1573,6 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 		if sizeLFR < PageSize {
 			tree.pageId = mergePageId
 			tree.pinned = mergePinned
-			if tree.pageId != PageID(0) {
-				tree.pinnedChildren[tree.pageId] = struct{}{}
-			}
 			return
 		}
 	}
@@ -1602,9 +1621,6 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 		if mergableR && sizeFR < PageSize {
 			tree.pageId = mergePageId
 			tree.pinned = mergePinned
-			if tree.pageId != PageID(0) {
-				tree.pinnedChildren[tree.pageId] = struct{}{}
-			}
 			return
 		} else {
 			// Have to commit right child too
@@ -1630,9 +1646,6 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 			tree.keyBodySize = uint32(len(lArrow.max))+uint32(len(rArrow.max))
 			tree.valBodySize = 0
 			tree.structBits = 4 /* 2 bits for arrows, 2 for the fork */
-			if tree.pageId != PageID(0) {
-				tree.pinnedChildren[tree.pageId] = struct{}{}
-			}
 			return
 		}
 	} else {
@@ -1678,9 +1691,6 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 		if mergableL && sizeFL < PageSize {
 			tree.pageId = mergePageId
 			tree.pinned = mergePinned
-			if tree.pageId != PageID(0) {
-				tree.pinnedChildren[tree.pageId] = struct{}{}
-			}
 			return
 		} else {
 			// Have to commit left child too
@@ -1707,9 +1717,6 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 			tree.keyBodySize = uint32(len(lArrow.max))+uint32(len(rArrow.max))
 			tree.valBodySize = 0
 			tree.structBits = 4 /* 2 bits for arrows, 2 for the fork */
-			if tree.pageId != PageID(0) {
-				tree.pinnedChildren[tree.pageId] = struct{}{}
-			}
 			return
 		}
 	}
@@ -2111,13 +2118,14 @@ func (t *Avl3) PrintStats() {
 	}
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	fmt.Printf("Total pages: %d, Mb %0.3f, page space: Mb %0.3f large vals: %d, Mb %0.3f, mem alloc %0.3fMb, sys %0.3fMb\n",
+	fmt.Printf("Total pages: %d, Mb %0.3f, page space: Mb %0.3f, solid used: Mb %0.3f, solid allocs: Mb %0.3f, mem alloc %0.3fMb, sys %0.3fMb\n",
 		t.maxPageId,
 		float64(t.maxPageId)*float64(PageSize)/1024.0/1024.0,
 		float64(t.pageSpace)/1024.0/1024.0,
-		len(t.valueLens),
-		float64(totalValueLens)/1024.0/1024.0,
+		float64(t.solidUsed)/1024.0/1024.0,
+		float64(t.solidAlloc)/1024.0/1024.0,
 		float64(m.Alloc)/1024.0/1024.0,
 		float64(m.Alloc)/1024.0/1024.0,
 		)
+	fmt.Printf("Solid refs: %v, solid tree sizes: %v, pinned: %d, distinct: %d, free: %d\n", t.solidRefs, t.solidTreeSizes, t.solidPinned, t.solidDistinct, t.solidFree)
 }
