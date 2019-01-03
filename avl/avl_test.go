@@ -440,7 +440,7 @@ func TestInsertDeleteRandom3Commits(t *testing.T) {
 	deleted := make(map[string]struct{})
 	for i := 0; i < 1000000; i++ {
 		if i == 2040 {
-			tr.SetTracing(true)
+			//tr.SetTracing(true)
 		}
 		key := randChars(r, 16)
 		value := randChars(r, 32)
@@ -457,7 +457,7 @@ func TestInsertDeleteRandom3Commits(t *testing.T) {
 			tr.Commit()
 		}
 		if i == 2040 {
-			tr.SetTracing(false)
+			//tr.SetTracing(false)
 		}
 		if tr.root != nil && i < 10000 {
 			if _, ok := tr.root.heightsCorrect(""); !ok {
