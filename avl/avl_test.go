@@ -469,7 +469,9 @@ func TestInsertDeleteRandom3Commits(t *testing.T) {
 				break
 			}
 		}
-		fmt.Printf("Completed step %d\n", i)
+		if i % 1000 == 0 {
+			fmt.Printf("Completed step %d\n", i)
+		}
 	}
 	if _, ok := tr.root.heightsCorrect(""); !ok {
 		t.Errorf("height fields are incorrect")
