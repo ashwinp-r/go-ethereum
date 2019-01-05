@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"github.com/petar/GoLLRB/llrb"
+	lru "github.com/hashicorp/golang-lru"
 )
 
 // AVL+ organised into pages, with history
@@ -40,6 +41,7 @@ type Avl3 struct {
 	pageFile, valueFile, verFile *os.File
 	hashLength uint32
 	compare func([]byte, []byte) int
+	pageCache *lru.Cache
 }
 
 type ModPage struct {
@@ -66,6 +68,11 @@ func NewAvl3() *Avl3 {
 	}
 	t.hashLength = 32
 	t.compare = bytes.Compare
+	var err error
+	t.pageCache, err = lru.New(1000000)
+	if err != nil {
+		panic(err)
+	}
 	return t
 }
 
@@ -1709,10 +1716,13 @@ func (t *Avl3) commitPage(c *PageContainer, solid bool) {
 		} else {
 			chunk = remaining
 		}
+		dc := make([]byte, chunk)
+		copy(dc[:], data[chunkOffset:chunkOffset+chunk])
 		if t.pageFile != nil {
-			t.pageFile.WriteAt(data[chunkOffset:chunkOffset+chunk], int64(pageIds[idx])*int64(PageSize))
+			t.pageFile.WriteAt(dc, int64(pageIds[idx])*int64(PageSize))
+			t.pageCache.Add(pageIds[idx], dc)
 		} else {
-			t.pageMap[pageIds[idx]] = data[chunkOffset:chunkOffset+chunk]
+			t.pageMap[pageIds[idx]] = dc
 		}
 		t.commitedCounter++
 		remaining -= chunk
@@ -2126,9 +2136,16 @@ func (t *Avl3) deserialisePage(pageId PageID, key []byte, height uint32, treeInd
 	}
 	var data []byte
 	if t.pageFile != nil {
-		data = make([]byte, PageSize)
-		if _, err := t.pageFile.ReadAt(data, int64(pageId)*int64(PageSize)); err != nil && err != io.EOF {
-			panic(err)
+		if cached, ok := t.pageCache.Get(pageId); ok {
+			data = cached.([]byte)
+		} else {
+			data = make([]byte, PageSize)
+			if _, err := t.pageFile.ReadAt(data, int64(pageId)*int64(PageSize)); err != nil && err != io.EOF {
+				panic(err)
+			}
+			if data != nil {
+				t.pageCache.Add(pageId, data)
+			}
 		}
 	} else {
 		data = t.pageMap[pageId]

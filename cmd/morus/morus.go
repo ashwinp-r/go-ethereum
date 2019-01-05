@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 	"syscall"
+	"runtime/pprof"
 
 	"github.com/boltdb/bolt"
 	lru "github.com/hashicorp/golang-lru"
@@ -962,6 +963,18 @@ func avltest() {
 
 func main() {
 	flag.Parse()
-	loadAll()
+    if *cpuprofile != "" {
+        f, err := os.Create(*cpuprofile)
+        if err != nil {
+            fmt.Printf("could not create CPU profile: %v\n", err)
+            return
+        }
+        if err := pprof.StartCPUProfile(f); err != nil {
+            fmt.Printf("could not start CPU profile: %v\n", err)
+            return
+        }
+        defer pprof.StopCPUProfile()
+    }
+    loadAll()
 	//avltest()
 }
