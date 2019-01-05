@@ -1353,6 +1353,7 @@ func (buffer *CommitBuffer) Pack(t *Avl3, mutating bool) []*PageContainer {
 		var newContainer *PageContainer
 		pageContainers.AscendGreaterOrEqual(&PageContainer{size: PageSize - (i.size - 12)}, func(y llrb.Item) bool {
 			c := y.(*PageContainer)
+			/*
 			if mutating {
 				if c.pageId != 0 {
 					if _, ok := i.tree.pinnedChildren[c.pageId]; !ok {
@@ -1364,6 +1365,7 @@ func (buffer *CommitBuffer) Pack(t *Avl3, mutating bool) []*PageContainer {
 					}
 				}
 			}
+			*/
 			cLeafCount := i.tree.leafCount + c.f.leafCount
 			cArrowCount := i.tree.arrowCount + c.f.arrowCount
 			cKeyBodySize := i.tree.keyBodySize + c.f.keyBodySize
@@ -1721,9 +1723,7 @@ func (t *Avl3) commitPage(c *PageContainer, solid bool) {
 		t.solidUsed += uint64(c.size)
 		t.solidAlloc += uint64((1+c.extensions)*PageSize)
 		t.solidRefs[len(c.f.refs)]++
-		if len(c.f.refs) == 1 {
-			t.solidTreeSizes[256*(c.size/256)]++
-		}
+		t.solidTreeSizes[256*(c.size/256)]++
 	}
 }
 
