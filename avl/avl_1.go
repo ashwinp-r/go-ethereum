@@ -1046,6 +1046,9 @@ func commonPrefix(p1, p2 []byte) []byte {
 	if p2 == nil {
 		return p1
 	}
+	if p1 == nil {
+		return p2
+	}
 	var i int
 	for i = 0; i < len(p1) && i < len(p2) && p1[i] == p2[i]; i++ {}
 	return p1[:i]

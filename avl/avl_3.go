@@ -17,6 +17,7 @@ import (
 
 type Avl3 struct {
 	currentVersion Version
+	lastFlushed    Version
 	trace bool
 	maxPageId PageID
 	pageMap map[PageID][]byte // Pages by pageId
@@ -42,6 +43,8 @@ type Avl3 struct {
 	hashLength uint32
 	compare func([]byte, []byte) int
 	pageCache *lru.Cache
+	pageCacheHits, pageCacheMisses int
+	commitMap map[PageID][]byte
 }
 
 type ModPage struct {
@@ -65,11 +68,12 @@ func NewAvl3() *Avl3 {
 		repinnedPages: make(map[PageID]struct{}),
 		solidRefs: make(map[int]int),
 		solidTreeSizes: make(map[uint32]int),
+		commitMap: make(map[PageID][]byte),
 	}
 	t.hashLength = 32
 	t.compare = bytes.Compare
 	var err error
-	t.pageCache, err = lru.New(1000000)
+	t.pageCache, err = lru.New(500000)
 	if err != nil {
 		panic(err)
 	}
@@ -166,6 +170,7 @@ func (t *Avl3) UseFiles(pageFileName, valueFileName, verFileName string, read bo
 }
 
 func (t *Avl3) Close() {
+	t.checkFlush(true)
 	if t.pageFile != nil {
 		t.pageFile.Close()
 	}
@@ -222,7 +227,7 @@ type Ref3 interface {
 	dot(*Avl3, *graphContext, string)
 	heightsCorrect(path string) (uint32, bool)
 	balanceCorrect() bool
-	prepare(t *Avl3, buffer *CommitBuffer) Tree3
+	prepare(t *Avl3, buffer *CommitBuffer, splitPages bool) Tree3
 }
 
 func (t *Avl3) nextPageId() PageID {
@@ -461,7 +466,7 @@ func (t *Avl3) moveArrowOverFork(a *Arrow3, f *Fork3, repinned map[PageID]struct
 	// That causes the pinned node to get unpinned in the current state, but pinned in the previous
 	// state.
 	if f.pinnedPageId != 0 {
-		if f.pinnedPageId == 2373 {
+		if f.pinnedPageId == 167 {
 			fmt.Printf("Repinned page from fork %d\n", f.pinnedPageId)
 		}
 		fork.pinnedPageId = f.pinnedPageId
@@ -490,7 +495,7 @@ func (t *Avl3) moveArrowOverLeaf(a *Arrow3, l *Leaf3, repinned map[PageID]struct
 	}
 	l.arrow = nil
 	if l.pinnedPageId != 0 {
-		if l.pinnedPageId == 2373 {
+		if l.pinnedPageId == 167 {
 			fmt.Printf("Repinned page from leaf %d\n", l.pinnedPageId)
 		}
 		leaf.pinnedPageId = l.pinnedPageId
@@ -503,7 +508,7 @@ func (t *Avl3) moveArrowOverLeaf(a *Arrow3, l *Leaf3, repinned map[PageID]struct
 // Peels all the nodes pinned to specified page
 func (t *Avl3) peelAllPinned(pageId PageID) {
 	repinned := make(map[PageID]struct{})
-	trace := pageId == 2373
+	trace := pageId == 167
 	if trace {
 		fmt.Printf("peelAllPinned(%d)\n", pageId)
 	}
@@ -570,7 +575,7 @@ func (t *Avl3) peelAllPinned(pageId PageID) {
 					break loop
 				}
 			case *Arrow3:
-				if trace || n.pageId == 2373 {
+				if trace || n.pageId == 167 {
 					fmt.Printf("peelAllPinned arrow P.%d, %x %d for %d\n", n.pageId, n.max, n.height, pageId)
 				}
 				point := t.deserialisePage(n.pageId, n.max, n.height, 0, true)
@@ -608,7 +613,7 @@ func (t *Avl3) peelAllPinned(pageId PageID) {
 
 // Opens (removes arrows from the root to the given reference)
 func (t *Avl3) openTo(r Ref3, pageId PageID) {
-	trace := pageId == 2373
+	trace := pageId == 167
 	key := r.nkey()
 	height := r.getheight()
 	current := t.root
@@ -641,7 +646,7 @@ func (t *Avl3) openTo(r Ref3, pageId PageID) {
 			}
 		case *Arrow3:
 			point := t.deserialisePage(n.pageId, n.max, n.height, 0, true)
-			if n.pageId == 2373 {
+			if n.pageId == 167 {
 				fmt.Printf("openTo: Arrow P.%d, %x %d\n", n.pageId, n.max, n.height)
 			}
 			if point == nil {
@@ -1225,7 +1230,6 @@ type Tree3 struct {
 	keyBodySize, valBodySize, structBits uint32
 	pageId PageID
 	pinned bool
-	pinnedChildren map[PageID]struct{} // Set of pageId that are pinned in the children of this tree
 }
 
 func (tree Tree3) ToForest() Forest3 {
@@ -1281,6 +1285,48 @@ func (a *PageContainer) Less(b llrb.Item) bool {
 	return a.size > bi.size
 }
 
+func detectMergable(pageId PageID, r Ref3) {
+	switch n := r.(type) {
+	case *Fork3:
+		detectMergable(pageId, n.left)
+		detectMergable(pageId, n.right)
+	case *Arrow3:
+		if n.pageId == pageId {
+			panic(fmt.Sprintf("Detected mergeable arrow in page %d: %x %d\n", n.pageId, n.max, n.height))
+		}
+	}
+}
+
+func merge(prev *Fork3, prevC int, r Ref3, arrowMap map[string]map[uint32]Ref3) {
+	switch n := r.(type) {
+	case *Fork3:
+		merge(n, -1, n.left, arrowMap)
+		merge(n, 1, n.right, arrowMap)
+	case *Arrow3:
+		if a, ok1 := arrowMap[string(n.max)]; ok1 {
+			if b, ok2 := a[n.height]; ok2 {
+				if prev == nil {
+					panic("")
+				} else if prevC == -1 {
+					prev.left = b
+				} else if prevC == 1 {
+					prev.right = b
+				}
+				delete(a, n.height)
+			}
+			if len(a) == 0 {
+				delete(arrowMap, string(n.max))
+			}
+		}
+	}
+}
+
+func (c *PageContainer) DetectMergable() {
+	for _, r := range c.f.refs {
+		detectMergable(c.pageId, r)
+	}
+}
+
 type TreeItem struct {
 	tree Tree3
 	size uint32 // Size of the item
@@ -1291,10 +1337,11 @@ func (a *TreeItem) Less(b llrb.Item) bool {
 	return a.size < bi.size
 }
 
-func (buffer *CommitBuffer) AddPinnedForest(t *Avl3, pageId PageID, newForest Forest3) {
+func (buffer *CommitBuffer) AddPinnedTree(t *Avl3, pageId PageID, tree Tree3) {
 	oldForest, ok := buffer.pinned[pageId]
 	if ok {
-		 forest := Forest3 {
+		newForest := tree.ToForest()
+		forest := Forest3 {
 			refs: append(oldForest.refs, newForest.refs...),
 			arrows: append(oldForest.arrows, newForest.arrows...),
 			prefix: commonPrefix(oldForest.prefix, newForest.prefix),
@@ -1304,10 +1351,12 @@ func (buffer *CommitBuffer) AddPinnedForest(t *Avl3, pageId PageID, newForest Fo
 			valBodySize: oldForest.valBodySize + newForest.valBodySize,
 			structBits: oldForest.structBits + newForest.structBits + 1,
 		}
+		forest, size, _ := t.mergeForest(forest, pageId)
 		buffer.pinned[pageId] = forest
-		size, _ := t.pageSize3(forest.leafCount, forest.arrowCount, forest.keyBodySize, forest.valBodySize, forest.structBits, forest.prefix)
+		//size, _ := t.pageSize3(forest.leafCount, forest.arrowCount, forest.keyBodySize, forest.valBodySize, forest.structBits, forest.prefix)
 		buffer.pinnedSizes[pageId] = size
 	} else {
+		newForest := tree.ToForest()
 		buffer.pinned[pageId] = newForest
 		size, _ := t.pageSize3(newForest.leafCount, newForest.arrowCount, newForest.keyBodySize, newForest.valBodySize, newForest.structBits, newForest.prefix)
 		buffer.pinnedSizes[pageId] = size
@@ -1341,6 +1390,9 @@ func (buffer *CommitBuffer) Pack(t *Avl3, mutating bool) []*PageContainer {
 			forest.structBits,
 			forest.prefix,
 		)
+		if container.pageId == 167 {
+			fmt.Printf("Container %d size is %d\n", container.pageId, container.size)
+		}
 		nextTieBreaker++
 		pageContainers.InsertNoReplace(container)
 	}
@@ -1360,19 +1412,6 @@ func (buffer *CommitBuffer) Pack(t *Avl3, mutating bool) []*PageContainer {
 		var newContainer *PageContainer
 		pageContainers.AscendGreaterOrEqual(&PageContainer{size: PageSize - (i.size - 12)}, func(y llrb.Item) bool {
 			c := y.(*PageContainer)
-			/*
-			if mutating {
-				if c.pageId != 0 {
-					if _, ok := i.tree.pinnedChildren[c.pageId]; !ok {
-						// Item is not predecessor of the pageId, so they cannot be combined in the same page
-						return true
-					}
-					if c.pageId == 2373 {
-						fmt.Printf("Joining page %d\n", c.pageId)
-					}
-				}
-			}
-			*/
 			cLeafCount := i.tree.leafCount + c.f.leafCount
 			cArrowCount := i.tree.arrowCount + c.f.arrowCount
 			cKeyBodySize := i.tree.keyBodySize + c.f.keyBodySize
@@ -1381,6 +1420,9 @@ func (buffer *CommitBuffer) Pack(t *Avl3, mutating bool) []*PageContainer {
 			cPrefix := commonPrefix(i.tree.prefix, c.f.prefix)
 			cSize, cExt := t.pageSize3(cLeafCount, cArrowCount, cKeyBodySize, cValBodySize, cStructBits, cPrefix)
 			if cSize <= PageSize {
+				if c.pageId == 167 {
+					fmt.Printf("Container %d size is %d after packing\n", c.pageId, cSize)
+				}
 				oldContainer = c
 				arrows := c.f.arrows
 				if i.tree.arrow != nil {
@@ -1435,6 +1477,7 @@ func (buffer *CommitBuffer) Pack(t *Avl3, mutating bool) []*PageContainer {
 	i := 0
 	pageContainers.DescendLessOrEqual(pageContainers.Max(), func(y llrb.Item) bool {
 		c := y.(*PageContainer)
+		c.f, c.size, c.extensions = t.mergeForest(c.f, c.pageId)
 		sort.Sort(c.f)
 		containers[i] = c
 		i++
@@ -1455,6 +1498,86 @@ func (p PageIDs) Swap(i, j int) {
 	p[i], p[j] = p[j], p[i]
 }
 
+func (t *Avl3) mergeForest(p Forest3, pageId PageID) (Forest3, uint32, uint32) {
+	arrowMap := make(map[string]map[uint32]Ref3)
+	for _, r := range p.refs {
+		//if arrow, ok := r.(*Arrow3); ok && arrow.pageId == pageId {
+		//	fmt.Printf("Remove useless arrow from page %d\n", pageId)
+		//	p.refs[i] = nil
+		//} else {
+			if a, ok1 := arrowMap[string(r.getmax())]; ok1 {
+				a[r.getheight()] = r
+			} else {
+				b := make(map[uint32]Ref3)
+				b[r.getheight()] = r
+				arrowMap[string(r.getmax())] = b
+			}
+		//}
+	}
+	for _, r := range p.refs {
+		if r == nil {
+			continue
+		}
+		merge(nil, 0, r, arrowMap)
+	}
+	// Recreate list of references that weren't merged
+	p.refs = []Ref3{}
+	var cLeafCount, cArrowCount, cKeyBodySize, cValBodySize, cStructBits uint32
+	var cPrefix []byte
+	idx := 0
+	for _, a := range arrowMap {
+		for _, b := range a {
+			tree := b.prepare(t, nil, false)
+			cLeafCount += tree.leafCount
+			cArrowCount += tree.arrowCount
+			cKeyBodySize += tree.keyBodySize
+			cValBodySize += tree.valBodySize
+			if idx == 0 {
+				cStructBits = tree.structBits
+			} else {
+				cStructBits += tree.structBits + 1 // extra structBit for separator
+			}
+			cPrefix = commonPrefix(cPrefix, tree.prefix)
+			p.refs = append(p.refs, b)
+			idx++
+		}
+	}
+	if pageId == 167 {
+		if p.leafCount != cLeafCount {
+			fmt.Printf("For page %d, p.leafCount (%d) != cLeafCount (%d)\n", pageId, p.leafCount, cLeafCount)
+		}
+		if p.arrowCount != cArrowCount {
+			fmt.Printf("For page %d, p.arrowCount (%d) != cArrowCount (%d)\n", pageId, p.arrowCount, cArrowCount)
+		}
+		if p.keyBodySize != cKeyBodySize {
+			fmt.Printf("For page %d, p.keyBodySize (%d) != cKeyBodySize (%d)\n", pageId, p.keyBodySize, cKeyBodySize)
+		}
+		if p.valBodySize != cValBodySize {
+			fmt.Printf("For page %d, p.valBodySize (%d) != cValBodySize (%d)\n", pageId, p.valBodySize, cValBodySize)
+		}
+		if p.structBits != cStructBits {
+			fmt.Printf("For page %d, p.structBits (%d) != cStructBits (%d)\n", pageId, p.structBits, cStructBits)
+		}
+		if !bytes.Equal(p.prefix, cPrefix) {
+			fmt.Printf("For page %d, p.prefix (%x) != cPrefix (%x)\n", pageId, p.prefix, cPrefix)
+		}
+	}
+	p.leafCount = cLeafCount
+	p.arrowCount = cArrowCount
+	p.keyBodySize = cKeyBodySize
+	p.valBodySize = cValBodySize
+	p.structBits = cStructBits
+	p.prefix = cPrefix
+	size, extensions := t.pageSize3(cLeafCount, cArrowCount, cKeyBodySize, cValBodySize, cStructBits, cPrefix)
+	if pageId == 167 {
+		fmt.Printf("Pinned refs on page %d after merging: %d\n", pageId, len(p.refs))
+	}
+	if pageId == 167 {
+		fmt.Printf("Size of page %d after merging: %d\n", pageId, size)
+	}
+	return p, size, extensions
+}
+
 // Split current buffer into pages and commit them
 func (t *Avl3) Commit() uint64 {
 	if t.root == nil {
@@ -1468,7 +1591,7 @@ func (t *Avl3) Commit() uint64 {
 	for !allDone {
 		allDone = true
 		for pageId, modPage := range t.modifiedPages {
-			if pageId == 2373 {
+			if pageId == 167 {
 				fmt.Printf("To open %d refs for page %d\n", len(modPage.roots), pageId)
 			}
 			for _, r := range modPage.roots {
@@ -1477,59 +1600,35 @@ func (t *Avl3) Commit() uint64 {
 			}
 		}
 	}
-	tree := t.root.prepare(t, &buffer)
+	tree := t.root.prepare(t, &buffer, true)
 	tree.ref = t.root
 	if tree.pinned {
-		buffer.AddPinnedForest(t, tree.pageId, tree.ToForest())
+		buffer.AddPinnedTree(t, tree.pageId, tree)
 	} else {
 		buffer.free = append(buffer.free, tree)
 	}
-	if tree.pageId == 2373 {
+	if tree.pageId == 167 {
 		fmt.Printf("tree.pageId %d\n", tree.pageId)
 	}
-	pageIds := make(PageIDs, len(t.modifiedPages))
-	idx := 0
 	for pageId, _ := range t.modifiedPages {
-		pageIds[idx] = pageId
-		idx++
-	}
-	sort.Sort(pageIds)
-	for _, pageId := range pageIds {
-		modRefs := t.modifiedPages[pageId].roots
-		if len(modRefs) == 0 {
-			delete(t.modifiedPages, pageId)
-			_, pinned := buffer.pinned[pageId]
-			if pinned && pageId == 2373 {
-				fmt.Printf("Commit page %d, still pinned: %d\n", pageId, len(buffer.pinned[pageId].refs))
+		_, pinned := buffer.pinned[pageId]
+		if pinned && pageId == 167 {
+			fmt.Printf("Commit page %d, still pinned: %d\n", pageId, len(buffer.pinned[pageId].refs))
+			/*
+			for _, r := range buffer.pinned[pageId].refs {
+				detectMergable(pageId, r)
 			}
-			_, repinned := t.repinnedPages[pageId]
-			if !pinned && !repinned {
-				// Only release the page it if has not been repinned
-				if pageId == 2373 {
-					fmt.Printf("Commit released page %d\n", pageId)
-				}
-				t.freePageId(pageId)
-			}
+			*/
 		}
-	}
-	pageIds = make(PageIDs, len(t.modifiedPages))
-	idx = 0
-	for pageId, _ := range t.modifiedPages {
-		pageIds[idx] = pageId
-		idx++
-	}
-	sort.Sort(pageIds)
-	for _, pageId := range pageIds {
-		modRefs := t.modifiedPages[pageId].roots
-		for _, r := range modRefs {
-			// Check if this reference is pinned
-			tree := r.prepare(t, &buffer)
-			tree.ref = r
-			if tree.pinned {
-				buffer.AddPinnedForest(t, tree.pageId, tree.ToForest())
-			} else {
-				buffer.free = append(buffer.free, tree)
+		_, repinned := t.repinnedPages[pageId]
+		if !pinned && !repinned {
+			// Only release the page it if has not been repinned
+			if pageId == 167 {
+				fmt.Printf("Commit released page %d\n", pageId)
 			}
+			t.freePageId(pageId)
+		} else {
+			//fmt.Printf("Commit could not release page %d, pinned: %t, repinned: %t\n", pageId, pinned, repinned)
 		}
 	}
 	t.modifiedPages = make(map[PageID]*ModPage)
@@ -1558,18 +1657,18 @@ func (t *Avl3) Commit() uint64 {
 	// Commit
 	//fmt.Printf("Committing root\n")
 	for _, c := range containers {
+		//c.DetectMergable()
 		t.commitPage(c, false)
 	}
 
-	//currentId := t.commitPage(t.root, &buffer, prefix, keyCount, pageCount, keyBodySize, valBodySize, structBits, pinnedPageId)
 	if t.prevRoot != nil {
 		var buffer CommitBuffer
 		buffer.pinned = make(map[PageID]Forest3)
 		buffer.pinnedSizes = make(map[PageID]uint32)
-		tree := t.prevRoot.prepare(t, &buffer)
+		tree := t.prevRoot.prepare(t, &buffer, true)
 		tree.ref = t.prevRoot
 		if tree.pinned {
-			buffer.AddPinnedForest(t, tree.pageId, tree.ToForest())
+			buffer.AddPinnedTree(t, tree.pageId, tree)
 		} else {
 			buffer.free = append(buffer.free, tree)
 		}
@@ -1601,7 +1700,6 @@ func (t *Avl3) Commit() uint64 {
 		for _, c := range containers {
 			t.commitPage(c, true)
 		}
-		//prevId := t.commitPage(t.prevRoot, &buffer, prefix, keyCount, pageCount, keyBodySize, valBodySize, structBits, pinnedPageId)
 		t.versions[t.currentVersion] = Version3{pageId: prevRootPageId, treeIndex: prevRootTree}
 		if t.verFile != nil {
 			var verdata [12]byte
@@ -1621,6 +1719,7 @@ func (t *Avl3) Commit() uint64 {
 	prevRootArrow := &Arrow3{pageId: rootPageId, height: t.root.getheight(), max: t.root.getmax()}
 	t.root = &Arrow3{pageId: rootPageId, height: t.root.getheight(), max: t.root.getmax(), arrow: prevRootArrow}
 	t.prevRoot = prevRootArrow
+	t.checkFlush(false)
 	return t.commitedCounter - startCounter
 }
 
@@ -1628,6 +1727,7 @@ func (t *Avl3) commitPage(c *PageContainer, solid bool) {
 	if c.size > PageSize {
 		//fmt.Printf("Page %d overflow: %d, maxPageId: %d\n", c.pageId, c.size, t.maxPageId)
 	}
+	//fmt.Printf("Committing page %d\n", c.pageId)
 	trace := t.trace
 	data := make([]byte, c.size)
 	offset := uint32(0)
@@ -1643,7 +1743,7 @@ func (t *Avl3) commitPage(c *PageContainer, solid bool) {
 	}
 	nodeCount := c.f.leafCount + c.f.arrowCount
 	binary.BigEndian.PutUint32(data[offset:], nodeCount)
-	if c.pageId == 2373 {
+	if c.pageId == 167 {
 		fmt.Printf("commiting page %d with nodeCount = %d\n", c.pageId, nodeCount)
 	}
 	offset += 4
@@ -1682,7 +1782,7 @@ func (t *Avl3) commitPage(c *PageContainer, solid bool) {
 		t.serialisePass2(r, c.pageId, data, len(c.f.prefix), false, pageBitsOffset, structBitsOffset,
 			&nodeIndex, &structBit, &keyHeaderOffset, &arrowHeaderOffset, &valueHeaderOffset, &keyBodyOffset, &valBodyOffset)
 	}
-	if c.pageId == 2373 {
+	if c.pageId == 167 {
 		fmt.Printf("Commited page %d with %d refs\n", c.pageId, len(c.f.refs))
 		for i, r := range c.f.refs {
 			fmt.Printf("Ref %d: %x %d\n", i, r.getmax(), r.getheight())
@@ -1719,12 +1819,18 @@ func (t *Avl3) commitPage(c *PageContainer, solid bool) {
 		dc := make([]byte, chunk)
 		copy(dc[:], data[chunkOffset:chunkOffset+chunk])
 		if t.pageFile != nil {
-			t.pageFile.WriteAt(dc, int64(pageIds[idx])*int64(PageSize))
-			t.pageCache.Add(pageIds[idx], dc)
+			if !solid {
+				t.pageFile.WriteAt(dc, int64(pageIds[idx])*int64(PageSize))
+				t.commitedCounter++
+				t.pageCache.Add(pageIds[idx], dc)
+			} else {
+				t.commitMap[pageIds[idx]] = dc
+				t.pageCache.Remove(pageIds[idx])
+			}
 		} else {
 			t.pageMap[pageIds[idx]] = dc
+			t.commitedCounter++
 		}
-		t.commitedCounter++
 		remaining -= chunk
 		chunkOffset += chunk
 		idx++
@@ -1737,9 +1843,21 @@ func (t *Avl3) commitPage(c *PageContainer, solid bool) {
 	}
 }
 
+func (t *Avl3) checkFlush(force bool) {
+	if !force && t.currentVersion - t.lastFlushed < 8*1024 {
+		return
+	}
+	for pageId, data := range t.commitMap {
+		t.pageFile.WriteAt(data, int64(pageId)*int64(PageSize))
+		t.pageCache.Add(pageId, data)
+		t.commitedCounter++
+	}
+	t.commitMap = make(map[PageID][]byte)
+	t.lastFlushed = t.currentVersion
+}
+ 
 // Computes all the dynamic parameters that allow calculation of the page length and pre-allocation of all buffers
-func (l *Leaf3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
-	tree.pinnedChildren = make(map[PageID]struct{})
+func (l *Leaf3) prepare(t *Avl3, buffer *CommitBuffer, splitPages bool) (tree Tree3) {
 	tree.leafCount = 1
 	tree.keyBodySize = uint32(len(l.key))
 	if l.valueLen > InlineValueMax {
@@ -1753,64 +1871,57 @@ func (l *Leaf3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 		// Old pin
 		tree.pageId = l.pinnedPageId
 		tree.pinned = true
-		tree.pinnedChildren[tree.pageId] = struct{}{}
 	}
 	return
 }
 
-func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
-	tree.pinnedChildren = make(map[PageID]struct{})
+func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer, splitPages bool) (tree Tree3) {
 	if f.pinnedPageId != 0 {
 		// Old pin
 		tree.pageId = f.pinnedPageId
 		tree.pinned = true
-		tree.pinnedChildren[tree.pageId] = struct{}{}
 	}
 
-	treeL := f.left.prepare(t, buffer)
-	for pageId := range treeL.pinnedChildren {
-		tree.pinnedChildren[pageId] = struct{}{}
-	}
-	treeR := f.right.prepare(t, buffer)
-	for pageId := range treeR.pinnedChildren {
-		tree.pinnedChildren[pageId] = struct{}{}
-	}
+	treeL := f.left.prepare(t, buffer, splitPages)
+	treeR := f.right.prepare(t, buffer, splitPages)
 	// Fork and both children fit in the page
 	var mergable3 bool
 	var mergePageId PageID
 	var mergePinned bool
-	if treeL.pageId == 0 && treeR.pageId == 0 {
-		mergable3 = true
-		mergePageId = tree.pageId
-		mergePinned = tree.pinned
-	} else if treeL.pageId == 0 && tree.pageId == 0 {
-		mergable3 = true
-		mergePageId = treeR.pageId
-		mergePinned = treeR.pinned
-	} else if treeR.pageId == 0 && tree.pageId == 0 {
-		mergable3 = true
-		mergePageId = treeL.pageId
-		mergePinned = treeL.pinned
-	} else if treeL.pageId == treeR.pageId && treeL.pinned == treeR.pinned && treeR.pageId == tree.pageId && treeR.pinned == tree.pinned {
-		mergable3 = true
-		mergePageId = tree.pageId
-		mergePinned = tree.pinned
-	}
-	if !tree.pinned && treeL.pinned {
-		if pinnedSize, ok := buffer.pinnedSizes[treeL.pageId]; ok {
-			if pinnedSize >= PageSize {
-				mergable3 = false
+	if splitPages {
+		if !treeL.pinned && !treeR.pinned {
+			mergable3 = true
+			mergePageId = tree.pageId
+			mergePinned = tree.pinned
+		} else if !treeL.pinned && !tree.pinned {
+			mergable3 = true
+			mergePageId = treeR.pageId
+			mergePinned = treeR.pinned
+		} else if !treeR.pinned && !tree.pinned {
+			mergable3 = true
+			mergePageId = treeL.pageId
+			mergePinned = treeL.pinned
+		} else if treeL.pageId == treeR.pageId && treeL.pinned == treeR.pinned && treeR.pageId == tree.pageId && treeR.pinned == tree.pinned {
+			mergable3 = true
+			mergePageId = tree.pageId
+			mergePinned = tree.pinned
+		}
+		if !tree.pinned && treeL.pinned {
+			if pinnedSize, ok := buffer.pinnedSizes[treeL.pageId]; ok {
+				if pinnedSize >= PageSize {
+					mergable3 = false
+				}
+			}
+		}
+		if !tree.pinned && treeR.pinned {
+			if pinnedSize, ok := buffer.pinnedSizes[treeR.pageId]; ok {
+				if pinnedSize >= PageSize {
+					mergable3 = false
+				}
 			}
 		}
 	}
-	if !tree.pinned && treeR.pinned {
-		if pinnedSize, ok := buffer.pinnedSizes[treeR.pageId]; ok {
-			if pinnedSize >= PageSize {
-				mergable3 = false
-			}
-		}
-	}
-	if mergable3 {
+	if !splitPages || mergable3 {
 		tree.leafCount = treeL.leafCount+treeR.leafCount
 		tree.arrowCount = treeL.arrowCount+treeR.arrowCount
 		tree.keyBodySize = treeL.keyBodySize+treeR.keyBodySize
@@ -1818,7 +1929,7 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 		tree.structBits = treeL.structBits+treeR.structBits+2 // 2 bits for the fork
 		tree.prefix = commonPrefix(treeL.prefix, treeR.prefix)
 		sizeLFR, _ := t.pageSize3(tree.leafCount, tree.arrowCount, tree.keyBodySize, tree.valBodySize, tree.structBits, tree.prefix)
-		if sizeLFR < PageSize {
+		if !splitPages || sizeLFR < PageSize {
 			tree.pageId = mergePageId
 			tree.pinned = mergePinned
 			return
@@ -1829,11 +1940,11 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 	sizeR, _ := t.pageSize3(treeR.leafCount, treeR.arrowCount, treeR.keyBodySize, treeR.valBodySize, treeR.structBits, treeR.prefix)
 	if sizeL > sizeR {
 		var mergableR bool
-		if treeR.pageId == 0 {
+		if !treeR.pinned {
 			mergableR = true
 			mergePageId = tree.pageId
 			mergePinned = tree.pinned
-		} else if tree.pageId == 0 {
+		} else if !tree.pinned {
 			mergableR = true
 			mergePageId = treeR.pageId
 			mergePinned = treeR.pinned
@@ -1855,10 +1966,11 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 		} else {
 			lArrow = &Arrow3{height: f.left.getheight(), max: f.left.getmax()}
 			treeL.ref = f.left
-			treeL.arrow = lArrow
 			if treeL.pinned {
-				buffer.AddPinnedForest(t, treeL.pageId, treeL.ToForest())
+				lArrow.pageId = treeL.pageId
+				buffer.AddPinnedTree(t, treeL.pageId, treeL)
 			} else {
+				treeL.arrow = lArrow
 				buffer.free = append(buffer.free, treeL)
 			}
 			f.left = lArrow
@@ -1883,10 +1995,11 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 			} else {
 				rArrow = &Arrow3{height: f.right.getheight(), max: f.right.getmax()}
 				treeR.ref = f.right
-				treeR.arrow = rArrow
 				if treeR.pinned {
-					buffer.AddPinnedForest(t, treeR.pageId, treeR.ToForest())
+					rArrow.pageId = treeR.pageId
+					buffer.AddPinnedTree(t, treeR.pageId, treeR)
 				} else {
+					treeR.arrow = rArrow
 					buffer.free = append(buffer.free, treeR)
 				}
 				f.right = rArrow
@@ -1901,11 +2014,11 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 		}
 	} else {
 		var mergableL bool
-		if treeL.pageId == 0 {
+		if !treeL.pinned {
 			mergableL = true
 			mergePageId = tree.pageId
 			mergePinned = tree.pinned
-		} else if tree.pageId == 0 {
+		} else if !tree.pinned {
 			mergableL = true
 			mergePageId = treeL.pageId
 			mergePinned = treeL.pinned
@@ -1925,13 +2038,13 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 		if ra, ok := f.right.(*Arrow3); ok {
 			rArrow = ra
 		} else {
-			//rid := t.commitPage(f.right, buffer, prefixR, keyCountR, pageCountR, keyBodySizeR, valBodySizeR, structBitsR, pinnedPageR)
 			rArrow = &Arrow3{height: f.right.getheight(), max: f.right.getmax()}
 			treeR.ref = f.right
-			treeR.arrow = rArrow
 			if treeR.pinned {
-				buffer.AddPinnedForest(t, treeR.pageId, treeR.ToForest())
+				rArrow.pageId = treeR.pageId
+				buffer.AddPinnedTree(t, treeR.pageId, treeR)
 			} else {
+				treeR.arrow = rArrow
 				buffer.free = append(buffer.free, treeR)
 			}
 			f.right = rArrow
@@ -1954,13 +2067,13 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 			if la, ok := f.left.(*Arrow3); ok {
 				lArrow = la
 			} else {
-				//lid := t.commitPage(f.left, buffer, prefixL, keyCountL, pageCountL, keyBodySizeL, valBodySizeL, structBitsL, pinnedPageL)
 				lArrow = &Arrow3{height: f.left.getheight(), max: f.left.getmax()}
 				treeL.ref = f.left
-				treeL.arrow = lArrow
 				if treeL.pinned {
-					buffer.AddPinnedForest(t, treeL.pageId, treeL.ToForest())
+					lArrow.pageId = treeL.pageId
+					buffer.AddPinnedTree(t, treeL.pageId, treeL)
 				} else {
+					treeL.arrow = lArrow
 					buffer.free = append(buffer.free, treeL)
 				}
 				f.left = lArrow
@@ -1976,8 +2089,7 @@ func (f *Fork3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
 	}
 }
 
-func (a *Arrow3) prepare(t *Avl3, buffer *CommitBuffer) (tree Tree3) {
-	tree.pinnedChildren = make(map[PageID]struct{})
+func (a *Arrow3) prepare(t *Avl3, buffer *CommitBuffer, splitPages bool) (tree Tree3) {
 	tree.arrowCount = 1
 	tree.structBits = 1 // one bit for page reference
 	tree.keyBodySize = uint32(len(a.max))
@@ -2010,6 +2122,9 @@ func (t *Avl3) serialiseVal(value []byte, valueId uint64, valueLen uint32, data 
 		copy(data[*valBodyOffset:], valueHash[:])
 		*valBodyOffset += HashLength
 	} else {
+		if int(*valBodyOffset) >= len(data) {
+			fmt.Printf("*valBodyOffset==%d, len(data)=%d\n", *valBodyOffset, len(data))
+		}
 		copy(data[*valBodyOffset:], value)
 		*valBodyOffset += valueLen
 	}
@@ -2106,7 +2221,7 @@ func (t *Avl3) returnModPage(pageId PageID, modRefs []Ref3, key []byte, height u
 			if releaseRef {
 				modRefs = append(modRefs[:i], modRefs[i+1:]...)
 				t.modifiedPages[pageId].roots = modRefs
-				if pageId == 2373 {
+				if pageId == 167 {
 					fmt.Printf("returnModPage, released ref on page %d, left refs: %d\n", pageId, len(modRefs))
 				}
 			}
@@ -2124,12 +2239,12 @@ func (t *Avl3) deserialisePage(pageId PageID, key []byte, height uint32, treeInd
 	if trace {
 		fmt.Printf("Deserialising page %d %s %d\n", pageId, key, height)
 	}
-	if pageId == 2373 {
+	if pageId == 167 {
 		fmt.Printf("deserialisePage on page %d, key %x, height %d, releaseRef %t\n", pageId, key, height, releaseRef)
 	}
 	modPage, modPageFound := t.modifiedPages[pageId]
 	if modPageFound {
-		if pageId == 2373 {
+		if pageId == 167 {
 			fmt.Printf("deserialisePage on page %d, key %x, height %d, releaseRef %t, found modePage\n", pageId, key, height, releaseRef)
 		}
 		return t.returnModPage(pageId, modPage.roots, key, height, releaseRef)
@@ -2138,13 +2253,20 @@ func (t *Avl3) deserialisePage(pageId PageID, key []byte, height uint32, treeInd
 	if t.pageFile != nil {
 		if cached, ok := t.pageCache.Get(pageId); ok {
 			data = cached.([]byte)
+			t.pageCacheHits++
 		} else {
-			data = make([]byte, PageSize)
-			if _, err := t.pageFile.ReadAt(data, int64(pageId)*int64(PageSize)); err != nil && err != io.EOF {
-				panic(err)
-			}
-			if data != nil {
-				t.pageCache.Add(pageId, data)
+			if d, ok1 := t.commitMap[pageId]; ok1 {
+				data = d
+				t.pageCacheHits++
+			} else {
+				data = make([]byte, PageSize)
+				if _, err := t.pageFile.ReadAt(data, int64(pageId)*int64(PageSize)); err != nil && err != io.EOF {
+					panic(err)
+				}
+				t.pageCacheMisses++
+				if data != nil {
+					t.pageCache.Add(pageId, data)
+				}
 			}
 		}
 	} else {
@@ -2157,20 +2279,39 @@ func (t *Avl3) deserialisePage(pageId PageID, key []byte, height uint32, treeInd
 	offset := uint32(0)
 	extensions := binary.BigEndian.Uint32(data[offset:])
 	offset += 4
+	if extensions > 0 {
+		d := make([]byte, (1+extensions)*PageSize)
+		copy(d, data)
+		data = d
+	}
 	for i := 0; i < int(extensions); i++ {
 		extId := PageID(binary.BigEndian.Uint64(data[offset:]))
 		var extData []byte
 		if t.pageFile != nil {
-			extData = make([]byte, PageSize)
-			if _, err := t.pageFile.ReadAt(extData, int64(extId)*int64(PageSize)); err != nil && err != io.EOF {
-				panic(err)
+			if cached, ok := t.pageCache.Get(extId); ok {
+				extData = cached.([]byte)
+				t.pageCacheHits++
+			} else {
+				if d, ok1 := t.commitMap[extId]; ok1 {
+					extData = d
+					t.pageCacheHits++
+				} else {
+					extData = make([]byte, PageSize)
+					if _, err := t.pageFile.ReadAt(extData, int64(extId)*int64(PageSize)); err != nil && err != io.EOF {
+						panic(err)
+					}
+					t.pageCacheMisses++
+					if extData != nil {
+						t.pageCache.Add(extId, extData)
+					}
+				}
 			}
 		} else {
 			extData = t.pageMap[extId]
 		}
-		data = append(data, extData...)
+		copy(data[(i+1)*int(PageSize):], extData)
 		if releaseRef {
-			if extId == 2373 {
+			if extId == 167 {
 				fmt.Printf("Recycle extId %d\n", pageId)
 			}
 			t.modifiedPages[extId] = &ModPage{} // To make sure this page Id gets recycled
@@ -2310,7 +2451,7 @@ func (t *Avl3) deserialisePage(pageId PageID, key []byte, height uint32, treeInd
 		}
 		structBit++
 	}
-	if pageId == 2373 {
+	if pageId == 167 {
 		fmt.Printf("deserialisePage on page %d, nodeCount %d, roots %d, releaseRef %t\n", pageId, nodeCount, stackTop, releaseRef)
 	}
 	for i := 0; i < stackTop; i++ {
@@ -2421,5 +2562,6 @@ func (t *Avl3) PrintStats() {
 		float64(m.Alloc)/1024.0/1024.0,
 		float64(m.Alloc)/1024.0/1024.0,
 		)
-	fmt.Printf("Solid refs: %v, solid tree sizes: %v, pinned: %d, free: %d\n", t.solidRefs, t.solidTreeSizes, t.solidPinned, t.solidFree)
+	fmt.Printf("Size of pageCache: %d, hit ratio: %0.3f\n", t.pageCache.Len(), float64(t.pageCacheHits)/float64(t.pageCacheHits+t.pageCacheMisses+1))
+	//fmt.Printf("Solid refs: %v, solid tree sizes: %v, pinned: %d, free: %d\n", t.solidRefs, t.solidTreeSizes, t.solidPinned, t.solidFree)
 }
