@@ -1844,7 +1844,7 @@ func (t *Avl3) commitPage(c *PageContainer, solid bool) {
 }
 
 func (t *Avl3) checkFlush(force bool) {
-	if !force && t.currentVersion - t.lastFlushed < 8*1024 {
+	if !force && t.currentVersion - t.lastFlushed < 1024 {
 		return
 	}
 	for pageId, data := range t.commitMap {
@@ -2563,5 +2563,5 @@ func (t *Avl3) PrintStats() {
 		float64(m.Alloc)/1024.0/1024.0,
 		)
 	fmt.Printf("Size of pageCache: %d, hit ratio: %0.3f\n", t.pageCache.Len(), float64(t.pageCacheHits)/float64(t.pageCacheHits+t.pageCacheMisses+1))
-	//fmt.Printf("Solid refs: %v, solid tree sizes: %v, pinned: %d, free: %d\n", t.solidRefs, t.solidTreeSizes, t.solidPinned, t.solidFree)
+	fmt.Printf("Solid refs: %v, solid tree sizes: %v, pinned: %d, free: %d\n", t.solidRefs, t.solidTreeSizes, t.solidPinned, t.solidFree)
 }
