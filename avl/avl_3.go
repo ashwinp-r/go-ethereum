@@ -1844,7 +1844,7 @@ func (t *Avl3) commitPage(c *PageContainer, solid bool) {
 }
 
 func (t *Avl3) checkFlush(force bool) {
-	if !force && t.currentVersion - t.lastFlushed < 1024 {
+	if !force && t.currentVersion - t.lastFlushed < 8*1024 && len(t.commitMap) < 512*1024 {
 		return
 	}
 	for pageId, data := range t.commitMap {
