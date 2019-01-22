@@ -24,8 +24,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto/sha3"
 	"github.com/ethereum/go-ethereum/params"
+	"golang.org/x/crypto/sha3"
 )
 
 var (
@@ -387,7 +387,7 @@ func opSha3(pc *uint64, interpreter *EVMInterpreter, contract *Contract, memory 
 	data := memory.Get(offset.Int64(), size.Int64())
 
 	if interpreter.hasher == nil {
-		interpreter.hasher = sha3.NewKeccak256().(keccakState)
+		interpreter.hasher = sha3.NewLegacyKeccak256().(keccakState)
 	} else {
 		interpreter.hasher.Reset()
 	}
@@ -544,7 +544,12 @@ func opExtCodeCopy(pc *uint64, interpreter *EVMInterpreter, contract *Contract, 
 // this account should be regarded as a non-existent account and zero should be returned.
 func opExtCodeHash(pc *uint64, interpreter *EVMInterpreter, contract *Contract, memory *Memory, stack *Stack) ([]byte, error) {
 	slot := stack.peek()
-	slot.SetBytes(interpreter.evm.StateDB.GetCodeHash(common.BigToAddress(slot)).Bytes())
+	address := common.BigToAddress(slot)
+	if interpreter.evm.StateDB.Empty(address) {
+		slot.SetUint64(0)
+	} else {
+		slot.SetBytes(interpreter.evm.StateDB.GetCodeHash(address).Bytes())
+	}
 	return nil, nil
 }
 

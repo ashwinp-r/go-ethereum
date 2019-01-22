@@ -20,8 +20,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"sync"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	TestProtocolVersion   = 7
+	TestProtocolVersion   = 8
 	TestProtocolNetworkID = 3
 )
 
@@ -44,31 +44,7 @@ func init() {
 	log.Root().SetHandler(log.LvlFilterHandler(log.Lvl(*loglevel), log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
 }
 
-type testStore struct {
-	sync.Mutex
-
-	values map[string][]byte
-}
-
-func (t *testStore) Load(key string) ([]byte, error) {
-	t.Lock()
-	defer t.Unlock()
-	v, ok := t.values[key]
-	if !ok {
-		return nil, fmt.Errorf("key not found: %s", key)
-	}
-	return v, nil
-}
-
-func (t *testStore) Save(key string, v []byte) error {
-	t.Lock()
-	defer t.Unlock()
-	t.values[key] = v
-	return nil
-}
-
 func HandshakeMsgExchange(lhs, rhs *HandshakeMsg, id enode.ID) []p2ptest.Exchange {
-
 	return []p2ptest.Exchange{
 		{
 			Expects: []p2ptest.Expect{
@@ -153,17 +129,7 @@ func newBzzHandshakeTester(t *testing.T, n int, addr *BzzAddr, lightNode bool) *
 
 // should test handshakes in one exchange? parallelisation
 func (s *bzzTester) testHandshake(lhs, rhs *HandshakeMsg, disconnects ...*p2ptest.Disconnect) error {
-	var peers []enode.ID
-	id := rhs.Addr.ID()
-	if len(disconnects) > 0 {
-		for _, d := range disconnects {
-			peers = append(peers, d.Peer)
-		}
-	} else {
-		peers = []enode.ID{id}
-	}
-
-	if err := s.TestExchanges(HandshakeMsgExchange(lhs, rhs, id)...); err != nil {
+	if err := s.TestExchanges(HandshakeMsgExchange(lhs, rhs, rhs.Addr.ID())...); err != nil {
 		return err
 	}
 
@@ -259,7 +225,7 @@ func TestBzzHandshakeLightNode(t *testing.T) {
 	for _, test := range lightNodeTests {
 		t.Run(test.name, func(t *testing.T) {
 			randomAddr := RandomAddr()
-			pt := newBzzHandshakeTester(t, 1, randomAddr, false)
+			pt := newBzzHandshakeTester(nil, 1, randomAddr, false) // TODO change signature - t is not used anywhere
 			node := pt.Nodes[0]
 			addr := NewAddr(node)
 
@@ -272,8 +238,14 @@ func TestBzzHandshakeLightNode(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if pt.bzz.handshakes[node.ID()].LightNode != test.lightNode {
-				t.Fatalf("peer LightNode flag is %v, should be %v", pt.bzz.handshakes[node.ID()].LightNode, test.lightNode)
+			select {
+
+			case <-pt.bzz.handshakes[node.ID()].done:
+				if pt.bzz.handshakes[node.ID()].LightNode != test.lightNode {
+					t.Fatalf("peer LightNode flag is %v, should be %v", pt.bzz.handshakes[node.ID()].LightNode, test.lightNode)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("test timeout")
 			}
 		})
 	}

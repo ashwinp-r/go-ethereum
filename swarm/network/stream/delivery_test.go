@@ -19,23 +19,27 @@ package stream
 import (
 	"bytes"
 	"context"
-	crand "crypto/rand"
+	"errors"
 	"fmt"
-	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/p2p"
+	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/ethereum/go-ethereum/p2p/protocols"
 	"github.com/ethereum/go-ethereum/p2p/simulations/adapters"
 	p2ptest "github.com/ethereum/go-ethereum/p2p/testing"
 	"github.com/ethereum/go-ethereum/swarm/log"
 	"github.com/ethereum/go-ethereum/swarm/network"
+	pq "github.com/ethereum/go-ethereum/swarm/network/priorityqueue"
 	"github.com/ethereum/go-ethereum/swarm/network/simulation"
 	"github.com/ethereum/go-ethereum/swarm/state"
 	"github.com/ethereum/go-ethereum/swarm/storage"
+	"github.com/ethereum/go-ethereum/swarm/testutil"
 )
 
 //Tests initializing a retrieve request
@@ -274,6 +278,86 @@ func TestStreamerUpstreamRetrieveRequestMsgExchange(t *testing.T) {
 	}
 }
 
+// if there is one peer in the Kademlia, RequestFromPeers should return it
+func TestRequestFromPeers(t *testing.T) {
+	dummyPeerID := enode.HexID("3431c3939e1ee2a6345e976a8234f9870152d64879f30bc272a074f6859e75e8")
+
+	addr := network.RandomAddr()
+	to := network.NewKademlia(addr.OAddr, network.NewKadParams())
+	delivery := NewDelivery(to, nil)
+	protocolsPeer := protocols.NewPeer(p2p.NewPeer(dummyPeerID, "dummy", nil), nil, nil)
+	peer := network.NewPeer(&network.BzzPeer{
+		BzzAddr:   network.RandomAddr(),
+		LightNode: false,
+		Peer:      protocolsPeer,
+	}, to)
+	to.On(peer)
+	r := NewRegistry(addr.ID(), delivery, nil, nil, nil, nil)
+
+	// an empty priorityQueue has to be created to prevent a goroutine being called after the test has finished
+	sp := &Peer{
+		Peer:     protocolsPeer,
+		pq:       pq.New(int(PriorityQueue), PriorityQueueCap),
+		streamer: r,
+	}
+	r.setPeer(sp)
+	req := network.NewRequest(
+		storage.Address(hash0[:]),
+		true,
+		&sync.Map{},
+	)
+	ctx := context.Background()
+	id, _, err := delivery.RequestFromPeers(ctx, req)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *id != dummyPeerID {
+		t.Fatalf("Expected an id, got %v", id)
+	}
+}
+
+// RequestFromPeers should not return light nodes
+func TestRequestFromPeersWithLightNode(t *testing.T) {
+	dummyPeerID := enode.HexID("3431c3939e1ee2a6345e976a8234f9870152d64879f30bc272a074f6859e75e8")
+
+	addr := network.RandomAddr()
+	to := network.NewKademlia(addr.OAddr, network.NewKadParams())
+	delivery := NewDelivery(to, nil)
+
+	protocolsPeer := protocols.NewPeer(p2p.NewPeer(dummyPeerID, "dummy", nil), nil, nil)
+	// setting up a lightnode
+	peer := network.NewPeer(&network.BzzPeer{
+		BzzAddr:   network.RandomAddr(),
+		LightNode: true,
+		Peer:      protocolsPeer,
+	}, to)
+	to.On(peer)
+	r := NewRegistry(addr.ID(), delivery, nil, nil, nil, nil)
+	// an empty priorityQueue has to be created to prevent a goroutine being called after the test has finished
+	sp := &Peer{
+		Peer:     protocolsPeer,
+		pq:       pq.New(int(PriorityQueue), PriorityQueueCap),
+		streamer: r,
+	}
+	r.setPeer(sp)
+
+	req := network.NewRequest(
+		storage.Address(hash0[:]),
+		true,
+		&sync.Map{},
+	)
+
+	ctx := context.Background()
+	// making a request which should return with "no peer found"
+	_, _, err := delivery.RequestFromPeers(ctx, req)
+
+	expectedError := "no peer found"
+	if err.Error() != expectedError {
+		t.Fatalf("expected '%v', got %v", expectedError, err)
+	}
+}
+
 func TestStreamerDownstreamChunkDeliveryMsgExchange(t *testing.T) {
 	tester, streamer, localStore, teardown, err := newStreamerTester(t, &RegistryOptions{
 		Retrieval: RetrievalDisabled,
@@ -360,17 +444,17 @@ func TestStreamerDownstreamChunkDeliveryMsgExchange(t *testing.T) {
 }
 
 func TestDeliveryFromNodes(t *testing.T) {
-	testDeliveryFromNodes(t, 2, 1, dataChunkCount, true)
-	testDeliveryFromNodes(t, 2, 1, dataChunkCount, false)
-	testDeliveryFromNodes(t, 4, 1, dataChunkCount, true)
-	testDeliveryFromNodes(t, 4, 1, dataChunkCount, false)
-	testDeliveryFromNodes(t, 8, 1, dataChunkCount, true)
-	testDeliveryFromNodes(t, 8, 1, dataChunkCount, false)
-	testDeliveryFromNodes(t, 16, 1, dataChunkCount, true)
-	testDeliveryFromNodes(t, 16, 1, dataChunkCount, false)
+	testDeliveryFromNodes(t, 2, dataChunkCount, true)
+	testDeliveryFromNodes(t, 2, dataChunkCount, false)
+	testDeliveryFromNodes(t, 4, dataChunkCount, true)
+	testDeliveryFromNodes(t, 4, dataChunkCount, false)
+	testDeliveryFromNodes(t, 8, dataChunkCount, true)
+	testDeliveryFromNodes(t, 8, dataChunkCount, false)
+	testDeliveryFromNodes(t, 16, dataChunkCount, true)
+	testDeliveryFromNodes(t, 16, dataChunkCount, false)
 }
 
-func testDeliveryFromNodes(t *testing.T, nodes, conns, chunkCount int, skipCheck bool) {
+func testDeliveryFromNodes(t *testing.T, nodes, chunkCount int, skipCheck bool) {
 	sim := simulation.New(map[string]simulation.ServiceFunc{
 		"streamer": func(ctx *adapters.ServiceContext, bucket *sync.Map) (s node.Service, cleanup func(), err error) {
 			node := ctx.Config.Node()
@@ -398,7 +482,7 @@ func testDeliveryFromNodes(t *testing.T, nodes, conns, chunkCount int, skipCheck
 				SkipCheck: skipCheck,
 				Syncing:   SyncingDisabled,
 				Retrieval: RetrievalEnabled,
-			})
+			}, nil)
 			bucket.Store(bucketKeyRegistry, r)
 
 			fileStore := storage.NewFileStore(netStore, storage.NewFileStoreParams())
@@ -418,10 +502,11 @@ func testDeliveryFromNodes(t *testing.T, nodes, conns, chunkCount int, skipCheck
 
 	log.Info("Starting simulation")
 	ctx := context.Background()
-	result := sim.Run(ctx, func(ctx context.Context, sim *simulation.Simulation) error {
+	result := sim.Run(ctx, func(ctx context.Context, sim *simulation.Simulation) (err error) {
 		nodeIDs := sim.UpNodeIDs()
 		//determine the pivot node to be the first node of the simulation
-		sim.SetPivotNode(nodeIDs[0])
+		pivot := nodeIDs[0]
+
 		//distribute chunks of a random file into Stores of nodes 1 to nodes
 		//we will do this by creating a file store with an underlying round-robin store:
 		//the file store will create a hash for the uploaded file, but every chunk will be
@@ -435,7 +520,7 @@ func testDeliveryFromNodes(t *testing.T, nodes, conns, chunkCount int, skipCheck
 		//...iterate the buckets...
 		for id, bucketVal := range lStores {
 			//...and remove the one which is the pivot node
-			if id == *sim.PivotNodeID() {
+			if id == pivot {
 				continue
 			}
 			//the other ones are added to the array...
@@ -447,7 +532,7 @@ func testDeliveryFromNodes(t *testing.T, nodes, conns, chunkCount int, skipCheck
 		//now we can actually upload a (random) file to the round-robin store
 		size := chunkCount * chunkSize
 		log.Debug("Storing data to file store")
-		fileHash, wait, err := roundRobinFileStore.Store(ctx, io.LimitReader(crand.Reader, int64(size)), int64(size), false)
+		fileHash, wait, err := roundRobinFileStore.Store(ctx, testutil.RandomReader(1, size), int64(size), false)
 		// wait until all chunks stored
 		if err != nil {
 			return err
@@ -458,39 +543,47 @@ func testDeliveryFromNodes(t *testing.T, nodes, conns, chunkCount int, skipCheck
 		}
 
 		log.Debug("Waiting for kademlia")
-		if _, err := sim.WaitTillHealthy(ctx, 2); err != nil {
+		// TODO this does not seem to be correct usage of the function, as the simulation may have no kademlias
+		if _, err := sim.WaitTillHealthy(ctx); err != nil {
 			return err
 		}
 
 		//get the pivot node's filestore
-		item, ok := sim.NodeItem(*sim.PivotNodeID(), bucketKeyFileStore)
+		item, ok := sim.NodeItem(pivot, bucketKeyFileStore)
 		if !ok {
 			return fmt.Errorf("No filestore")
 		}
 		pivotFileStore := item.(*storage.FileStore)
 		log.Debug("Starting retrieval routine")
+		retErrC := make(chan error)
 		go func() {
 			// start the retrieval on the pivot node - this will spawn retrieve requests for missing chunks
 			// we must wait for the peer connections to have started before requesting
 			n, err := readAll(pivotFileStore, fileHash)
 			log.Info(fmt.Sprintf("retrieved %v", fileHash), "read", n, "err", err)
-			if err != nil {
-				t.Fatalf("requesting chunks action error: %v", err)
-			}
+			retErrC <- err
 		}()
 
 		log.Debug("Watching for disconnections")
 		disconnections := sim.PeerEvents(
 			context.Background(),
 			sim.NodeIDs(),
-			simulation.NewPeerEventsFilter().Type(p2p.PeerEventTypeDrop),
+			simulation.NewPeerEventsFilter().Drop(),
 		)
 
+		var disconnected atomic.Value
 		go func() {
 			for d := range disconnections {
 				if d.Error != nil {
-					log.Error("peer drop", "node", d.NodeID, "peer", d.Event.Peer)
-					t.Fatal(d.Error)
+					log.Error("peer drop", "node", d.NodeID, "peer", d.PeerID)
+					disconnected.Store(true)
+				}
+			}
+		}()
+		defer func() {
+			if err != nil {
+				if yes, ok := disconnected.Load().(bool); ok && yes {
+					err = errors.New("disconnect events received")
 				}
 			}
 		}()
@@ -511,6 +604,9 @@ func testDeliveryFromNodes(t *testing.T, nodes, conns, chunkCount int, skipCheck
 		if !success {
 			return fmt.Errorf("Test failed, chunks not available on all nodes")
 		}
+		if err := <-retErrC; err != nil {
+			t.Fatalf("requesting chunks: %v", err)
+		}
 		log.Debug("Test terminated successfully")
 		return nil
 	})
@@ -525,7 +621,7 @@ func BenchmarkDeliveryFromNodesWithoutCheck(b *testing.B) {
 			b.Run(
 				fmt.Sprintf("nodes=%v,chunks=%v", i, chunks),
 				func(b *testing.B) {
-					benchmarkDeliveryFromNodes(b, i, 1, chunks, true)
+					benchmarkDeliveryFromNodes(b, i, chunks, true)
 				},
 			)
 		}
@@ -538,14 +634,14 @@ func BenchmarkDeliveryFromNodesWithCheck(b *testing.B) {
 			b.Run(
 				fmt.Sprintf("nodes=%v,chunks=%v", i, chunks),
 				func(b *testing.B) {
-					benchmarkDeliveryFromNodes(b, i, 1, chunks, false)
+					benchmarkDeliveryFromNodes(b, i, chunks, false)
 				},
 			)
 		}
 	}
 }
 
-func benchmarkDeliveryFromNodes(b *testing.B, nodes, conns, chunkCount int, skipCheck bool) {
+func benchmarkDeliveryFromNodes(b *testing.B, nodes, chunkCount int, skipCheck bool) {
 	sim := simulation.New(map[string]simulation.ServiceFunc{
 		"streamer": func(ctx *adapters.ServiceContext, bucket *sync.Map) (s node.Service, cleanup func(), err error) {
 			node := ctx.Config.Node()
@@ -573,7 +669,7 @@ func benchmarkDeliveryFromNodes(b *testing.B, nodes, conns, chunkCount int, skip
 				Syncing:         SyncingDisabled,
 				Retrieval:       RetrievalDisabled,
 				SyncUpdateDelay: 0,
-			})
+			}, nil)
 
 			fileStore := storage.NewFileStore(netStore, storage.NewFileStoreParams())
 			bucket.Store(bucketKeyFileStore, fileStore)
@@ -591,7 +687,7 @@ func benchmarkDeliveryFromNodes(b *testing.B, nodes, conns, chunkCount int, skip
 	}
 
 	ctx := context.Background()
-	result := sim.Run(ctx, func(ctx context.Context, sim *simulation.Simulation) error {
+	result := sim.Run(ctx, func(ctx context.Context, sim *simulation.Simulation) (err error) {
 		nodeIDs := sim.UpNodeIDs()
 		node := nodeIDs[len(nodeIDs)-1]
 
@@ -608,21 +704,29 @@ func benchmarkDeliveryFromNodes(b *testing.B, nodes, conns, chunkCount int, skip
 		}
 		netStore := item.(*storage.NetStore)
 
-		if _, err := sim.WaitTillHealthy(ctx, 2); err != nil {
+		if _, err := sim.WaitTillHealthy(ctx); err != nil {
 			return err
 		}
 
 		disconnections := sim.PeerEvents(
 			context.Background(),
 			sim.NodeIDs(),
-			simulation.NewPeerEventsFilter().Type(p2p.PeerEventTypeDrop),
+			simulation.NewPeerEventsFilter().Drop(),
 		)
 
+		var disconnected atomic.Value
 		go func() {
 			for d := range disconnections {
 				if d.Error != nil {
-					log.Error("peer drop", "node", d.NodeID, "peer", d.Event.Peer)
-					b.Fatal(d.Error)
+					log.Error("peer drop", "node", d.NodeID, "peer", d.PeerID)
+					disconnected.Store(true)
+				}
+			}
+		}()
+		defer func() {
+			if err != nil {
+				if yes, ok := disconnected.Load().(bool); ok && yes {
+					err = errors.New("disconnect events received")
 				}
 			}
 		}()
@@ -636,7 +740,7 @@ func benchmarkDeliveryFromNodes(b *testing.B, nodes, conns, chunkCount int, skip
 			for i := 0; i < chunkCount; i++ {
 				// create actual size real chunks
 				ctx := context.TODO()
-				hash, wait, err := remoteFileStore.Store(ctx, io.LimitReader(crand.Reader, int64(chunkSize)), int64(chunkSize), false)
+				hash, wait, err := remoteFileStore.Store(ctx, testutil.RandomReader(i, chunkSize), int64(chunkSize), false)
 				if err != nil {
 					b.Fatalf("expected no error. got %v", err)
 				}

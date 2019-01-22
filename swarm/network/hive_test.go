@@ -70,6 +70,9 @@ func TestHiveStatePersistance(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	store, err := state.NewDBStore(dir) //start the hive with an empty dbstore
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	params := NewHiveParams()
 	s, pp := newHiveTester(t, params, 5, store)
@@ -90,6 +93,9 @@ func TestHiveStatePersistance(t *testing.T) {
 	store.Close()
 
 	persistedStore, err := state.NewDBStore(dir) //start the hive with an empty dbstore
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	s1, pp := newHiveTester(t, params, 1, persistedStore)
 
@@ -97,7 +103,7 @@ func TestHiveStatePersistance(t *testing.T) {
 
 	pp.Start(s1.Server)
 	i := 0
-	pp.Kademlia.EachAddr(nil, 256, func(addr *BzzAddr, po int, nn bool) bool {
+	pp.Kademlia.EachAddr(nil, 256, func(addr *BzzAddr, po int) bool {
 		delete(peers, addr.String())
 		i++
 		return true

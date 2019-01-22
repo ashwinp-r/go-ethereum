@@ -87,8 +87,10 @@ var (
 		utils.LightServFlag,
 		utils.LightPeersFlag,
 		utils.LightKDFFlag,
+		utils.WhitelistFlag,
 		utils.CacheFlag,
 		utils.CacheDatabaseFlag,
+		utils.CacheTrieFlag,
 		utils.CacheGCFlag,
 		utils.TrieCacheGenFlag,
 		utils.ListenPortFlag,
@@ -121,6 +123,7 @@ var (
 		utils.RinkebyFlag,
 		utils.VMEnableDebugFlag,
 		utils.NetworkIdFlag,
+		utils.ConstantinopleOverrideFlag,
 		utils.RPCCORSDomainFlag,
 		utils.RPCVirtualHostsFlag,
 		utils.EthStatsURLFlag,
@@ -138,6 +141,11 @@ var (
 		utils.RPCEnabledFlag,
 		utils.RPCListenAddrFlag,
 		utils.RPCPortFlag,
+		utils.GraphQLEnabledFlag,
+		utils.GraphQLListenAddrFlag,
+		utils.GraphQLPortFlag,
+		utils.GraphQLCORSDomainFlag,
+		utils.GraphQLVirtualHostsFlag,
 		utils.RPCApiFlag,
 		utils.WSEnabledFlag,
 		utils.WSListenAddrFlag,
@@ -169,7 +177,7 @@ func init() {
 	// Initialize the CLI app and start Geth
 	app.Action = geth
 	app.HideVersion = true // we have a command to print the version
-	app.Copyright = "Copyright 2013-2018 The go-ethereum Authors"
+	app.Copyright = "Copyright 2013-2019 The go-ethereum Authors"
 	app.Commands = []cli.Command{
 		// See chaincmd.go:
 		initCommand,

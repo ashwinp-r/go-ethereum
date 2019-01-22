@@ -88,7 +88,7 @@ var (
 	}
 	SwarmApiFlag = cli.StringFlag{
 		Name:  "bzzapi",
-		Usage: "Swarm HTTP endpoint",
+		Usage: "Specifies the Swarm HTTP endpoint to connect to",
 		Value: "http://127.0.0.1:8500",
 	}
 	SwarmRecursiveFlag = cli.BoolFlag{
@@ -163,10 +163,6 @@ var (
 	SwarmFeedTopicFlag = cli.StringFlag{
 		Name:  "topic",
 		Usage: "User-defined topic this feed is tracking, hex encoded. Limited to 64 hexadecimal characters",
-	}
-	SwarmFeedDataOnCreateFlag = cli.StringFlag{
-		Name:  "data",
-		Usage: "Initializes the feed with the given hex-encoded data. Data must be prefixed by 0x",
 	}
 	SwarmFeedManifestFlag = cli.StringFlag{
 		Name:  "manifest",
