@@ -1355,6 +1355,15 @@ func (st *insertStats) report(chain []*types.Block, index int, batch ethdb.Mutat
 			"elapsed", common.PrettyDuration(elapsed), "mgasps", float64(st.usedGas) * 1000 / float64(elapsed),
 			"number", end.Number(), "hash", end.Hash(), "batch", batch.BatchSize(),
 		}
+		if timestamp := time.Unix(end.Time().Int64(), 0); time.Since(timestamp) > time.Minute {
+			context = append(context, []interface{}{"age", common.PrettyAge(timestamp)}...)
+		}
+		if st.queued > 0 {
+			context = append(context, []interface{}{"queued", st.queued}...)
+		}
+		if st.ignored > 0 {
+			context = append(context, []interface{}{"ignored", st.ignored}...)
+		}
 		log.Info("Imported new chain segment", context...)
 		*st = insertStats{startTime: now, lastIndex: index + 1}
 	}
